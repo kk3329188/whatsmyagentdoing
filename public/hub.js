@@ -109,11 +109,14 @@
 
   function mount(o = {}) {
     opts = o;
+    loadLocal();
     let { roam = true, onRoam } = o;
     document.body.appendChild(panel);
     document.body.appendChild(toastEl);
+    document.body.appendChild(modalEl);
     const wrap = document.getElementById('officeWrap');
     wrap.parentNode.insertBefore(bar, wrap);
+    wrap.parentNode.insertBefore(pinsEl, wrap);
     // What you can read off a person, and a switch between roaming freely
     // and keeping to their state's room.
     const key = document.createElement('div');
@@ -143,6 +146,8 @@
     draw();
     wrap.appendChild(key);
     wrap.appendChild(xpEl);
+    wrap.appendChild(toolsEl);
+    renderTools();
   }
 
   // ---- sounds: made on the fly, no files
@@ -201,10 +206,12 @@
       const now = { status: s.status, wait: isWait(s), level: s.level || 1, reminded: b ? b.reminded : false };
       if (!now.wait) now.reminded = false;
       if (b && !first) {
-        if (s.status === 'error' && b.status !== 'error') want('error');
-        else if (now.wait && !b.wait) want('wait');
-        else if (s.status === 'done' && BUSY.has(b.status)) want('done');
-        if (now.level > b.level) want('level');
+        const at = Date.now();
+        const log = (kind) => { eventLog.push({ key: s.key, kind, at }); if (eventLog.length > 300) eventLog.shift(); };
+        if (s.status === 'error' && b.status !== 'error') { want('error'); log('error'); }
+        else if (now.wait && !b.wait) { want('wait'); log('wait'); }
+        else if (s.status === 'done' && BUSY.has(b.status)) { want('done'); log('done'); }
+        if (now.level > b.level) { want('level'); log('level'); }
         if (now.wait && !now.reminded && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) { now.reminded = true; want('wait'); }
       } else if (now.wait && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) now.reminded = true;
       seen.set(s.key, now);
@@ -221,8 +228,14 @@
   toastEl.className = 'hub-toast';
   toastEl.hidden = true;
   let toastTimer = 0;
-  function toast(text) {
+  function toast(text, action) {
     toastEl.textContent = text;
+    if (action) {
+      const b = document.createElement('button');
+      b.textContent = action.label;
+      b.onclick = () => { toastEl.hidden = true; action.fn(); };
+      toastEl.appendChild(b);
+    }
     toastEl.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (toastEl.hidden = true), 5000);
@@ -317,6 +330,8 @@
 
   function render() {
     renderBar();
+    renderPins();
+    renderTools();
     if (!openKey) { panel.hidden = true; return; }
     const s = state.data.sessions.find((x) => x.key === openKey);
     if (!s) { close(); return; }
@@ -370,6 +385,7 @@
           ${s.ccdId ? '<button class="hub-btn primary" data-act="open">切到這個 session</button>' : ''}
           ${canSay && active ? '<button class="hub-btn danger" data-act="stop">中斷這一輪</button>' : ''}
           <button class="hub-btn" data-copy="${esc(resumeCmd(s))}">${esc(L.copy)}</button>
+          ${s.agent === 'claude' ? `<button class="hub-btn" data-act="secretary">${isSecretary(s) ? '不當秘書了' : '設為秘書'}</button>` : ''}
         </div>
         ${canSay ? `
         <textarea rows="3" placeholder="傳話給這個 session：打完按 Enter 送出（Shift+Enter 換行）">${esc(draft)}</textarea>
@@ -421,7 +437,14 @@
     const s = state.data.sessions.find((x) => x.key === openKey);
     if (!s) return;
     let r;
-    if (kind !== 'open' && kind !== 'unrelay') { flash = '送出中…（這個瀏覽器第一次用要按 Touch ID）'; updateLive(s); }
+    if (kind !== 'open' && kind !== 'unrelay' && kind !== 'secretary') { flash = '送出中…（這個瀏覽器第一次用要按 Touch ID）'; updateLive(s); }
+    if (kind === 'secretary') {
+      if (isSecretary(s)) { store.set('secretary', '\u0000'); toast('已取消秘書'); }
+      else { const pat = secretaryPattern(s); store.set('secretary', pat); toast(`標題含「${cut(pat, 20)}」的 session 會當你的秘書`); }
+      if (opts.onChange) opts.onChange();
+      render();
+      return;
+    }
     if (kind === 'unrelay') {
       relayFrom = null; draft = '';
       const box = panel.querySelector('textarea');
@@ -478,9 +501,272 @@
     if (e.key === 'Escape' && openKey && document.activeElement?.tagName !== 'TEXTAREA') close();
   });
 
+  // ---- a dialog for summaries, reports and confirmations
+
+  const modalEl = document.createElement('div');
+  modalEl.className = 'hub-modal';
+  modalEl.hidden = true;
+  let modalDone = null, modalYes = null, modalText = '';
+  function modal(html, { onClose = null, onYes = null, text = '' } = {}) {
+    modalEl.innerHTML = `<div class="hub-card" role="dialog">${html}</div>`;
+    modalEl.hidden = false;
+    modalDone = onClose; modalYes = onYes; modalText = text;
+  }
+  function closeModal() {
+    if (modalEl.hidden) return;
+    modalEl.hidden = true;
+    modalEl.innerHTML = '';
+    const f = modalDone;
+    modalDone = modalYes = null;
+    if (f) f();
+  }
+  modalEl.addEventListener('click', (e) => {
+    if (e.target === modalEl || e.target.closest('[data-m=close]')) return closeModal();
+    const o = e.target.closest('[data-open]');
+    if (o) { const k = o.dataset.open; closeModal(); open(k); return; }
+    if (e.target.closest('[data-m=copy]')) { copy(modalText, '已複製'); return; }
+    if (e.target.closest('[data-m=yes]')) { const f = modalYes; modalYes = null; closeModal(); if (f) f(); }
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modalEl.hidden) closeModal(); });
+
+  function copy(text, done) {
+    const fallback = () => modal(`<h3>複製這段</h3><textarea class="hub-copy" rows="12" readonly>${esc(text)}</textarea><div class="hub-row"><button class="hub-btn" data-m="close">關閉</button></div>`);
+    try {
+      navigator.clipboard.writeText(text).then(() => toast(done), fallback);
+    } catch { fallback(); }
+  }
+
+  const byKey = (k) => state.data.sessions.find((x) => x.key === k);
+  const nameOf = (k) => { const s = byKey(k); return s ? name(s) : '（已關閉的 session）'; };
+  const mins = (ms) => (ms >= 3600_000 ? `${(ms / 3600_000).toFixed(1)} 小時` : `${Math.max(1, Math.round(ms / 60_000))} 分`);
+
+  // ---- dropped on furniture
+
+  // One session as plain text: what to paste into a chat or a ticket.
+  function sessionReport(s) {
+    const lines = [`【${name(s)}】${L[s.status] || s.status}`];
+    const p = steps(s);
+    if (s.plan && s.plan.length) {
+      lines.push(`進度 ${p.done}/${p.total}`);
+      for (const x of s.plan) lines.push(`${x.status === 'completed' ? '✓' : x.status === 'in_progress' ? '▶' : '○'} ${x.content}`);
+    } else if (p) lines.push(`進度 ${p.done}/${p.total}${p.step ? `：${p.step}` : ''}`);
+    const need = needsYou(s);
+    if (need) lines.push(`等你處理：${need}`);
+    if (s.recap || s.reply) lines.push('', `最後回覆：${s.recap || s.reply}`);
+    const g = s.git;
+    if (g && (g.branch || g.dirty || g.ahead)) lines.push('', [g.branch && `分支 ${g.branch}`, g.dirty && `${g.dirty} 檔未 commit`, g.ahead && `${g.ahead} commit 未推`].filter(Boolean).join('・'));
+    return lines.join('\n');
+  }
+
+  let pins = [];
+  let hidden = {};
+  function loadLocal() { pins = store.get('pins', []); hidden = store.get('hidden', {}); }
+
+  function togglePin(s) {
+    if (pins.includes(s.key)) { pins = pins.filter((k) => k !== s.key); toast(`已從白板拿下「${cut(name(s), 20)}」`); }
+    else { pins = [...pins, s.key].slice(-6); toast(`📌 已把「${cut(name(s), 20)}」釘到白板`); }
+    store.set('pins', pins);
+    renderPins();
+  }
+  function pinNames() { return pins.map((k) => byKey(k)).filter(Boolean).map((s) => cut(name(s), 14)); }
+
+  const pinsEl = document.createElement('div');
+  pinsEl.className = 'hub-pins';
+  pinsEl.hidden = true;
+  function renderPins() {
+    const list = pins.map((k) => byKey(k)).filter(Boolean);
+    pinsEl.hidden = !list.length || PRIVATE;
+    pinsEl.innerHTML = list.length ? '<b>📌 白板</b>' + list.map((s) => {
+      const p = steps(s);
+      return `<span class="hub-pin" data-s="${esc(s.status)}"><button data-open="${esc(s.key)}"><span class="dot" style="color:var(--s)"></span>${esc(cut(name(s), 18))}`
+        + `${p ? `<small>${p.done}/${p.total}${p.step ? ' ' + esc(cut(p.step, 18)) : ''}</small>` : `<small>${esc(L[s.status] || s.status)}</small>`}</button>`
+        + `<button class="hub-unpin" data-unpin="${esc(s.key)}" aria-label="拿下">×</button></span>`;
+    }).join('') : '';
+  }
+  pinsEl.addEventListener('click', (e) => {
+    const u = e.target.closest('[data-unpin]');
+    if (u) { pins = pins.filter((k) => k !== u.dataset.unpin); store.set('pins', pins); renderPins(); return; }
+    const o = e.target.closest('[data-open]');
+    if (o) open(o.dataset.open);
+  });
+
+  // Dropped at the door: off the page until it does something new.
+  function isHidden(s) {
+    const h = hidden[s.key];
+    if (h == null) return false;
+    if ((s.lastEventAt || 0) > h) { delete hidden[s.key]; store.set('hidden', hidden); return false; }
+    return true;
+  }
+  function hide(s) {
+    hidden[s.key] = s.lastEventAt || 0;
+    store.set('hidden', hidden);
+    if (openKey === s.key) close();
+    toast(`🚪「${cut(name(s), 20)}」先不顯示，它有新動靜會自己回來`, { label: '復原', fn: () => { delete hidden[s.key]; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); } });
+    renderTools();
+    if (opts.onChange) opts.onChange();
+  }
+
+  function askStop(s) {
+    if (!s.controllable) return toast('只能停 Claude Code 的 session');
+    if (!ACTIVE.has(s.status)) return toast(`「${cut(name(s), 20)}」現在沒在跑，不用停`);
+    modal(`<h3>要中斷「${esc(cut(name(s), 30))}」這一輪嗎？</h3><p class="hub-muted">只結束這一輪；當時正在跑的指令會轉到背景跑完。這個瀏覽器 8 小時內第一次用要按 Touch ID。</p>
+      <div class="hub-row"><button class="hub-btn danger" data-m="yes">中斷</button><button class="hub-btn" data-m="close">取消</button></div>`, {
+      onYes: async () => {
+        toast('送出中…');
+        const r = await post('stop', { key: s.key });
+        toast(r.ok ? `已叫「${cut(name(s), 20)}」停下這一輪` : `沒停成：${r.error || '未知錯誤'}`);
+      },
+    });
+  }
+
+  function command(kind, s) {
+    if (PRIVATE || !s || s.secretary) return;
+    if (kind === 'printer') return copy(sessionReport(s), `🖨 已把「${cut(name(s), 20)}」的報告複製到剪貼簿`);
+    if (kind === 'whiteboard') return togglePin(s);
+    if (kind === 'coffee') return askStop(s);
+    if (kind === 'door') return hide(s);
+  }
+
+  // ---- the secretary: which session it is, and the welcome-back summary
+
+  // The secretary: sessions whose title contains what you picked with
+  // 「設為秘書」 (dates left out, so tomorrow's one with the same name counts
+  // too), or by default one titled secretary.
+  const SECRETARY = /秘書|總機|secretary/i;
+  function isSecretary(s) {
+    if (s.agent !== 'claude' || s.subagent) return false;
+    const pat = store.get('secretary', null);
+    return pat ? (s.title || '').includes(pat) : SECRETARY.test(s.title || '');
+  }
+  const secretaryPattern = (s) => name(s).replace(/\d{2,4}[-/.]\d{1,2}[-/.]\d{1,2}/g, '').trim() || name(s);
+
+  const AWAY_MS = 10 * 60_000;
+  const eventLog = []; // { key, kind, at }
+  let lastActive = Date.now(), awayFrom = null, lastSummary = null;
+  function active() {
+    const now = Date.now();
+    if (now - lastActive < 1000 && awayFrom == null) return;
+    if (awayFrom == null && now - lastActive > AWAY_MS) awayFrom = lastActive;
+    lastActive = now;
+    if (awayFrom != null) { const from = awayFrom; awayFrom = null; if (now - from >= AWAY_MS) welcome(from, now); }
+    maybeReport();
+  }
+  for (const ev of ['pointermove', 'pointerdown', 'keydown', 'focus']) window.addEventListener(ev, active, { passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (awayFrom == null) awayFrom = Date.now(); } else active();
+  });
+
+  // What happened while you were away, in one card; the secretary brings it over.
+  function welcome(from, now) {
+    if (PRIVATE || !state.data) return;
+    const latest = new Map();
+    for (const e of eventLog) if (e.at >= from) latest.set(e.key + e.kind, e);
+    const of = (kind) => [...latest.values()].filter((e) => e.kind === kind && byKey(e.key));
+    const needs = state.data.sessions.map((s) => [s, needsYou(s)]).filter(([, n]) => n);
+    const done = of('done').filter((e) => !needs.some(([s]) => s.key === e.key));
+    const errors = of('error'), levels = of('level');
+    if (!needs.length && !done.length && !errors.length && !levels.length) return;
+    const row = (k, small) => `<li><button data-open="${esc(k)}">${esc(cut(nameOf(k), 30))}</button>${small ? `<small>${esc(cut(small, 70))}</small>` : ''}</li>`;
+    const sec = state.data.sessions.filter(isSecretary).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0))[0];
+    const html = `<h3>📋 ${sec ? `秘書「${esc(cut(name(sec), 16))}」：` : ''}你離開了 ${mins(now - from)}</h3>`
+      + (needs.length ? `<h4>等你處理 ${needs.length}</h4><ul class="hub-list">${needs.map(([s, n]) => row(s.key, n)).join('')}</ul>` : '')
+      + (errors.length ? `<h4>出錯 ${errors.length}</h4><ul class="hub-list">${errors.map((e) => row(e.key, byKey(e.key).error)).join('')}</ul>` : '')
+      + (done.length ? `<h4>做完了 ${done.length}</h4><ul class="hub-list">${done.map((e) => { const s = byKey(e.key); return row(e.key, s.recap || s.reply); }).join('')}</ul>` : '')
+      + (levels.length ? `<h4>升等</h4><ul class="hub-list">${levels.map((e) => row(e.key, `Lv${byKey(e.key).level}`)).join('')}</ul>` : '')
+      + '<div class="hub-row"><button class="hub-btn primary" data-m="close">知道了</button></div>';
+    lastSummary = html;
+    const short = [needs.length && `${needs.length} 個等你`, errors.length && `${errors.length} 個出錯`, done.length && `${done.length} 個做完`].filter(Boolean).join('、');
+    if (opts.onAway) opts.onAway(`你不在時：${short || '有新消息'}，點我看`);
+    showAway();
+  }
+  function showAway() {
+    if (!lastSummary) return;
+    modal(lastSummary, { onClose: () => { if (opts.onAwayDone) opts.onAwayDone(); } });
+  }
+
+  // ---- end-of-day report
+
+  const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function maybeReport() {
+    const o = state.data && state.data.office;
+    if (PRIVATE || PIP_PAGE || !o || !o.today || new Date().getHours() < 18) return;
+    if (store.get('reportDay', null) === today() || !modalEl.hidden) return;
+    store.set('reportDay', today());
+    report();
+  }
+  function report() {
+    const o = state.data && state.data.office;
+    if (!o || !o.today) return toast('還沒有今天的資料');
+    const t = o.today;
+    const now = Date.now() - state.skew;
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const busy = t.top.filter((r) => r.turns || r.tools).slice(0, 5);
+    // Loose ends: unfinished steps, uncommitted or unpushed work, things waiting on you.
+    // Code is per folder (many sessions share one), so it is listed once per folder.
+    const ends = [];
+    const repos = new Map();
+    for (const s of state.data.sessions) {
+      if (s.subagent || (s.lastEventAt || 0) < midnight.getTime() || isHidden(s)) continue;
+      const items = [];
+      const p = steps(s);
+      if (p && p.done < p.total) items.push(`還有 ${p.total - p.done} 步${p.step ? `（目前：${cut(p.step, 30)}）` : ''}`);
+      const n = needsYou(s);
+      if (n) items.push(`等你：${cut(n, 40)}`);
+      if (items.length) ends.push([s, items]);
+      if (s.git && (s.git.dirty || s.git.ahead) && s.cwd) repos.set(s.cwd, s);
+    }
+    // A folder inside another one with the same branch is the same repository.
+    const code = [];
+    const kept = [];
+    for (const [cwd, s] of [...repos].sort((x, y) => x[0].length - y[0].length)) {
+      const g = s.git;
+      if (kept.some(([c, k]) => cwd.startsWith(c + '/') && k.branch === g.branch && k.ahead === g.ahead)) continue;
+      kept.push([cwd, g]);
+      code.push(`${s.project || cwd}${g.branch ? `（${g.branch}）` : ''}：${[g.dirty && `${g.dirty} 檔未 commit`, g.ahead && `${g.ahead} commit 未推`].filter(Boolean).join('、')}`);
+    }
+    const lines = [`${t.date} 日報`, `今天完成 ${t.turns} 輪、${t.tools} 個動作`];
+    if (t.answered) lines.push(`你回覆了 ${t.answered} 次，平均 ${mins(t.avgWaitMs)}${t.longest[0] ? `；等最久：${nameOf(t.longest[0].key)} ${mins(t.longest[0].ms)}` : ''}`);
+    if (busy.length) lines.push('', '最忙：', ...busy.map((r) => `- ${nameOf(r.key)}：${r.turns} 輪、${r.tools} 個動作`));
+    if (ends.length) lines.push('', '明天要記得：', ...ends.map(([s, items]) => `- ${name(s)}：${items.join('；')}`));
+    if (code.length) lines.push('', '還沒收的程式碼：', ...code.map((c) => `- ${c}`));
+    const html = `<h3>📋 ${esc(t.date)} 日報</h3>
+      <p>今天完成 <b>${t.turns}</b> 輪、<b>${t.tools}</b> 個動作${t.answered ? `；你回覆了 ${t.answered} 次，平均 <b>${mins(t.avgWaitMs)}</b>` : ''}</p>
+      ${t.longest[0] ? `<p class="hub-muted">等你最久：${t.longest.map((w) => `${esc(cut(nameOf(w.key), 16))} ${mins(w.ms)}`).join('、')}</p>` : ''}
+      ${busy.length ? `<h4>最忙</h4><ul class="hub-list">${busy.map((r) => `<li><button data-open="${esc(r.key)}">${esc(cut(nameOf(r.key), 30))}</button><small>${r.turns} 輪・${r.tools} 個動作</small></li>`).join('')}</ul>` : ''}
+      ${ends.length ? `<h4>明天要記得 ${ends.length}</h4><ul class="hub-list">${ends.map(([s, items]) => `<li><button data-open="${esc(s.key)}">${esc(cut(name(s), 30))}</button><small>${esc(items.join('；'))}</small></li>`).join('')}</ul>` : ''}
+      ${code.length ? `<h4>還沒收的程式碼 ${code.length}</h4><ul class="hub-list">${code.map((c) => `<li><small>${esc(c)}</small></li>`).join('')}</ul>` : ''}
+      ${!ends.length && !code.length ? '<p class="hub-muted">沒有留下沒收的尾巴 👍</p>' : ''}
+      <p class="hub-muted">只算儀表板開著時看到的動作；回覆時間從它開始等你算到你回。</p>
+      <div class="hub-row"><button class="hub-btn primary" data-m="copy">複製成文字</button><button class="hub-btn" data-m="close">關閉</button></div>`;
+    modal(html, { text: lines.join('\n') });
+    void now;
+  }
+
+  // The row under the legend: the report, and who is kept off the page.
+  const toolsEl = document.createElement('div');
+  toolsEl.className = 'legend hub-tools';
+  function renderTools() {
+    const n = state.data ? state.data.sessions.filter((s) => hidden[s.key] != null && isHidden(s)).length : 0;
+    const sig = `${n}|${PRIVATE}`;
+    if (toolsEl.dataset.sig === sig) return;
+    toolsEl.dataset.sig = sig;
+    toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
+      + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
+      + '<span class="hub-muted">拖到印表機＝複製報告、白板＝釘選、咖啡機＝叫它停下、門口＝先不顯示</span>';
+  }
+  toolsEl.addEventListener('click', (e) => {
+    const b = e.target.closest("[data-tool]");
+    if (!b) return;
+    if (b.dataset.tool === 'report') report();
+    if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
+  });
+
+  const PIP_PAGE = new URLSearchParams(location.search).get('pip') === '1';
+
   let PRIVATE = false;
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
+    command, isHidden, isSecretary, pinNames, report, showAway, welcome,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },
   };

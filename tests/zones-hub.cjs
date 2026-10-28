@@ -299,33 +299,93 @@ test('dropping far from anyone does not relay', () => {
   assert.equal(relays.length, 0);
 });
 
-test('waiting on you a while: a sign after 3 minutes, knocking at the front after 10', () => {
+test('waiting on you: in line at your desk, sign after 3 minutes, the first knocks after 10, overflow knocks at the front', () => {
   for (const roam of [true, false]) {
     const o = load(roam);
+    assert.ok(o.plan.boss && o.plan.queue.length >= 4, 'your desk with room for a line');
+    for (const q of o.plan.queue) {
+      assert.equal(o.plan.grid.blocked(q.x, q.y), false);
+      assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length, 'reachable');
+    }
     let who = settle(o, [at('waiting', { ago: 30_000 })]);
     let p = who('claude:waiting');
-    p.path = []; if (p.poi) { p.x = p.poi.x; p.y = p.poi.y; }
-    assert.notEqual(o.stateOf(p).act, 'sign', 'not yet');
+    assert.equal(p.queue, 0);
+    assert.equal(p.poi.act, 'queue');
+    p.path = []; p.x = p.poi.x; p.y = p.poi.y;
+    assert.equal(o.stateOf(p).act, 'lookaround', 'just waiting');
 
+    const many = Array.from({ length: 8 }, (_, i) => at('waiting', { n: i, ago: (20 - i) * MIN }));
     const o2 = load(roam);
-    who = settle(o2, [at('waiting', { ago: 4 * MIN })]);
-    p = who('claude:waiting');
-    p.path = [];
-    const act = o2.stateOf(p).act;
-    assert.ok(act === 'sign' || act === 'peek' || act === 'lookaround' || act === 'chat', `${roam}: ${act}`);
-    if (p.poi && p.poi.act !== 'peek' && p.poi.act !== 'chat') assert.equal(act, 'sign');
-
-    const o3 = load(roam);
-    who = settle(o3, [at('waiting', { ago: 11 * MIN }), at('waiting', { n: 2, ago: 12 * MIN })]);
-    const k1 = who('claude:waiting'), k2 = who('claude:waiting2');
-    for (const k of [k1, k2]) {
-      assert.equal(k.poi.act, 'knock', `${roam}: comes to knock`);
-      assert.ok(k.poi.y > o3.plan.D - 1, 'at the front edge');
-      assert.equal(o3.plan.grid.blocked(k.poi.x, k.poi.y), false);
+    who = settle(o2, many);
+    const slots = o2.plan.queue.length;
+    for (let i = 0; i < 8; i++) {
+      const k = who(`claude:waiting${i}`);
       k.path = []; k.x = k.poi.x; k.y = k.poi.y;
-      assert.equal(o3.stateOf(k).act, 'knock');
+      if (i < slots) {
+        assert.equal(k.queue, i, 'longest wait first');
+        assert.equal(o2.stateOf(k).act, i === 0 ? 'knock' : 'sign', `${roam} ${i}`);
+      } else {
+        assert.equal(k.queue, null);
+        assert.equal(k.poi.act, 'knock', 'no room in line: knock at the front');
+      }
     }
-    assert.ok(Math.abs(k1.poi.x - k2.poi.x) >= 0.6, 'side by side, not on top of each other');
+    assert.equal(o2.queueCount, 8);
+    // The first one gets an answer: everyone moves up.
+    o2.first = false;
+    o2.update(many.slice(1));
+    assert.equal(who('claude:waiting1').queue, 0);
+  }
+});
+
+test('the secretary session sits beside your desk and brings you news', () => {
+  const o = load(true);
+  o.isSecretary = (s) => /值機/.test(s.title || '');
+  const who = settle(o, [at('done', { n: 'd', title: '2026-10-28 值機' }), at('idle', { ago: 60 * MIN })]);
+  const sec = who('claude:doned');
+  assert.equal(o.secKey, sec.key);
+  assert.equal(sec.mode, 'work');
+  assert.equal(sec.desk, o.plan.sec);
+  assert.equal(o.deskOf.has(sec.key), false, 'not on a regular desk');
+  sec.x = sec.desk.seat.x; sec.y = sec.desk.seat.y; sec.path = [];
+  assert.equal(o.stateOf(sec).pose, 'sit');
+  assert.equal(o.deliver('你不在時有 3 件事'), true);
+  assert.ok(sec.path.length, 'walking to your desk');
+  sec.path = [];
+  assert.equal(o.stateOf(sec).act, 'clipboard');
+  o.endErrand();
+  assert.equal(sec.errand, null);
+  assert.ok(sec.path.length, 'back to their desk');
+  // Working: still at their own desk.
+  o.update([at('tool', { n: 'd', key: 'claude:doned', title: '2026-10-28 值機', activity: 'Read a' })]);
+  assert.equal(sec.desk, o.plan.sec);
+});
+
+test('no secretary: deliver does nothing', () => {
+  const o = load(true);
+  settle(o, [at('idle', { ago: 60 * MIN })]);
+  assert.equal(o.deliver('x'), false);
+});
+
+test('dropping someone on the printer, whiteboard, coffee machine or door runs that command', () => {
+  for (const id of ['printer', 'whiteboard', 'coffee', 'door']) {
+    const o = load(true);
+    canvasFor(o);
+    o.label = (s) => s.key;
+    const got = [];
+    o.onRelay = () => got.push('relay');
+    o.onCommand = (kind, s) => got.push([kind, s.key]);
+    const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
+    o.hit = [{ key: p.key, x0: 0, x1: 1000, y0: 0, y1: 1000 }];
+    o.grab(ev(100, 100));
+    o.drag(ev(200, 200));
+    const t = o.plan.targets.find((x) => x.id === id);
+    const pt = o.iso(t.x, t.y, 0);
+    o.drag(ev(pt.x + 300, pt.y + 100 - 28 - 0.55 * 32));
+    assert.equal(o.dropAt && o.dropAt.id, id);
+    o.drop(ev(0, 0));
+    assert.deepEqual(got, [[id, 'claude:idle']]);
+    assert.equal(o.dropAt, null);
+    assert.equal(o.plan.grid.blocked(p.x, p.y), false);
   }
 });
 

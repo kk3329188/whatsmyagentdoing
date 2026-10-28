@@ -77,6 +77,10 @@ Touch ID 要用到 Swift：沒有 Command Line Tools 時請使用者自己跑 `x
 按住人物可拖曳拎起、放開落在最近的空地（2D、3D 都可以）；單點開面板，游標直接在傳話框，Enter 送出、Shift+Enter 換行。
 丟到別人身上＝轉話：開對方面板、填好前一人最後的回覆（`〔轉自「…」〕` 開頭），按 Enter 才送；送出後前一人走過去聊。
 等你超過 3 分鐘舉牌冒汗、超過 10 分鐘到畫面最前面敲螢幕；音效（叮／警報／敲門／升等）圖例旁可關，存在 localStorage `wmad.sound`。
+你的桌（plan.boss）在前緣、秘書桌（plan.sec）在旁；zone wait 的人依等待時間排到 plan.queue（最多 6 格），排第一且等 >10 分會敲桌，排不下的照舊亂逛／敲螢幕。
+秘書＝面板「設為秘書」存的標題片段（日期去掉，localStorage `wmad.secretary`）所符合的最新 Claude session，沒設時用 /秘書|總機|secretary/，固定坐秘書桌；離開 ≥10 分鐘回來時 `Hub.welcome` 出摘要卡、`office.deliver` 讓秘書走到你桌前。
+日報：18 點後第一次活動自動出一次（localStorage `wmad.reportDay`），資料來自 progress.js 的 today（今日輪數、回覆時間）；程式碼尾巴按資料夾合併。
+拖到家具（plan.targets）：printer 複製報告、whiteboard 釘選（`wmad.pins`）、coffee 確認後 stop、door 隱藏到有新動靜（`wmad.hidden`，key→當時 lastEventAt）。
 經驗值：`src/progress.js`，工具呼叫 +1、做完一輪 +5，存 `~/.whatsmyagentdoing/progress.json`（測試用 `WMAD_PROGRESS_FILE` 改路徑）；
 log 是從尾巴讀的，所以已記錄過的 session 重啟後只算之後的增量。等級 60／200／600／1500 經驗換裝；辦公室累積完成輪數 10／50／120／250／500 解鎖家具（`UNLOCKS` 在 public/office.js）。
 

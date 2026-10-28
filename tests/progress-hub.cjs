@@ -37,7 +37,7 @@ test('a new session is credited what its log shows; later work adds on', () => {
   const pr = new Progress(f);
   const s = { agent: 'claude', id: 'a', tools: 10, turns: 2 };
   pr.update([s]);
-  assert.deepEqual(pr.office(), { turns: 2, tools: 10 });
+  assert.equal(pr.office().turns, 2); assert.equal(pr.office().tools, 10);
   assert.equal(pr.level('claude:a').xp, 20);
   pr.update([s]);
   assert.equal(pr.level('claude:a').xp, 20, 'the same snapshot twice counts once');
@@ -60,7 +60,7 @@ test('after a restart a known session only gains what happens next', () => {
   s.tools = 25;
   again.update([s]);
   assert.equal(again.level('claude:a').xp, 75);
-  assert.deepEqual(again.office(), { turns: 4, tools: 55 });
+  assert.equal(again.office().turns, 4); assert.equal(again.office().tools, 55);
 });
 
 test('a log read again from scratch (new session object) is not credited twice', () => {
@@ -73,7 +73,7 @@ test('a log read again from scratch (new session object) is not credited twice',
 test('subagents earn nothing on their own', () => {
   const pr = new Progress(file());
   pr.update([{ agent: 'claude', id: 'k', subagent: true, tools: 99, turns: 9 }]);
-  assert.deepEqual(pr.office(), { turns: 0, tools: 0 });
+  assert.equal(pr.office().turns, 0); assert.equal(pr.office().tools, 0);
 });
 
 test('levels', () => {
@@ -87,5 +87,33 @@ test('a broken file starts over instead of crashing', () => {
   const f = file();
   fs.writeFileSync(f, '{not json');
   const pr = new Progress(f);
-  assert.deepEqual(pr.office(), { turns: 0, tools: 0 });
+  assert.equal(pr.office().turns, 0); assert.equal(pr.office().tools, 0);
+});
+
+test('today counts only today\'s work and how long you took to answer', () => {
+  const pr = new Progress(file());
+  const day = new Date(2026, 9, 28, 15, 0, 0).getTime();
+  const old = { agent: 'claude', id: 'old', tools: 40, turns: 6, startedAt: day - 3 * 86400_000 };
+  const fresh = { agent: 'claude', id: 'new', tools: 4, turns: 1, startedAt: day - 3600_000 };
+  pr.update([old, fresh], day);
+  let t = pr.office().today;
+  assert.equal(t.turns, 1, 'an older session\'s history is not today\'s work');
+  old.turns = 7; old.tools = 42;
+  pr.update([old, fresh], day + 1000);
+  t = pr.office().today;
+  assert.equal(t.turns, 2);
+  assert.equal(t.top[0].turns, 1);
+  // It asks you something; you answer 4 minutes later.
+  Object.assign(old, { status: 'waiting', lastEventAt: day + 2000 });
+  pr.update([old, fresh], day + 2000);
+  Object.assign(old, { status: 'thinking', turnStartedAt: day + 2000 + 240_000 });
+  pr.update([old, fresh], day + 250_000);
+  t = pr.office().today;
+  assert.equal(t.answered, 1);
+  assert.equal(t.avgWaitMs, 240_000);
+  assert.equal(t.longest[0].key, 'claude:old');
+  // Next day it starts over.
+  pr.update([old, fresh], day + 86400_000);
+  assert.equal(pr.office().today.turns, 0);
+  assert.equal(pr.office().today.answered, 0);
 });

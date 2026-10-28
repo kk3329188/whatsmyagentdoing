@@ -242,11 +242,15 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { onHover, onRelay, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
+    constructor(root, { onHover, onRelay, onCommand, isSecretary, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
       this.root = root;
       this.onHover = onHover || (() => {});
       // Dropped one person onto another: pass the first one's last reply on.
       this.onRelay = onRelay || null;
+      // Dropped someone on a piece of furniture (printer, whiteboard, coffee, door).
+      this.onCommand = onCommand || null;
+      // Which session works as your secretary (sits beside your desk, brings news).
+      this.isSecretary = isSecretary || null;
       this.label = label || ((s) => s.project || s.agent);
       // What a working person's bubble says (default: the tool's name).
       this.doing = doing || ((s) => (s.activity || 'tool').split(/[:\s]/)[0]);
@@ -549,6 +553,40 @@
       const neon = un.has('neon') ? { x: Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
 
+      // ---- your desk at the front (you sit on this side of the screen), the
+      // secretary's beside it, and a queue of whoever is waiting on you.
+      let boss = null, sec = null;
+      const by = D - 1.45;
+      for (const bx of [OW - 2.3, OW - 4.0, OW / 2, 2.6]) {
+        const sx = bx - 1.7;
+        if (sx < 0.9 || !fits(bx, by, 1.4, 0.8) || !fits(sx, by, 1.4, 0.8)) continue;
+        if (grid.blocked(bx + 0.7, by + 1.25) || grid.blocked(sx + 0.7, by - 0.45)) continue;
+        boss = { x: bx, y: by, side: 's', seat: { x: bx + 0.7, y: by + 1.25 }, boss: true };
+        sec = { x: sx, y: by, side: 'n', seat: { x: sx + 0.7, y: by - 0.45 }, secretary: true };
+        break;
+      }
+      const queue = [];
+      if (boss) {
+        for (const dk of [boss, sec]) solid(dk.x, dk.y, 1.4, 0.8, 0.08);
+        prop('bossDesk', { x: boss.x, y: boss.y });
+        // Line up in front of your desk, then along the floor if the way up is taken.
+        let qx = boss.x + 0.7, qy = boss.y - 0.55;
+        const minY = OD + 0.3;
+        for (let k = 0; k < 40 && queue.length < 6; k++) {
+          if (!grid.blocked(qx, qy) && qy >= minY && !(sec && Math.hypot(qx - sec.seat.x, qy - sec.seat.y) < 0.6)) queue.push({ x: qx, y: qy });
+          else if (queue.length) { qx -= 0.7; continue; }
+          if (qy - 0.7 >= minY && !grid.blocked(qx, qy - 0.7)) qy -= 0.7; else qx -= 0.7;
+          if (qx < 0.8) break;
+        }
+      }
+      // Drop someone on these to do something with their session.
+      const targets = [
+        { id: 'printer', x: OW - 1.95, y: 1.15, hint: '印成報告（複製）' },
+        { id: 'whiteboard', x: mx + 3.6, y: 0.65, hint: '釘到白板上' },
+        { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
+        { id: 'door', x: 0.9, y: D - 1.2, hint: '先不顯示，有事再出現' },
+      ];
+
       const posters = [
         { y: 2.2, color: '#c96442', text: 'SHIP IT' },
         { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
@@ -563,7 +601,29 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, boss, sec, queue, targets, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+    }
+
+    // The sign over your desk: how many are waiting in line.
+    deskSign() {
+      const boss = this.plan.boss;
+      if (!boss) return;
+      const c = this.ctx;
+      this.deskSignAt(this.iso(boss.x + 0.7, Math.min(this.plan.D - 0.1, boss.y + 1.7), 0));
+    }
+
+    deskSignAt(at) {
+      const c = this.ctx;
+      const n = this.queueCount || 0;
+      const text = n ? `🧑‍💼 你的桌・${n} 個在等你` : '🧑‍💼 你的桌';
+      c.save();
+      c.font = '700 10px ui-sans-serif, system-ui, -apple-system, "PingFang TC", "Apple Color Emoji", sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      const w = c.measureText(text).width + 14;
+      this.roundRect(at.x - w / 2, at.y - 9, w, 18, 9, n ? STATUS_COLOR.waiting : this.pal.tagBg);
+      c.fillStyle = n ? '#fff' : this.pal.text;
+      c.fillText(text, at.x, at.y + 0.5);
+      c.restore();
     }
 
     // Signs painted on the floor naming each zone.
@@ -610,6 +670,12 @@
 
     update(sessions) {
       const zoned = !!this.plan.zones;
+      // The secretary keeps their own desk beside yours, whatever they are doing.
+      const sec = this.plan.sec && this.isSecretary
+        ? sessions.filter((s) => !s.subagent && this.isSecretary(s)).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0))[0]
+        : null;
+      this.secKey = sec ? sec.key : null;
+      if (sec) sessions = sessions.filter((s) => s !== sec);
       // With zones only the ones actually working get a desk; waiting and
       // errors go to their own rooms. Scene packs keep the old rule.
       const atDesk = (s) => (zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
@@ -661,6 +727,19 @@
       const takenDesks = new Set([...this.deskOf.values()].map((i) => desks[i]));
 
       const shown = new Set();
+      if (sec) {
+        shown.add(sec.key);
+        let p = this.people.get(sec.key);
+        if (!p) { p = this.newPerson(sec); this.people.set(sec.key, p); }
+        p.s = sec;
+        p.leaving = false;
+        p.level = sec.level || 1;
+        if (p.mode !== 'work' || p.desk !== this.plan.sec) {
+          this.release(p); this.endRun(p, false); this.endVisit(p, false);
+          p.mode = 'work'; p.desk = this.plan.sec; p.zone = null;
+          if (!p.errand) this.goTo(p, this.plan.sec.seat);
+        }
+      }
       for (const s of [...working, ...wanderers]) {
         const isWorker = this.deskOf.has(s.key);
         if (!isWorker && atDesk(s)) continue; // no desk left
@@ -693,6 +772,21 @@
           if (p.napDesk && takenDesks.has(p.napDesk)) { this.release(p); p.path = []; }
         }
       }
+      // Whoever waits on you lines up at your desk, longest wait first.
+      const q = this.plan.queue || [];
+      const waiting = [...this.people.values()]
+        .filter((p) => shown.has(p.key) && !p.leaving && p.mode === 'wander' && p.zone === 'wait')
+        .sort((a, b) => (a.s.lastEventAt || 0) - (b.s.lastEventAt || 0));
+      waiting.forEach((p, i) => {
+        const slot = i < q.length ? i : null;
+        if (p.queue === slot) return;
+        p.queue = slot;
+        if (p.held || p.visit) return;
+        this.release(p); p.poi = null; p.until = 0; p.path = [];
+      });
+      for (const p of this.people.values()) if (p.queue != null && !waiting.includes(p)) p.queue = null;
+      this.queueCount = waiting.length;
+
       // Someone just messaged another session: walk over and tell them.
       for (const p of this.people.values()) {
         if (!shown.has(p.key) || p.leaving) continue;
@@ -783,6 +877,15 @@
       if (p.poi && now < p.until) return;
       this.release(p);
       const plan = this.plan;
+      // In line at your desk.
+      if (p.queue != null && plan.queue && plan.queue[p.queue]) {
+        const slot = plan.queue[p.queue];
+        p.poi = { x: slot.x, y: slot.y, act: 'queue', face: 'front', zone: 'wait', yaw: 0 };
+        p.until = Infinity;
+        p.stay = 20_000;
+        this.goTo(p, slot);
+        return;
+      }
       // Waited on you for ages: come to the front and knock on the screen.
       if (plan.zones && p.zone === 'wait' && waitedMs(p.s) > KNOCK_MS) return this.knock(p);
       if (plan.zones && p.zone && this.roam !== false) return this.roamTo(p);
@@ -1011,6 +1114,7 @@
         if (!p || p.leaving) { this.press = null; return; }
         this.held = p;
         p.held = true;
+        p.errand = null;
         p.path = [];
         this.endRun(p, false);
         this.endVisit(p, false);
@@ -1028,6 +1132,37 @@
       // Right over someone else: letting go passes your last reply to them.
       const mate = this.onRelay ? this.mateUnder(p) : null;
       this.dropOn = mate ? mate.key : null;
+      this.dropAt = !mate && this.onCommand ? this.targetUnder(p) : null;
+    }
+
+    // A piece of furniture under a held person that does something when dropped on.
+    targetUnder(p) {
+      let best = null, bd = 1.1;
+      for (const t of this.plan.targets || []) {
+        const d = Math.hypot(t.x - p.x, t.y - p.y);
+        if (d < bd) { bd = d; best = t; }
+      }
+      return best;
+    }
+
+    // The secretary walks over to your desk with news, until you have read it.
+    deliver(text) {
+      const p = this.secKey && this.people.get(this.secKey);
+      const boss = this.plan.boss;
+      if (!p || !boss || p.held || p.leaving) return false;
+      this.endRun(p, false);
+      this.endVisit(p, false);
+      p.errand = { text };
+      const spot = this.freeSpot(boss.x - 0.25, boss.y + 1.15);
+      this.goTo(p, spot);
+      return true;
+    }
+
+    endErrand() {
+      const p = this.secKey && this.people.get(this.secKey);
+      if (!p || !p.errand) return;
+      p.errand = null;
+      if (p.desk) this.goTo(p, p.desk.seat);
     }
 
     // The person standing closest under a held one, if near enough.
@@ -1050,13 +1185,16 @@
       setTimeout(() => (this.dropped = false), 0);
       p.held = false;
       const mate = this.dropOn && this.people.get(this.dropOn);
+      const target = !mate && this.dropAt;
       this.dropOn = null;
-      const spot = mate ? this.besideOf(mate) : this.freeSpot(p.x, p.y);
+      this.dropAt = null;
+      const spot = mate ? this.besideOf(mate) : target ? this.freeSpot(target.x, target.y) : this.freeSpot(p.x, p.y);
       p.x = spot.x; p.y = spot.y;
       p.path = [];
       p.landed = Date.now();
       p.event = { text: mate ? `有話跟 ${this.label(mate.s)} 說`.slice(0, 24) : p.mode === 'work' ? '回座位…' : '呼～', at: Date.now(), zone: 'held' };
       if (mate) this.onRelay(p.s, mate.s);
+      if (target) { p.event = { text: target.hint, at: Date.now(), zone: 'held' }; this.onCommand(target.id, p.s); }
       this.canvas.style.cursor = 'default';
       if (e) this.pointer(e);
     }
@@ -1267,7 +1405,18 @@
       // meeting room whiteboard + sign
       const wx = OW + 2.4;
       this.poly([P(wx, 0, 0.8), P(wx + 2.6, 0, 0.8), P(wx + 2.6, 0, 1.95), P(wx, 0, 1.95)], '#fdfdfb', pal.trim);
-      this.onWall('y0', wx + 0.25, 1.75, (c) => {
+      const pins = this.pins || [];
+      if (pins.length) {
+        // Pinned sessions, written on the whiteboard.
+        this.onWall('y0', wx + 0.2, 1.8, (c) => {
+          c.font = '700 7px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+          c.textBaseline = 'middle';
+          pins.slice(0, 4).forEach((t, i) => {
+            c.fillStyle = ['#c96442', '#3b8ee0', '#5f9a4c', '#8b6be6'][i];
+            c.fillText('📌 ' + t, 0, i * 8.5);
+          });
+        });
+      } else this.onWall('y0', wx + 0.25, 1.75, (c) => {
         c.lineWidth = 1.4;
         c.strokeStyle = '#3b8ee0';
         c.beginPath(); c.moveTo(0, 0); c.lineTo(22, 0); c.moveTo(0, 7); c.lineTo(36, 7); c.stroke();
@@ -1753,6 +1902,7 @@
         const mate = this.people.get(p.visit.mate);
         return { pose: 'stand', face: 'front', act: mate && mate.chatWith === p.key ? 'chat' : 'lookaround', sitZ: 0 };
       }
+      if (p.errand) return { pose: 'stand', face: 'front', act: 'clipboard', sitZ: 0 };
       if (p.mode === 'work' && p.run) {
         const q = p.run.poi;
         return { pose: 'stand', face: q.face, act: q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
@@ -1791,6 +1941,8 @@
           if (mate && !mate.path.length && ((mate.poi && mate.poi.partner === p.key) || (mate.visit && mate.visit.mate === p.key))) act = 'chat';
         }
         if (p.zone === 'error') act = 'scratch';
+        // In line: the one at the front knocks on your desk after 10 minutes.
+        if (q.act === 'queue') act = p.queue === 0 && waitedMs(s) > KNOCK_MS ? 'knock' : 'lookaround';
         // Waiting a while: hold up a sign (unless talking or looking out the door).
         if (p.zone === 'wait' && act !== 'knock' && act !== 'chat' && act !== 'peek' && waitedMs(s) > SIGN_MS) act = 'sign';
         return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act, sitZ: q.sit || 0 };
@@ -1885,6 +2037,16 @@
           c.fillRect(-10, hip - 24 + k, 3, 13);
           c.fillRect(7, hip - 24 - k, 3, 13);
           hand(-8.5, hip - 25 + k); hand(8.5, hip - 25 - k);
+          break;
+        }
+        case 'clipboard': {
+          // Holding up a clipboard with the news.
+          c.fillRect(-9, hip - 14, 3, 8);
+          c.fillRect(6, hip - 14, 3, 8);
+          c.fillStyle = '#a7743f'; c.fillRect(-7, hip - 19, 14, 15);
+          c.fillStyle = '#fafafa'; c.fillRect(-5.5, hip - 16, 11, 11);
+          c.fillStyle = '#9aa0a8'; for (let i = 0; i < 4; i++) c.fillRect(-4, hip - 14 + i * 2.5, 8 - (i % 2) * 3, 1);
+          c.fillStyle = '#6b6f76'; c.fillRect(-2.5, hip - 20, 5, 2);
           break;
         }
         case 'sign': {
@@ -2211,7 +2373,11 @@
       };
 
       let top = y;
-      if (this.dropOn === p.key) {
+      if (p.held && this.dropAt) {
+        top = pill('放開＝' + this.dropAt.hint, '#fff', '#8b6be6', y - 12);
+      } else if (p.errand && !p.path.length) {
+        top = pill('📋 ' + p.errand.text, '#fff', '#3b8ee0', y - 12);
+      } else if (this.dropOn === p.key) {
         top = pill('放開＝把話轉給我', '#fff', '#8b6be6', y - 12);
       } else if (p.held) {
         // Held up: no status bubble, just the name and what they shout.
@@ -2333,7 +2499,8 @@
         if (mins >= 1) {
           c.font = font(700, 9);
           c.fillStyle = mins >= 15 ? STATUS_COLOR.error : pal.text;
-          c.fillText(`等了 ${mins >= 60 ? Math.floor(mins / 60) + ' 小時' : mins + ' 分'}`, x, y + 18);
+          const place = p.queue != null ? `排第 ${p.queue + 1}・` : '';
+          c.fillText(`${place}等了 ${mins >= 60 ? Math.floor(mins / 60) + ' 小時' : mins + ' 分'}`, x, y + 18);
           c.font = font(600, 10);
         }
       }
@@ -2523,7 +2690,7 @@
         else if (p.napDesk) occupant.set(p.napDesk, p);
       }
       const items = [...this.plan.items];
-      for (const dk of this.plan.desks) {
+      for (const dk of [...this.plan.desks, ...(this.plan.sec ? [this.plan.sec, this.plan.boss] : [])]) {
         const p = occupant.get(dk);
         items.push({ depth: dk.x + 0.7 + dk.y + 0.4, draw: () => this.desk(dk, p) });
         items.push({ depth: dk.seat.x + dk.seat.y - 0.06, draw: () => this.chair(dk, p) });
@@ -2541,6 +2708,14 @@
       }
       this.pingPongBall();
       if (!this.compact && this.roam === false) this.zoneSigns();
+      this.deskSign();
+      // Where a held person would be dropped onto furniture.
+      if (this.dropAt) {
+        const f = this.iso(this.dropAt.x, this.dropAt.y, 0);
+        c.strokeStyle = '#8b6be6'; c.lineWidth = 3;
+        const r = 20 + Math.sin(this.t / 120) * 3;
+        c.beginPath(); c.ellipse(f.x, f.y, r, r / 2, 0, 0, Math.PI * 2); c.stroke();
+      }
       if (this.compact) {
         // Keep labels readable when the room is scaled down for PiP.
         c.save();

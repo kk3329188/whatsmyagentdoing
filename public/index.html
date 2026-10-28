@@ -229,6 +229,26 @@
   .hub-relay .hub-btn { margin-left: 6px; padding: 1px 8px; }
   .hub-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60; padding: 10px 16px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.25); max-width: calc(100vw - 32px); }
   .hub-toast[hidden] { display: none; }
+  .hub-toast button { margin-left: 10px; border: 0; border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; background: var(--bg); color: var(--ink); }
+  .hub-tools button, .hub-pins button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 2px 10px; font: inherit; cursor: pointer; }
+  .hub-tools button:hover, .hub-pins button:hover { border-color: var(--tool); }
+  .hub-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 10px; font-size: 12px; }
+  .hub-pins[hidden] { display: none; }
+  .hub-pin { display: inline-flex; align-items: center; }
+  .hub-pin [data-open] { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px 0 0 999px; }
+  .hub-pin small { color: var(--muted); }
+  .hub-pin .hub-unpin { border-left: 0; border-radius: 0 999px 999px 0; padding: 2px 8px; }
+  .hub-modal { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; background: rgba(0,0,0,.35); padding: 16px; }
+  .hub-modal[hidden] { display: none; }
+  .hub-card { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.3); font-size: 13px; line-height: 1.55; }
+  .hub-card h3 { margin: 0 0 10px; font-size: 16px; }
+  .hub-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  .hub-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .hub-list li { display: grid; gap: 2px; }
+  .hub-list button { justify-self: start; border: 0; background: none; color: var(--tool); font: inherit; font-weight: 600; padding: 0; cursor: pointer; text-align: left; }
+  .hub-list small { color: var(--muted); }
+  .hub-card .hub-row { margin-top: 14px; }
+  .hub-copy { width: 100%; font: 12px ui-monospace, monospace; }
   .office-canvas { touch-action: none; }
   .hub-needs button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 10px; font: inherit; cursor: pointer; }
   .hub-needs button:hover { border-color: var(--waiting); }
@@ -526,13 +546,15 @@ function render() {
   const main = document.getElementById('main');
   const officeMode = state.view === 'office';
   document.getElementById('officeWrap').style.display = officeMode ? '' : 'none';
-  // The office decides who sits at a desk and who wanders around.
-  const officeList = all;
+  // The office decides who sits at a desk and who wanders around; the ones
+  // you dropped at the door stay away until they do something new.
+  const officeList = PIP ? all : all.filter((s) => !Hub.isHidden(s));
   const poppedOut = !!popout?.win;
   // Wait for the first snapshot so people start at their places instead of
   // all walking in through the door.
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
+    office.pins = PIP ? [] : Hub.pinNames();
     office.setVisible(officeMode && !poppedOut);
     office.update(officeList);
   }
@@ -695,7 +717,12 @@ const officeOpts = {
   roam: store.get('roam', true),
   // Dropping one person on another passes the first one's last reply on.
   onRelay: (from, to) => { if (!PIP) Hub.relay(from, to); },
+  // Dropping someone on the printer, whiteboard, coffee machine or door.
+  onCommand: (kind, s) => { if (!PIP) Hub.command(kind, s); },
+  isSecretary: (s) => Hub.isSecretary(s),
   onHover(s, at, click) {
+    // The secretary came over with news: clicking them shows it again.
+    if (click && s && office && office.secKey === s.key && office.people.get(s.key)?.errand) { Hub.showAway(); return; }
     if (click) {
       // Clicking a person opens their session panel.
       hideTip();
@@ -879,6 +906,9 @@ Hub.mount({
   sound: store.get('sound', true),
   onSound(v) { store.set('sound', v); },
   onRelayed(from, to, text) { if (office && office.relayed) office.relayed(from, to, text); },
+  onAway(text) { return office && office.deliver ? office.deliver(text) : false; },
+  onAwayDone() { if (office && office.endErrand) office.endErrand(); },
+  onChange() { render(); },
 });
 applyLang(chooseLang(null));
 syncControls();

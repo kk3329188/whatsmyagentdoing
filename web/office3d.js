@@ -304,6 +304,8 @@ export class Office3D extends window.Office {
 
     // desks
     for (const dk of plan.desks) this.buildDesk(dk);
+    // Your desk and the secretary's.
+    if (plan.boss) { this.buildDesk(plan.boss); this.buildDesk(plan.sec); }
 
     for (const p of plan.props) this.buildProp(p);
     this.fitCamera3D(true);
@@ -1169,7 +1171,7 @@ export class Office3D extends window.Office {
       p.pose = st.pose;
       const anim = {
         held: 'fall', dazed: 'emote-no', chat: 'interact-right', stretch: 'emote-yes', sip: 'holding-right', eat: 'holding-right',
-        printer: 'pick-up', neck: 'idle', lookaround: 'idle', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
+        printer: 'pick-up', neck: 'idle', lookaround: 'idle', clipboard: 'holding-both', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
         walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
         phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
@@ -1215,7 +1217,7 @@ export class Office3D extends window.Office {
       if (a.sign) a.sign.visible = st.act === 'sign';
       // hand-held props
       a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
-      a.book.visible = st.act === 'read';
+      a.book.visible = st.act === 'read' || st.act === 'clipboard';
       if (a.armR && (a.cup.visible || a.book.visible)) {
         a.obj.updateMatrixWorld(true);
         const hand = new THREE.Vector3(0, -0.4, 0.15);
@@ -1356,6 +1358,11 @@ export class Office3D extends window.Office {
       this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
     }
     heads.sort((a, b) => b[2] - a[2]);
+    if (this.plan.boss) {
+      const b = this.plan.boss;
+      v.set(b.x + 0.7, 0, Math.min(this.plan.D - 0.1, b.y + 1.7)).project(this.camera);
+      this.deskSignAt({ x: (v.x + 1) / 2 * this.cw, y: (1 - v.y) / 2 * this.ch });
+    }
     for (const [p, at] of heads) this.bubble(p, at);
     if (this.offDuty > 0) {
       c.font = '600 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';

@@ -18,6 +18,12 @@ const LEVELS = [0, 60, 200, 600, 1500]; // XP needed for Lv1..Lv5
 const KEEP_MS = 60 * 86400_000;
 
 const xpOf = (r) => (r ? r.tools + r.turns * 5 : 0);
+const pad = (n) => String(n).padStart(2, '0');
+const dayOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const midnight = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+// Waiting on you: a question, or a finished turn that left you a decision.
+const waiting = (s) => s.status === 'waiting' || (s.status === 'done' && !!s.ask);
+const WAITS_MAX = 200;
 
 function levelOf(xp) {
   let lv = 1;
@@ -29,16 +35,20 @@ class Progress {
   constructor(file = FILE) {
     this.file = file;
     this.seen = new Map(); // key -> { obj, tools, turns } as last counted this run
+    this.waitSince = new Map(); // key -> when it started waiting on you
     this.dirty = false;
     this.data = { turns: 0, tools: 0, sessions: {} };
     try {
       const d = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (d && typeof d.sessions === 'object') this.data = { turns: +d.turns || 0, tools: +d.tools || 0, sessions: d.sessions };
+      if (d && typeof d.sessions === 'object') this.data = { turns: +d.turns || 0, tools: +d.tools || 0, sessions: d.sessions, today: d.today || null };
     } catch { /* first run */ }
   }
 
   update(sessions, now = Date.now()) {
     const d = this.data;
+    // Today's tally (for the end-of-day report) starts over at midnight.
+    const day = dayOf(now);
+    if (!d.today || d.today.date !== day) { d.today = { date: day, sessions: {}, waits: [] }; this.dirty = true; }
     for (const s of sessions) {
       if (s.subagent) continue;
       const key = `${s.agent}:${s.id}`;
@@ -46,13 +56,31 @@ class Progress {
       const last = this.seen.get(key);
       let rec = d.sessions[key];
       let add = null;
-      if (!last || last.obj !== s) add = rec ? null : cur;
-      else add = { tools: Math.max(0, cur.tools - last.tools), turns: Math.max(0, cur.turns - last.turns) };
+      // Today only counts what happened today: deltas, or all of a session that started today.
+      let today = false;
+      if (!last || last.obj !== s) { add = rec ? null : cur; today = (s.startedAt || 0) >= midnight(now); }
+      else { add = { tools: Math.max(0, cur.tools - last.tools), turns: Math.max(0, cur.turns - last.turns) }; today = true; }
+      // How long you took to answer it.
+      const since = this.waitSince.get(key);
+      if (waiting(s) && since == null) this.waitSince.set(key, s.lastEventAt || now);
+      else if (!waiting(s) && since != null) {
+        this.waitSince.delete(key);
+        const end = s.turnStartedAt && s.turnStartedAt > since ? s.turnStartedAt : now;
+        if (last && last.obj === s && end - since > 5000 && end >= midnight(now)) {
+          d.today.waits.push({ key, ms: end - since });
+          if (d.today.waits.length > WAITS_MAX) d.today.waits.shift();
+          this.dirty = true;
+        }
+      }
       this.seen.set(key, { obj: s, ...cur });
       if (!rec) { rec = d.sessions[key] = { tools: 0, turns: 0, at: now }; this.dirty = true; }
       if (add && (add.tools || add.turns)) {
         rec.tools += add.tools; rec.turns += add.turns; rec.at = now;
         d.tools += add.tools; d.turns += add.turns;
+        if (today) {
+          const t = d.today.sessions[key] || (d.today.sessions[key] = { tools: 0, turns: 0 });
+          t.tools += add.tools; t.turns += add.turns;
+        }
         this.dirty = true;
       }
     }
@@ -60,7 +88,25 @@ class Progress {
 
   level(key) { return levelOf(xpOf(this.data.sessions[key])); }
 
-  office() { return { turns: this.data.turns, tools: this.data.tools }; }
+  // What the page shows: lifetime totals and a summary of today.
+  office() {
+    const t = this.data.today || { date: null, sessions: {}, waits: [] };
+    const rows = Object.entries(t.sessions).map(([key, v]) => ({ key, ...v }));
+    const waits = t.waits;
+    return {
+      turns: this.data.turns,
+      tools: this.data.tools,
+      today: {
+        date: t.date,
+        turns: rows.reduce((a, r) => a + r.turns, 0),
+        tools: rows.reduce((a, r) => a + r.tools, 0),
+        top: rows.sort((a, b) => b.turns - a.turns || b.tools - a.tools).slice(0, 30),
+        answered: waits.length,
+        avgWaitMs: waits.length ? Math.round(waits.reduce((a, w) => a + w.ms, 0) / waits.length) : 0,
+        longest: [...waits].sort((a, b) => b.ms - a.ms).slice(0, 3),
+      },
+    };
+  }
 
   save(now = Date.now()) {
     if (!this.dirty) return;
