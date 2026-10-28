@@ -339,8 +339,8 @@ test('waiting on you: in line at your desk, sign after 3 minutes, the first knoc
 
 test('the secretary session sits beside your desk and brings you news', () => {
   const o = load(true);
-  o.isSecretary = (s) => /值機/.test(s.title || '');
-  const who = settle(o, [at('done', { n: 'd', title: '2026-10-28 值機' }), at('idle', { ago: 60 * MIN })]);
+  o.isSecretary = (s) => /總機/.test(s.title || '');
+  const who = settle(o, [at('done', { n: 'd', title: '2026-10-28 總機' }), at('idle', { ago: 60 * MIN })]);
   const sec = who('claude:doned');
   assert.equal(o.secKey, sec.key);
   assert.equal(sec.mode, 'work');
@@ -356,7 +356,7 @@ test('the secretary session sits beside your desk and brings you news', () => {
   assert.equal(sec.errand, null);
   assert.ok(sec.path.length, 'back to their desk');
   // Working: still at their own desk.
-  o.update([at('tool', { n: 'd', key: 'claude:doned', title: '2026-10-28 值機', activity: 'Read a' })]);
+  o.update([at('tool', { n: 'd', key: 'claude:doned', title: '2026-10-28 總機', activity: 'Read a' })]);
   assert.equal(sec.desk, o.plan.sec);
 });
 
