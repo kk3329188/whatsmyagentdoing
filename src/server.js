@@ -12,12 +12,15 @@ const STATIC = {
   '/office3d.js': ['office3d.js', 'text/javascript; charset=utf-8'],
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/popout.js': ['popout.js', 'text/javascript; charset=utf-8'],
+  '/hub.js': ['hub.js', 'text/javascript; charset=utf-8'],
 };
 const TYPES = { '.js': 'text/javascript; charset=utf-8', '.glb': 'model/gltf-binary', '.png': 'image/png', '.json': 'application/json' };
 // 3D models, served as-is (3D view only).
 const MOUNTS = { '/assets/': path.join(__dirname, '..', 'assets') };
 const scenes = require('./scenes');
 const updater = require('./update');
+const hub = require('./hub');
+const desktop = new hub.DesktopMeta();
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -31,11 +34,13 @@ function serveFile(res, root, rel) {
   fs.createReadStream(file).pipe(res);
 }
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
+const TALK_MS = 3 * 60_000;
 
 // Logs only record finished blocks, so a few states need a clock to resolve:
 // a reply with no follow-up is a finished turn, and an "active" session that
 // has gone silent for a long time was most likely closed mid-turn.
 function view(s, now, { privacy }) {
+  const meta = s.agent === 'claude' && !s.subagent ? desktop.get(s.id) : null;
   const quiet = now - (s.lastEventAt || s.mtime || now);
   let status = s.status;
   if (status === 'typing' && quiet > 45_000) status = 'done';
@@ -52,7 +57,7 @@ function view(s, now, { privacy }) {
     subagent: s.subagent,
     cwd: s.cwd,
     project: s.cwd ? path.basename(s.cwd) : null,
-    title: s.title,
+    title: (meta && meta.title) || s.title,
     model: s.model,
     status,
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
@@ -62,12 +67,56 @@ function view(s, now, { privacy }) {
     turnStartedAt: s.turnStartedAt,
     lastEventAt: s.lastEventAt || s.mtime,
     startedAt: s.startedAt,
+    // hub edition additions
+    plan: s.plan,
+    progress: s.progress,
+    recent: s.recent,
+    question: status === 'waiting' ? s.question : null,
+    options: status === 'waiting' ? s.options : null,
+    choices: status === 'done' && s.ask ? s.choices : null,
+    stuck: stuckReason(s, status, quiet),
+    ask: status === 'done' ? s.ask : null,
+    recap: s.recap,
+    ccdId: meta ? meta.ccdId : null,
+    branch: meta ? meta.branch : null,
+    permission: meta ? meta.permissionMode : null,
+    effort: meta ? meta.effort : null,
+    git: s.cwd && !s.subagent && s.agent === 'claude' ? hub.gitState(s.cwd) : null,
+    needs: meta && status === 'done' ? meta.needs : null,
+    summary: meta ? meta.summary : null,
+    scheduled: meta ? meta.scheduled : false,
+    archived: meta ? meta.archived : false,
+    // A desktop or terminal Claude session runs the myoffice-remote plugin, which
+    // reads the queued commands.
+    controllable: s.agent === 'claude' && !s.subagent,
+    pending: s.agent === 'claude' && !s.subagent ? hub.pending(s.id) : 0,
+    ack: s.agent === 'claude' && !s.subagent ? hub.lastAck(s.id) : null,
+    // Other sessions it just sent a message to or got one from.
+    talk: (s.talk || [])
+      .filter((t) => now - t.at < TALK_MS)
+      .map((t) => { const m = desktop.byLocal(t.peer); return m && m.cliId ? { key: `claude:${m.cliId}`, dir: t.dir, at: t.at, text: t.text } : null; })
+      .filter(Boolean),
   };
   if (privacy) {
     out.prompt = out.reply = out.title = null;
+    out.question = out.ask = out.recap = out.needs = out.summary = out.choices = out.options = null;
+    out.recent = [];
+    out.talk = out.talk.map((t) => ({ ...t, text: null }));
+    out.plan = out.plan && out.plan.map((x) => ({ content: '', status: x.status }));
+    if (out.progress) out.progress = { ...out.progress, step: '' };
     if (out.activity) out.activity = out.activity.split(/[:\s]/)[0];
   }
   return out;
+}
+
+// Signs a session is going in circles: one action for
+// too long, the same action over and over, or tools failing in a row.
+function stuckReason(s, status, quiet) {
+  if (status === 'tool' && quiet > 10 * 60_000) return `同一個動作卡了 ${Math.round(quiet / 60_000)} 分鐘`;
+  if (status === 'thinking' && quiet > 8 * 60_000) return `思考了 ${Math.round(quiet / 60_000)} 分鐘沒動靜`;
+  if ((status === 'tool' || status === 'thinking') && s.repeat && s.repeat.n >= 4 && /^(Bash|Shell):/.test(s.repeat.text)) return `重複同一件事 ${s.repeat.n} 次：${s.repeat.text}`;
+  if ((status === 'tool' || status === 'thinking') && s.errStreak >= 3) return `工具連續出錯 ${s.errStreak} 次`;
+  return null;
 }
 
 // The language the user writes their prompts in (recent sessions first);
@@ -83,10 +132,12 @@ function promptLanguage(raw) {
 
 function snapshot(watcher, opts) {
   const now = Date.now();
+  if (!opts.demo) desktop.refresh(now);
   const raw = watcher.sessions();
-  const sessions = raw.map((s) => view(s, now, opts));
+  // Archived desktop sessions are closed work: keep them out of the office.
+  const sessions = raw.map((s) => view(s, now, opts)).filter((s) => !s.archived);
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), sessions };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), sessions };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
@@ -178,6 +229,53 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
         },
         (e) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String(e.message || e) })); },
       );
+    } else if (url.pathname === '/api/hub/verify' && req.method === 'POST') {
+      // The myoffice-remote plugin asks whether a queued command really came from
+      // a Touch ID approval here (see src/hub.js).
+      if (req.headers['x-whatsmyagentdoing'] !== 'verify') { res.writeHead(403).end(); return; }
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 64 * 1024) req.destroy(); });
+      req.on('end', () => {
+        let ok = false;
+        try { ok = hub.verify(JSON.parse(body || '{}')); } catch {}
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok }));
+      });
+    } else if (url.pathname.startsWith('/api/hub/') && req.method === 'POST') {
+      // Same guard as shutdown: web pages can't send this header cross-site.
+      if (req.headers['x-whatsmyagentdoing'] !== 'hub' || opts.privacy || opts.demo) { res.writeHead(403).end(); return; }
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 64 * 1024) req.destroy(); });
+      req.on('end', async () => {
+        const reply = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+        try {
+          const { key, text } = JSON.parse(body || '{}');
+          const s = watcher.sessions().find((x) => `${x.agent}:${x.id}` === key);
+          if (!s || s.agent !== 'claude' || s.subagent) return reply(404, { ok: false, error: 'no such session' });
+          const action = url.pathname.slice('/api/hub/'.length);
+          if (action === 'open') {
+            const meta = desktop.get(s.id);
+            if (!meta) return reply(400, { ok: false, error: 'not a desktop app session' });
+            await hub.openInApp(meta.ccdId);
+            return reply(200, { ok: true });
+          }
+          if (action === 'say' || action === 'stop') {
+            if (action === 'say' && !String(text || '').trim()) return reply(400, { ok: false, error: 'empty message' });
+            // One Touch ID unlocks this browser for 8 hours (an HttpOnly
+            // cookie only the browser holds); a process calling the API
+            // without it still triggers Touch ID, which you would refuse.
+            if (!hub.unlocked(req.headers.cookie)) {
+              const gate = await hub.humanGate('myoffice：允許這個瀏覽器 8 小時內傳話／中斷 session');
+              if (!gate.ok) return reply(403, { ok: false, error: gate.error });
+              res.setHeader('set-cookie', hub.unlockCookie());
+            }
+            return reply(200, { ok: true, id: hub.queue(s.id, action, text) });
+          }
+          reply(404, { ok: false, error: 'unknown action' });
+        } catch (e) {
+          reply(400, { ok: false, error: String(e.message || e) });
+        }
+      });
     } else if (url.pathname === '/api/ping') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ app: 'whatsmyagentdoing' }));

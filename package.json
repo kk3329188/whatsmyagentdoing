@@ -1,6 +1,6 @@
 {
   "name": "whatsmyagentdoing",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "See what every Claude Code and Codex agent on your machine is doing, live in your browser.",
   "bin": {
     "whatsmyagentdoing": "bin/cli.js"
@@ -26,11 +26,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Charonyuu/whatsmyagentdoing.git"
+    "url": "git+https://github.com/kk3329188/whatsmyagentdoing.git"
   },
-  "homepage": "https://github.com/Charonyuu/whatsmyagentdoing#readme",
+  "homepage": "https://github.com/kk3329188/whatsmyagentdoing#readme",
   "bugs": {
-    "url": "https://github.com/Charonyuu/whatsmyagentdoing/issues"
+    "url": "https://github.com/kk3329188/whatsmyagentdoing/issues"
   },
   "author": "cheoyu",
   "devDependencies": {

@@ -34,7 +34,32 @@ function newSession(agent, id, file) {
     turnStartedAt: null,
     lastEventAt: null,
     startedAt: null,
+    // Hub edition: what the session is working through
+    plan: null,       // [{ content, status }] from its task list
+    progress: null,   // { total, done, step } reported to the session board
+    recent: [],       // last few actions, newest last: { at, text }
+    question: null,   // the question it is waiting on you for
+    ask: null,        // the decision its wrap-up left you
+    recap: null,      // its wrap-up recap
+    choices: null,    // the reply buttons its wrap-up offered: [{ label, message }]
+    options: null,    // the choices of the question it is waiting on
+    repeat: null,     // { text, n }: the same action n times in a row
+    errStreak: 0,     // tool calls that failed in a row
+    talk: [],         // messages with other sessions, newest last: { peer, dir: 'out'|'in', at, text }
+    spawning: null,   // tool_use id of a start_session call whose result names the new session
   };
+}
+
+const KEEPALIVE = '[cache-keepalive]';
+const RECENT_MAX = 12;
+const TALK_MAX = 6;
+const LOCAL_ID = /local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+
+// A message to or from another desktop session.
+function talk(s, peer, dir, at, text) {
+  if (!peer || !LOCAL_ID.test(peer)) return;
+  s.talk.push({ peer: peer.match(LOCAL_ID)[0], dir, at, text: short(String(text || '').replace(/\s+/g, ' '), 60) });
+  if (s.talk.length > TALK_MAX) s.talk.shift();
 }
 
 function clean(text, max = 220) {
@@ -115,7 +140,63 @@ function describeClaudeTool(name, input = {}) {
   }
 }
 
+// The desktop app's task list (update_plan), TodoWrite, and the
+// session board's progress tool all describe the same thing: the steps.
+function applyPlan(s, name, input = {}) {
+  if (name === 'mcp__ccd_turn__update_plan') {
+    if (Array.isArray(input.items)) {
+      s.plan = input.items.map((x) => ({ content: short(x.content, 80), status: x.status || 'pending' }));
+      return true;
+    }
+    const plan = s.plan;
+    if (!plan) return true;
+    const at = (n) => plan[n - 1];
+    if (input.advance) {
+      const i = plan.findIndex((x) => x.status === 'in_progress');
+      if (i !== -1) plan[i].status = 'completed';
+      const next = plan.findIndex((x, j) => j > i && x.status === 'pending');
+      if (next !== -1) plan[next].status = 'in_progress';
+    }
+    for (const n of input.done || []) if (at(n)) at(n).status = 'completed';
+    if (input.start && at(input.start)) {
+      for (const x of plan) if (x.status === 'in_progress') x.status = 'pending';
+      at(input.start).status = 'in_progress';
+    }
+    return true;
+  }
+  if (name === 'TodoWrite' && Array.isArray(input.todos)) {
+    s.plan = input.todos.map((x) => ({ content: short(x.activeForm || x.content, 80), status: x.status || 'pending' }));
+    return true;
+  }
+  if (name === 'mcp__session-board__progress') {
+    const total = Math.max(1, Number(input.total) || 1);
+    s.progress = { total, done: Math.min(total, Math.max(0, Number(input.done) || 0)), step: short(input.step, 80) };
+    return true;
+  }
+  if (name === 'mcp__ccd_turn__wrap_up') {
+    if (s.plan) for (const x of s.plan) x.status = 'completed';
+    s.ask = input.ask ? short(input.ask, 160) : null;
+    s.recap = input.recap ? short(input.recap, 400) : null;
+    // Reply buttons only (app actions like "commit" are the app's own).
+    const acts = Array.isArray(input.actions) ? input.actions : [];
+    s.choices = s.ask ? acts.filter((a) => a && !a.action && (a.label || a.message))
+      .map((a) => ({ label: short(a.label || a.message, 30), message: String(a.message || a.label).slice(0, 600) })) : null;
+    if (s.choices && !s.choices.length) s.choices = null;
+    return true;
+  }
+  return false;
+}
+
 function applyClaude(s, d) {
+  // Cache keep-alive pings ("[cache-keepalive]" → "pong") are not work:
+  // skip the whole ping turn so an idle session doesn't look busy.
+  if (d.type === 'user') {
+    const c = d.message?.content;
+    const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => x.text || '').join('') : '';
+    if (d.isMeta && t.includes(KEEPALIVE)) { s.pinging = true; return; }
+    if (!d.isMeta) s.pinging = false;
+  }
+  if (s.pinging && (d.type === 'assistant' || d.type === 'system' || d.type === 'attachment')) return;
   const ts = stamp(s, d.timestamp);
   if (d.cwd) s.cwd = d.cwd;
 
@@ -134,10 +215,28 @@ function applyClaude(s, d) {
       }
       return;
     case 'user': {
-      if (d.isMeta) return;
       const c = d.message?.content;
+      // Another session sent this one a message.
+      if (d.origin && d.origin.kind === 'peer') {
+        const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => x.text || '').join('') : '';
+        talk(s, d.origin.from, 'in', ts, t.replace(/^[\s\S]*?<cross-session-message[^>]*>/, ''));
+      }
+      if (d.isMeta) return;
+      if (Array.isArray(c) && s.spawning) {
+        // start_session's result names the session it started.
+        const r = c.find((x) => x.type === 'tool_result' && x.tool_use_id === s.spawning.id);
+        if (r) {
+          const body = typeof r.content === 'string' ? r.content : JSON.stringify(r.content || '');
+          const m = !r.is_error && body.match(LOCAL_ID);
+          if (m) talk(s, m[0], 'out', ts, s.spawning.text);
+          s.spawning = null;
+        }
+      }
       if (Array.isArray(c) && c.some((x) => x.type === 'tool_result')) {
         // Tool finished (or you answered its question); model reads the result.
+        s.question = null;
+        s.options = null;
+        s.errStreak = c.some((x) => x.type === 'tool_result' && x.is_error) ? s.errStreak + 1 : 0;
         set(s, 'thinking');
         return;
       }
@@ -150,10 +249,17 @@ function applyClaude(s, d) {
       const cmd = text.match(/<command-name>([^<]+)<\/command-name>/);
       const isNotification = text.trimStart().startsWith('<task-notification>');
       if (!isNotification) {
-        s.prompt = cmd ? cmd[1].trim() : clean(text);
+        s.prompt = cmd ? cmd[1].trim() : clean(text, 600);
         if (!s.title && d.isSidechain) s.title = clean(text, 80);
         s.reply = null;
+        s.ask = null;
+        s.recap = null;
+        s.choices = null;
       }
+      s.question = null;
+      s.options = null;
+      s.repeat = null;
+      s.errStreak = 0;
       s.turnStartedAt = ts;
       set(s, 'thinking', null);
       return;
@@ -165,10 +271,24 @@ function applyClaude(s, d) {
       for (const b of blocks) {
         if (b.type === 'thinking' || b.type === 'redacted_thinking') set(s, 'thinking');
         else if (b.type === 'text') {
-          s.reply = clean(b.text) || s.reply;
+          s.reply = clean(b.text, 1200) || s.reply;
           set(s, m.stop_reason === 'end_turn' || m.stop_reason === 'stop_sequence' ? 'done' : 'typing', null);
         } else if (b.type === 'tool_use') {
-          set(s, WAITING_TOOLS.has(b.name) ? 'waiting' : 'tool', describeClaudeTool(b.name, b.input));
+          const what = describeClaudeTool(b.name, b.input);
+          set(s, WAITING_TOOLS.has(b.name) ? 'waiting' : 'tool', what);
+          applyPlan(s, b.name, b.input || {});
+          if (b.name === 'AskUserQuestion') {
+            const q = (b.input?.questions || [])[0];
+            s.question = q ? short(q.question, 200) : null;
+            s.options = q && Array.isArray(q.options) ? q.options.map((o) => short(o.label, 40)).filter(Boolean) : null;
+          }
+          const inp = b.input || {};
+          if (b.name === 'SendMessage') talk(s, inp.to, 'out', ts, inp.message);
+          else if (b.name === 'mcp__ccd_session_mgmt__send_message') talk(s, inp.session_id, 'out', ts, inp.message);
+          else if (b.name === 'mcp__ccd_session__start_session' && inp.initiation === 'user_asked') s.spawning = { id: b.id, text: inp.title || '開新 session' };
+          s.repeat = s.repeat && s.repeat.text === what ? { text: what, n: s.repeat.n + 1 } : { text: what, n: 1 };
+          s.recent.push({ at: ts, text: what });
+          if (s.recent.length > RECENT_MAX) s.recent.shift();
         }
       }
       if (d.isApiErrorMessage) {

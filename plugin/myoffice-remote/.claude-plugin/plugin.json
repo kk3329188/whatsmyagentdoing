@@ -1,0 +1,8 @@
+{
+  "name": "myoffice-remote",
+  "version": "1.0.0",
+  "description": "Lets the myoffice dashboard send a message to this session or stop its turn, after you confirm with Touch ID in the browser",
+  "author": {
+    "name": "kk3329188"
+  }
+}

@@ -1,8 +1,8 @@
 'use strict';
 
 // Version check and self-update. The check reads one public file (the
-// package.json on GitHub's main branch) and sends nothing else; set
-// WMAD_NO_UPDATE_CHECK=1 to turn it off. Updating is a `git pull --ff-only`
+// package.json of this edition's `hub` branch on GitHub) and sends nothing
+// else; set WMAD_NO_UPDATE_CHECK=1 to turn it off. Updating is a `git pull`
 // in the install folder, so it only works for git clones (which is how the
 // skill is installed).
 
@@ -12,7 +12,7 @@ const https = require('https');
 const { execFile } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const LATEST_URL = 'https://raw.githubusercontent.com/Charonyuu/whatsmyagentdoing/main/package.json';
+const LATEST_URL = 'https://raw.githubusercontent.com/kk3329188/whatsmyagentdoing/hub/package.json';
 const CHECK_EVERY = 30 * 60 * 1000;
 
 function localVersion() {
@@ -71,9 +71,15 @@ function info() {
 function update() {
   return new Promise((resolve, reject) => {
     if (!canUpdate()) return reject(new Error(`not a git clone (${ROOT}); reinstall it with git clone to get updates`));
-    execFile('git', ['-C', ROOT, 'pull', '--ff-only', '--quiet'], { timeout: 60000 }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(String(stderr || err.message).trim()));
-      resolve(localVersion());
+    // A clone of this edition follows the branch it was cloned from. A
+    // working copy whose branch tracks nothing keeps its own commits on top
+    // of the original project's main instead.
+    execFile('git', ['-C', ROOT, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { timeout: 10000 }, (noUpstream) => {
+      const args = noUpstream ? ['pull', '--rebase', '--quiet', 'origin', 'main'] : ['pull', '--rebase', '--quiet'];
+      execFile('git', ['-C', ROOT, ...args], { timeout: 60000 }, (err, stdout, stderr) => {
+        if (err) return reject(new Error(String(stderr || err.message).trim()));
+        resolve(localVersion());
+      });
     });
   });
 }

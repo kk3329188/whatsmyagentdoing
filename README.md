@@ -10,6 +10,49 @@
 
 <sub>Recorded with `--demo` (a made-up team), so no real sessions are shown.</sub>
 
+## 這個版本（kk3329188/whatsmyagentdoing 的 `hub` 分支）
+
+在原版之上加了：人物名牌用 session 標題、頭上用中文寫正在做什麼、點人物開控制面板（步驟、最近動作、等你回覆的問題、切到該 session、**直接傳訊息、中斷這一輪**）、
+自由走動與生活動作、按住人物拖曳、session 互傳訊息時人物會走去找對方聊天。
+
+### 安裝
+
+需要：macOS、Node.js 18 以上、Claude Code 2.1.275 以上；送訊息要用 Touch ID 確認，所以還要 Xcode Command Line Tools（沒裝過就在終端機跑 `xcode-select --install`）。
+
+**最簡單：把下面這段貼給 Claude Code**
+
+> 幫我安裝 myoffice（https://github.com/kk3329188/whatsmyagentdoing 的 hub 分支）：
+> 1. 確認 `node --version` 是 18 以上。
+> 2. `git clone --depth 1 -b hub https://github.com/kk3329188/whatsmyagentdoing ~/.claude/skills/myoffice`
+> 3. `claude plugin install myoffice-remote --marketplace kk3329188/whatsmyagentdoing`；如果說版本太舊，先跑 `claude update` 再試。
+> 4. 用 `xcode-select -p` 檢查 Command Line Tools；沒有就叫我自己跑 `xcode-select --install`。
+> 5. 裝完叫我開一個新的 session，輸入 `/myoffice`。
+
+**或自己裝**
+
+1. 儀表板（skill）：
+
+   ```bash
+   git clone --depth 1 -b hub https://github.com/kk3329188/whatsmyagentdoing ~/.claude/skills/myoffice
+   ```
+
+2. 收件外掛（讓網頁能送訊息、中斷你的 session）：
+
+   ```bash
+   claude plugin install myoffice-remote --marketplace kk3329188/whatsmyagentdoing
+   ```
+
+   也可以在終端機的 Claude Code 輸入 `/plugin install myoffice-remote --marketplace kk3329188/whatsmyagentdoing`（出現 `Add marketplace?` 按 `y`，範圍選 user）。
+   桌面 app 裡 `/plugin` 不能用：點輸入框旁的 + → Plugins → Add marketplace 填 `kk3329188/whatsmyagentdoing` → Add plugin。
+
+3. 開一個新的 session，輸入 `/myoffice`。點任一人物，在面板下方打字按 Enter 就會送到那個 session（第一次會跳 Touch ID，之後同一個瀏覽器 8 小時內免按）。
+
+外掛只在**裝好之後新開的 session** 裡生效；之前開的 session 收不到訊息，面板會一直顯示「排隊中」，10 分鐘後自動丟掉。
+傳過去的訊息以你的身分出現，開頭標〔myoffice〕；對方正在跑就排到這一輪結束才送。中斷只結束這一輪，當時正在跑的指令會轉到背景跑完。
+
+更新：`git -C ~/.claude/skills/myoffice pull`，外掛用 `claude plugin update myoffice-remote`（或 /plugin 介面）。
+
+
 ## Install
 
 **Easiest: ask your agent.** Paste this into Claude Code or Codex:

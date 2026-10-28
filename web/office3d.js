@@ -21,6 +21,7 @@ const STATUS_COLOR = {
   thinking: 0x8b6be6, tool: 0x3b8ee0, typing: 0x22a874, waiting: 0xe09412, error: 0xde4b40,
 };
 const CHAR_HEIGHT = 0.92; // world units (≈ tiles)
+const HELD_LIFT = 0.45;   // how high a picked-up person dangles
 const WALL_H = 2.4;
 const SIT_FORWARD = 0.16;
 
@@ -97,6 +98,7 @@ export class Office3D extends window.Office {
     this.controls.maxZoom = 4;
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true;
+    this.noCat = true; // the 3D office has no cat to pet
 
     this.hemi = new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.0);
     this.scene.add(this.hemi);
@@ -1018,6 +1020,11 @@ export class Office3D extends window.Office {
 
   facing(p, st) {
     if (st.pose === 'walk') return null;
+    if (p.held || p.landed) return 0;
+    // Chatting: turn to each other.
+    const mate = st.act === 'chat' && this.people.get((p.visit && p.visit.mate) || (p.poi && p.poi.partner) || p.chatWith);
+    if (mate) return Math.atan2(mate.x - p.x, mate.y - p.y);
+    if (p.mode === 'work' && p.run) return st.face === 'back' ? Math.PI : 0;
     if (p.mode === 'work' && p.desk) {
       if (p.desk.yaw != null) return p.desk.yaw;
       return p.desk.side === 'n' ? 0 : Math.PI;
@@ -1042,6 +1049,8 @@ export class Office3D extends window.Office {
       const st = this.stateOf(p);
       p.pose = st.pose;
       const anim = {
+        held: 'fall', dazed: 'emote-no', chat: 'interact-right', stretch: 'emote-yes', sip: 'holding-right', eat: 'holding-right',
+        printer: 'pick-up', neck: 'idle', lookaround: 'idle',
         walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
         phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
@@ -1069,6 +1078,9 @@ export class Office3D extends window.Office {
       // forward so the back rests against the backrest instead of in it.
       const fwd = st.pose === 'sit' ? SIT_FORWARD : 0;
       let lift = 0;
+      // Picked up: dangle and sway under the pointer.
+      a.obj.rotation.z = p.held ? Math.sin(this.t / 200 + p.phase) * 0.15 : 0;
+      if (p.held) lift = HELD_LIFT + Math.sin(this.t / 150 + p.phase) * 0.03;
       if (st.pose !== 'walk' && p.poi && p.poi.float) {
         // zero gravity: drift up and down, slowly turning
         const k = this.t / 1000 + p.phase;
@@ -1081,7 +1093,7 @@ export class Office3D extends window.Office {
         else if (a.napped) { a.head.rotation.x = a.headRest; a.napped = false; }
       }
       // hand-held props
-      a.cup.visible = st.act === 'coffee' || st.act === 'water' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
+      a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
       a.book.visible = st.act === 'read';
       if (a.armR && (a.cup.visible || a.book.visible)) {
         a.obj.updateMatrixWorld(true);
@@ -1211,7 +1223,7 @@ export class Office3D extends window.Office {
       const st = this.stateOf(p);
       const scale = p.s.subagent ? 0.8 : 1;
       const base = this.plan.terrain && st.pose !== 'sit' ? this.groundHeight(p.x, p.y) : 0;
-      const floatUp = st.pose !== 'walk' && p.poi && p.poi.float ? 0.45 + Math.sin((this.t / 1000 + p.phase) * 0.9) * 0.18 : 0;
+      const floatUp = p.held ? HELD_LIFT : st.pose !== 'walk' && p.poi && p.poi.float ? 0.45 + Math.sin((this.t / 1000 + p.phase) * 0.9) * 0.18 : 0;
       const top = (st.pose === 'sit' ? this.seatHeight(p.x, p.y, st.sitZ) + CHAR_HEIGHT * 0.8 * scale : base + CHAR_HEIGHT * scale) + floatUp;
       v.set(p.x, top + 0.05, p.y).project(this.camera);
       const sx = (v.x + 1) / 2 * this.cw, sy = (1 - v.y) / 2 * this.ch;
@@ -1242,6 +1254,32 @@ export class Office3D extends window.Office {
     const k = (this.t / 900) % 2;
     const f = k < 1 ? k : 2 - k;
     this.ball.position.set(pp.x0 + 0.3 + f * (pp.x1 - pp.x0 - 0.6), 0.8 + Math.abs(Math.sin(f * Math.PI * 2)) * 0.4, pp.y);
+  }
+
+  // Picking people up works here too: pressing on a person holds the camera
+  // still until the button is let go; pressing anywhere else turns it.
+  canHold() { return !!this.loaded; }
+
+  grab(e) {
+    super.grab(e);
+    if (this.press) this.controls.enabled = false;
+  }
+
+  drop(e) {
+    super.drop(e);
+    this.controls.enabled = true;
+  }
+
+  // The pointer holds them by the head: where the ray through it meets head height.
+  heldAt(e) {
+    const r = this.canvas.getBoundingClientRect();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.camera);
+    const h = HELD_LIFT + CHAR_HEIGHT * 0.95;
+    const o = ray.ray.origin, d = ray.ray.direction;
+    if (Math.abs(d.y) < 1e-6) return { x: o.x, y: o.z };
+    const k = (h - o.y) / d.y;
+    return { x: o.x + d.x * k, y: o.z + d.z * k };
   }
 
   pointer(e, click) {

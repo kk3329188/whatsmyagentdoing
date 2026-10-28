@@ -1,0 +1,14 @@
+{
+  "name": "whatsmyagentdoing",
+  "owner": {
+    "name": "kk3329188"
+  },
+  "plugins": [
+    {
+      "name": "myoffice-remote",
+      "source": "./plugin/myoffice-remote",
+      "description": "Send messages to Claude Code sessions and stop their turns from the myoffice dashboard"
+    }
+  ],
+  "description": "myoffice: see and control your Claude Code sessions from a live office page"
+}

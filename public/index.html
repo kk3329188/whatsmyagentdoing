@@ -50,7 +50,7 @@
     font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
     padding: 24px 16px 64px;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; }
+  .wrap { max-width: 1680px; margin: 0 auto; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 24px; margin-bottom: 16px; }
   h1 { font-size: 19px; margin: 0; letter-spacing: -.01em; }
   h1 span { color: var(--ink); font-weight: 600; }
@@ -166,7 +166,7 @@
   [data-s="idle"] .ind::before { content: "–"; color: var(--s); }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
-  .office { position: relative; height: min(74vh, 820px); min-height: 380px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
+  .office { position: relative; height: max(560px, calc(100vh - 240px)); min-height: 380px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
   .office-canvas { display: block; }
   .office canvas { transition: opacity .35s; }
   .office.loading canvas { opacity: 0; }
@@ -213,6 +213,54 @@
   body.pip section { margin-top: 12px; }
   body.pip section:first-child { margin-top: 0; }
   body.pip .grid { grid-template-columns: 1fr; }
+  /* hub edition: needs-you bar + session side panel */
+  .hub-needs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--waiting) 45%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--waiting) 9%, var(--panel)); font-size: 12.5px; }
+  .hub-needs > b { color: var(--waiting); margin-right: 4px; }
+  .hub-roam { margin-left: auto; }
+  .hub-roam button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 2px 10px; font: inherit; cursor: pointer; }
+  .hub-roam button:hover { border-color: var(--tool); }
+  .office-canvas { touch-action: none; }
+  .hub-needs button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 10px; font: inherit; cursor: pointer; }
+  .hub-needs button:hover { border-color: var(--waiting); }
+  .hub-needs small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+  .hub-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); overflow-y: auto; z-index: 20; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0,0,0,.12); padding: 18px 18px 40px; font-size: 13px; }
+  .hub-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; }
+  .hub-head > div { flex: 1; min-width: 0; }
+  .hub-head h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.3; }
+  .hub-x { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; }
+  .hub-status { display: flex; align-items: center; gap: 6px; color: var(--ink); margin-bottom: 2px; }
+  .hub-muted { color: var(--muted); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+  .hub-need { border: 1px solid var(--waiting); background: color-mix(in srgb, var(--waiting) 10%, var(--panel)); border-radius: 10px; padding: 9px 11px; margin-bottom: 12px; overflow-wrap: anywhere; }
+  .hub-need b { display: block; color: var(--waiting); font-size: 12px; margin-bottom: 2px; }
+  .hub-sec { border-top: 1px solid var(--line); padding: 10px 0; }
+  .hub-sec h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .hub-sec p { margin: 0; overflow-wrap: anywhere; }
+  .hub-count { color: var(--ink); }
+  .hub-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 8px; }
+  .hub-bar i { display: block; height: 100%; background: var(--done); }
+  .hub-plan { list-style: none; margin: 0; padding: 0; }
+  .hub-plan li { display: flex; gap: 8px; padding: 2px 0; color: var(--muted); }
+  .hub-plan li span { width: 14px; flex: none; text-align: center; }
+  .hub-plan li[data-st="in_progress"] { color: var(--ink); font-weight: 600; }
+  .hub-plan li[data-st="in_progress"] span { color: var(--tool); }
+  .hub-plan li[data-st="completed"] span { color: var(--done); }
+  .hub-recent { list-style: none; margin: 0; padding: 0; }
+  .hub-recent li { display: flex; gap: 8px; padding: 2px 0; overflow-wrap: anywhere; }
+  .hub-recent time { flex: none; width: 64px; color: var(--faint); font-size: 11.5px; }
+  .hub-quote { white-space: pre-wrap; max-height: 160px; overflow-y: auto; background: var(--bg); border-radius: 8px; padding: 7px 9px; }
+  .hub-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+  .hub-btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .hub-btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .hub-btn.danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 50%, var(--line)); }
+  .hub-actions textarea { width: 100%; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; padding: 8px; resize: vertical; }
+  .hub-note { margin-top: 4px; }
+  .card { cursor: pointer; }
+  .hub-badges { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 10px; }
+  .hub-badge { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .hub-badge.warn { color: var(--waiting); border-color: color-mix(in srgb, var(--waiting) 45%, var(--line)); }
+  .hub-choices { margin-top: 8px; }
+  .hub-chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+  body.pip .hub-needs, body.pip .hub-panel { display: none !important; }
 </style>
 </head>
 <body>
@@ -284,6 +332,7 @@
 <script src="/i18n.js"></script>
 <script src="/office.js"></script>
 <script src="/popout.js"></script>
+<script src="/hub.js"></script>
 
 <script>
 // Language: your pick in the 🌐 menu, else the language of your prompts
@@ -419,7 +468,9 @@ function agentLogo(agent) {
 function card(s, now) {
   const project = s.project || (s.cwd ? s.cwd : '—');
   const title = s.title && s.title !== project ? `<div class="title" title="${esc(s.title)}">${esc(s.title)}</div>` : '';
-  const act = s.activity ? `<span class="act" title="${esc(s.activity)}">${esc(s.activity)}</span>` : '';
+  const p = Hub.steps(s);
+  const step = p && p.done < p.total ? `<div class="act">步驟 ${p.done}/${p.total}${p.step ? '：' + esc(p.step) : ''}</div>` : '';
+  const act = s.activity ? `<span class="act" title="${esc(s.activity)}">${esc(Hub.words(s.activity))}</span>` : '';
   const showText = !s.subagent || ACTIVE.has(s.status);
   const q = showText && s.prompt ? `<div class="q" title="${esc(s.prompt)}">${esc(s.prompt)}</div>` : '';
   const r = showText && s.reply && !ACTIVE.has(s.status) ? `<div class="r" title="${esc(s.reply)}">${esc(s.reply)}</div>` : '';
@@ -432,7 +483,7 @@ function card(s, now) {
       <span class="project" title="${esc(s.cwd)}">${esc(project)}</span>
       <span class="time" data-time="${esc(s.key)}">${esc(timeLabel(s, now))}</span>
     </div>
-    ${title}
+    ${title}${step}
     <div class="status"><span class="ind"><i></i><i></i><i></i></span><span class="lbl">${esc(L[s.status] || s.status)}</span>${act}</div>
     ${err}${q}${r}
     <div class="foot"><span class="model">${esc((s.model || '') + sub)}</span><button class="copy" data-copy="${esc(resumeCmd(s))}">${L.copy}</button></div>
@@ -519,7 +570,7 @@ function onData(data) {
     if (!first && before && ACTIVE.has(before) && (s.status === 'done' || s.status === 'waiting')) {
       state.flash.add(s.key);
       if (!PIP && !s.subagent && window.Notification && Notification.permission === 'granted') {
-        try { new Notification(s.status === 'done' ? L.doneNote(s.project || s.agent) : `${s.project || s.agent}: ${L.waiting}`, { body: s.reply || s.activity || '', tag: s.key }); } catch {}
+        try { new Notification(s.status === 'done' ? L.doneNote(Hub.name(s)) : `${Hub.name(s)}: ${L.waiting}`, { body: s.reply || s.activity || '', tag: s.key }); } catch {}
       }
     }
     state.prev.set(s.key, s.status);
@@ -528,6 +579,8 @@ function onData(data) {
   state.loaded = true;
   applyLang(chooseLang(data.lang));
   render();
+  Hub.setPrivate(data.privacy);
+  Hub.render();
 }
 
 function connect() {
@@ -592,6 +645,8 @@ function syncControls() {
 notifyBtn.addEventListener('click', () => Notification.requestPermission().then(syncControls));
 
 document.addEventListener('click', (e) => {
+  const c = e.target.closest('#main .card[data-key]');
+  if (c && !e.target.closest('[data-copy]')) { Hub.open(c.dataset.key); return; }
   const b = e.target.closest('[data-copy]'); if (!b) return;
   navigator.clipboard?.writeText(b.dataset.copy).then(() => {
     b.textContent = L.copied; setTimeout(() => (b.textContent = L.copy), 1400);
@@ -620,11 +675,17 @@ function hideTip() { tipKey = null; tipPinned = false; tip.style.display = 'none
 const officeOpts = {
   compact: PIP,
   onFrame: (renderer) => popout?.drawPreview(renderer),
-  label: (s) => s.project || AGENT_NAME[s.agent] || s.agent,
+  label: (s) => Hub.label(s),
+  doing: (s) => Hub.doing(s),
+  helpers: (s) => state.data.sessions.filter((k) => k.subagent && k.parentId === s.id && ACTIVE.has(k.status)),
+  zoneLabels: { work: '🖥 工作區', wait: '✋ 等你回覆／拍板', error: '⚠ 出錯', done: '☕ 剛做完', idle: '🛋 閒置' },
+  roam: store.get('roam', true),
   onHover(s, at, click) {
     if (click) {
-      if (!s) return hideTip();
-      tipPinned = true; tip.classList.add('pinned');
+      // Clicking a person opens their session panel.
+      hideTip();
+      if (s && !PIP) Hub.open(s.key);
+      return;
     } else if (tipPinned) return;
     if (!s) { if (!tipPinned) hideTip(); return; }
     tipKey = s.key; tipAt = at;
@@ -795,6 +856,10 @@ window.addEventListener('storage', (e) => {
   renderSceneSel();
   makeOffice();
   render();
+});
+Hub.mount({
+  roam: officeOpts.roam,
+  onRoam(v) { store.set('roam', v); officeOpts.roam = v; if (office && office.setRoam) office.setRoam(v); },
 });
 applyLang(chooseLang(null));
 syncControls();

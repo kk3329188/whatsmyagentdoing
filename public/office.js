@@ -9,7 +9,47 @@
   const WALL_H = 2.4;
   const WORKING = new Set(['thinking', 'tool', 'typing', 'waiting', 'error']);
   const MAX_WANDERERS = 7;
+
+  // Where someone is tells you their state at a glance.
+  //   desk = working · meeting room = waiting on you / left you a decision
+  //   in front of the server rack = hit an error · pantry = just finished
+  //   lounge = idle · walked out the door = gone home (beyond the seats)
+  const DONE_MS = 30 * 60_000;
+  const ZONE_ORDER = ['wait', 'error', 'done', 'idle'];
+  // What kind of work a desk worker is doing; it picks their pose and what
+  // their screen shows.
+  function workKind(s) {
+    if (s.status === 'thinking') return 'think';
+    if (s.status === 'typing') return 'reply';
+    const a = s.activity || '';
+    if (/^(Bash|Shell):/.test(a)) return 'shell';
+    if (/^(Edit|Write|MultiEdit|NotebookEdit|Editing)\b/.test(a)) return 'edit';
+    if (/^Subagent:/.test(a)) return 'agent';
+    if (/slack|send_message|SendMessage|relay/i.test(a)) return 'chat';
+    if (/update_plan|wrap_up|progress|TodoWrite|Updating todo/.test(a)) return 'plan';
+    return 'read';
+  }
+  // A shell command or a subagent that has been running a while: lean back and wait.
+  const longRun = (s) => s.status === 'tool' && Date.now() - (s.lastEventAt || Date.now()) > 90_000;
+  const EVENT_TEXT = {
+    work: () => '開工！',
+    wait: (s) => (s.status === 'waiting' ? '有事問你！' : '要你決定！'),
+    error: () => '出錯了…',
+    done: (s) => (s.status === 'interrupted' ? '被中斷' : '做完了 ✓'),
+  };
+  function zoneOf(s) {
+    if (s.status === 'thinking' || s.status === 'tool' || s.status === 'typing') return 'work';
+    if (s.status === 'waiting' || (s.status === 'done' && (s.ask || s.needs))) return 'wait';
+    if (s.status === 'error') return 'error';
+    if ((s.status === 'done' || s.status === 'interrupted') && Date.now() - (s.lastEventAt || 0) < DONE_MS) return 'done';
+    return 'idle';
+  }
   const SPEED = 2.1; // tiles / second
+  // Picked up with the mouse: how high they dangle, and what they say.
+  const HOLD_Z = 0.55;
+  const HELD_TEXT = ['哇！', '放我下來！', '欸欸欸', '咦？要去哪', '我還在忙耶'];
+  const lunch = () => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h >= 12 && h < 13.5; };
+  const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
 
   const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
   const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
@@ -41,7 +81,7 @@
   const ACT_EMOJI = {
     coffee: '☕', water: '💧', fridge: '🍎', sink: '🫧', stool: '💬', couch: '💬', beanbag: '🎧',
     window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
-    vending: '🥤', foosball: '⚽', phone: '📞',
+    vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
   };
 
   function hash(str) {
@@ -187,10 +227,19 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { onHover, label, onFrame, showAgent = true, compact = false } = {}) {
+    constructor(root, { onHover, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
       this.root = root;
       this.onHover = onHover || (() => {});
       this.label = label || ((s) => s.project || s.agent);
+      // What a working person's bubble says (default: the tool's name).
+      this.doing = doing || ((s) => (s.activity || 'tool').split(/[:\s]/)[0]);
+      // Floor signs naming each zone ({ work, wait, error, done, idle }).
+      this.zoneLabels = zoneLabels || null;
+      // Subagents a session is running right now, drawn as small helpers.
+      this.helpers = helpers || (() => []);
+      // Off-duty people roam the whole office (state shown by the bubble and
+      // a ring at their feet) instead of keeping to their state's room.
+      this.roam = roam;
       this.onFrame = onFrame;
       this.showAgent = showAgent;
       this.compact = compact;
@@ -216,9 +265,13 @@
 
       this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(root);
-      this.canvas.addEventListener('mousemove', (e) => this.pointer(e));
-      this.canvas.addEventListener('click', (e) => this.pointer(e, true));
-      this.canvas.addEventListener('mouseleave', () => { this.hoverKey = null; this.onHover(null); });
+      // Press and hold on a person to pick them up; a plain click still opens them.
+      this.canvas.addEventListener('pointerdown', (e) => this.grab(e));
+      this.canvas.addEventListener('pointermove', (e) => (this.press ? this.drag(e) : this.pointer(e)));
+      this.canvas.addEventListener('pointerup', (e) => this.drop(e));
+      this.canvas.addEventListener('pointercancel', (e) => this.drop(e));
+      this.canvas.addEventListener('click', (e) => { if (this.dropped) { this.dropped = false; return; } this.pointer(e, true); });
+      this.canvas.addEventListener('mouseleave', () => { if (this.held) return; this.hoverKey = null; this.onHover(null); });
       this.resize();
       this.last = performance.now();
       // Resolves true once a few frames have been drawn with data in place,
@@ -305,6 +358,11 @@
       solid(rx, 0.2, 0.7, 0.6);
       add(OW - 2.3 + 0.3 + 0.5, () => this.printer(OW - 2.3, 0.25));
       solid(OW - 2.3, 0.25, 0.75, 0.55);
+      poi(OW - 1.95, 1.15, 'printer', 'back');
+      // Someone who hit an error stands at the server rack, scratching their head.
+      poi(rx + 0.35, 1.1, 'rack', 'back', { zone: 'error' });
+      poi(OW - 1.95, 1.1, 'rack', 'back', { zone: 'error' });
+      poi(rx - 0.55, 1.05, 'rack', 'back', { zone: 'error' });
       for (const [x, y] of [[0.45, 0.45], [0.45, OD - 0.2]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
       const windows = [];
       for (let x = 1.0; x < OW - 2.6; x += 2.4) {
@@ -370,12 +428,15 @@
         const cx = mtx + 0.5 + k * 1.0;
         add(cx + mty - 0.45, () => this.stool(cx, mty - 0.4, 0.4, '#555c66'));
         add(cx + mty + 1.78, () => this.stool(cx, mty + 1.8, 0.4, '#555c66'));
-        poi(cx, mty - 0.4, 'meeting', 'front', { sit: 0.42 });
+        poi(cx, mty - 0.4, 'meeting', 'front', { sit: 0.42, zone: 'wait' });
         prop('chair', { x: cx, y: mty - 0.4, face: 'front' });
         prop('chair', { x: cx, y: mty + 1.8, face: 'back' });
-        poi(cx, mty + 1.8, 'meeting', 'back', { sit: 0.42 });
+        poi(cx, mty + 1.8, 'meeting', 'back', { sit: 0.42, zone: 'wait' });
       }
-      poi(mx + 3.6, 0.65, 'whiteboard', 'back');
+      poi(mx + 3.6, 0.65, 'whiteboard', 'back', { zone: 'wait' });
+      // Waited long enough: stand at the glass door looking out for you.
+      poi(mx + 0.55, 4.1, 'peek', 'front', { zone: 'wait', restless: true });
+      poi(mx + 0.55, 3.2, 'peek', 'front', { zone: 'wait', restless: true });
       add(W - 0.45 + 0.45, () => this.plant(W - 0.45, 0.45));
       prop('plant', { x: W - 0.45, y: 0.45 });
       solid(W - 0.65, 0.25, 0.4, 0.4);
@@ -395,17 +456,17 @@
       solid(W - 1.15, cy, 0.85, 0.75);
       add(mx + 0.55 + cy + 0.25, () => this.waterCooler(mx + 0.35, cy + 0.05));
       solid(mx + 0.3, cy, 0.5, 0.5);
-      poi(mx + 2.65, cy + 1.2, 'coffee', 'back');
-      poi(mx + 4.15, cy + 1.2, 'sink', 'back');
-      poi(W - 0.75, cy + 1.3, 'fridge', 'back');
-      poi(mx + 0.6, cy + 0.95, 'water', 'back');
+      poi(mx + 2.65, cy + 1.2, 'coffee', 'back', { zone: 'done' });
+      poi(mx + 4.15, cy + 1.2, 'sink', 'back', { zone: 'done' });
+      poi(W - 0.75, cy + 1.3, 'fridge', 'back', { zone: 'done' });
+      poi(mx + 0.6, cy + 0.95, 'water', 'back', { zone: 'done' });
       const rtx = mx + 3.6, rty = MR + 2.9;
       add(rtx + rty, () => this.roundTable(rtx, rty));
       prop('roundTable', { x: rtx, y: rty });
       solid(rtx - 0.45, rty - 0.45, 0.9, 0.9);
       for (const [sx, sy, face] of [[rtx - 1.0, rty, 'front'], [rtx + 1.0, rty, 'front'], [rtx, rty + 1.0, 'back'], [rtx, rty - 0.95, 'front']]) {
         add(sx + sy - 0.02, () => this.stool(sx, sy, 0.45, '#c9a24c'));
-        poi(sx, sy, 'stool', face, { sit: 0.47 });
+        poi(sx, sy, 'stool', face, { sit: 0.47, zone: 'done' });
         prop('barStool', { x: sx, y: sy });
       }
 
@@ -417,21 +478,21 @@
       });
       solid(shelfX, PY - 0.25, shelfW, 0.45);
       prop('shelf', { x: shelfX, y: PY - 0.25, w: shelfW, d: 0.45 });
-      poi(mx + 4.6, PY + 0.75, 'read', 'back');
-      poi(mx + 5.8, PY + 0.75, 'read', 'back');
+      poi(mx + 4.6, PY + 0.75, 'read', 'back', { zone: 'idle' });
+      poi(mx + 5.8, PY + 0.75, 'read', 'back', { zone: 'idle' });
       add(lx + ly + 0.6, () => this.couch(lx, ly + 0.6));
       prop('couch', { x: lx, y: ly + 0.6, w: 2.8, d: 0.8 });
       prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
       prop('beanbag', { x: lx + 0.4, y: ly + 3.6, color: '#c96442' });
       prop('beanbag', { x: lx + 2.6, y: ly + 3.6, color: '#7d93c4' });
       solid(lx, ly + 0.6, 2.8, 0.8);
-      for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36 });
+      for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle' });
       add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
       solid(lx + 0.6, ly + 2.0, 1.6, 0.7);
       add(lx + 0.4 + ly + 3.6, () => this.beanbag(lx + 0.4, ly + 3.6, '#c96442'));
       add(lx + 2.6 + ly + 3.6, () => this.beanbag(lx + 2.6, ly + 3.6, '#7d93c4'));
-      poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18 });
-      poi(lx + 2.6, ly + 3.6, 'beanbag', 'front', { sit: 0.18 });
+      poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
+      poi(lx + 2.6, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
       const ax = W - 1.2, ay = ly + 1.0;
       add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
       prop('arcade', { x: ax, y: ay });
@@ -439,7 +500,7 @@
       prop('lamp', { x: lx - 0.2, y: D - 0.6 });
       prop('rug', { x: OW + 0.3, y: PY + 0.6, w: 4.0, d: D - PY - 1.0 });
       solid(ax, ay, 0.7, 0.7);
-      poi(ax + 0.35, ay + 1.15, 'arcade', 'back');
+      poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
 
@@ -447,7 +508,41 @@
         { y: 2.2, color: '#c96442', text: 'SHIP IT' },
         { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
       ];
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 } };
+      const zones = {};
+      for (const z of ZONE_ORDER) zones[z] = pois.filter((q) => q.zone === z);
+      // Where each zone's floor sign goes.
+      const zoneAt = {
+        work: { x: OW / 2 - 0.6, y: 1.0 },
+        wait: { x: mtx + 1.5, y: mty + 0.7 },
+        error: { x: rx - 0.1, y: 1.9 },
+        done: { x: mx + 1.7, y: MR + 2.3 },
+        idle: { x: lx + 1.4, y: ly + 2.35 },
+      };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+    }
+
+    // Signs painted on the floor naming each zone.
+    zoneSigns() {
+      const at = this.plan.zoneAt;
+      if (!at || !this.zoneLabels) return;
+      const c = this.ctx;
+      const COLOR = { work: STATUS_COLOR.tool, wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done, idle: STATUS_COLOR.idle };
+      c.save();
+      c.font = '700 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      for (const [z, pos] of Object.entries(at)) {
+        const text = this.zoneLabels[z];
+        if (!text) continue;
+        const pt = this.iso(pos.x, pos.y, 0);
+        const w = c.measureText(text).width + 16;
+        c.globalAlpha = 0.9;
+        this.roundRect(pt.x - w / 2, pt.y - 9, w, 18, 9, COLOR[z]);
+        c.globalAlpha = 1;
+        c.fillStyle = '#fff';
+        c.fillText(text, pt.x, pt.y + 0.5);
+      }
+      c.restore();
     }
 
     glassX(add, x, y, d) {
@@ -469,11 +564,35 @@
     // ------------------------------------------------------------ sessions → people
 
     update(sessions) {
-      const working = sessions.filter((s) => WORKING.has(s.status));
+      const zoned = !!this.plan.zones;
+      // With zones only the ones actually working get a desk; waiting and
+      // errors go to their own rooms. Scene packs keep the old rule.
+      const atDesk = (s) => (zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
+      const working = sessions.filter(atDesk);
       const off = sessions
-        .filter((s) => !WORKING.has(s.status))
+        .filter((s) => !atDesk(s))
         .sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-      const wanderers = off.slice(0, MAX_WANDERERS);
+      let wanderers;
+      if (zoned && this.roam !== false) {
+        // Everyone off duty is about; waiting and errors always show.
+        const cap = Math.max(MAX_WANDERERS, Math.min(12, this.plan.pois.length - 6));
+        wanderers = [];
+        for (const z of ZONE_ORDER) {
+          for (const s of off) if (zoneOf(s) === z && (wanderers.length < cap || z === 'wait' || z === 'error')) wanderers.push(s);
+        }
+      } else if (zoned) {
+        // Fill each zone up to its seats; everyone else has gone home.
+        const room = Object.fromEntries(ZONE_ORDER.map((z) => [z, this.plan.zones[z].length]));
+        wanderers = [];
+        for (const z of ZONE_ORDER) {
+          for (const s of off) {
+            if (zoneOf(s) !== z) continue;
+            if (room[z] > 0 || z === 'wait' || z === 'error') { wanderers.push(s); room[z]--; }
+          }
+        }
+      } else {
+        wanderers = off.slice(0, MAX_WANDERERS);
+      }
       this.offDuty = off.length - wanderers.length;
 
       const cap = this.plan.desks.length;
@@ -502,21 +621,41 @@
       const shown = new Set();
       for (const s of [...working, ...wanderers]) {
         const isWorker = this.deskOf.has(s.key);
-        if (!isWorker && WORKING.has(s.status)) continue; // no desk left
+        if (!isWorker && atDesk(s)) continue; // no desk left
         shown.add(s.key);
         let p = this.people.get(s.key);
         if (!p) { p = this.newPerson(s); this.people.set(s.key, p); }
         p.s = s;
         p.leaving = false;
+        // Something happened: say it above their head for a moment.
+        const nowZone = isWorker ? 'work' : (zoned ? zoneOf(s) : null);
+        if (zoned && !this.first && p.lastZone && p.lastZone !== nowZone && EVENT_TEXT[nowZone]) {
+          p.event = { text: EVENT_TEXT[nowZone](s), at: Date.now(), zone: nowZone };
+        }
+        p.lastZone = nowZone;
         if (isWorker) {
           this.release(p);
           const desk = desks[this.deskOf.get(s.key)];
           if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
           p.mode = 'work';
         } else {
-          if (p.mode !== 'wander') { p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
+          if (p.mode !== 'wander') { this.endRun(p, false); p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
+          // Changed state: head to the new zone now.
+          const zone = zoned ? zoneOf(s) : null;
+          if (p.zone !== zone) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; }
           // Someone started working at the desk this one was napping on.
           if (p.napDesk && takenDesks.has(p.napDesk)) { this.release(p); p.path = []; }
+        }
+      }
+      // Someone just messaged another session: walk over and tell them.
+      for (const p of this.people.values()) {
+        if (!shown.has(p.key) || p.leaving) continue;
+        for (const t of (p.s.talk || [])) {
+          if (t.at <= (p.talkSeen || 0)) continue;
+          p.talkSeen = t.at;
+          if (t.dir !== 'out' || Date.now() - t.at > 90_000) continue;
+          const mate = this.people.get(t.key);
+          if (mate && mate !== p && !mate.leaving && shown.has(mate.key)) this.visit(p, mate, t.text);
         }
       }
       for (const [k, p] of this.people) {
@@ -532,7 +671,14 @@
     }
 
     release(p) {
-      if (p.poi) { p.poi.taken = null; p.poi = null; }
+      if (p.poi) {
+        const mate = p.poi.partner && this.people.get(p.poi.partner);
+        if (mate && mate.chatWith === p.key) mate.chatWith = null;
+        if (p.poi.cat) { this.cat.until = Date.now() + 1500; this.catFan = null; }
+        p.poi.taken = null; p.poi = null;
+        // Walked off: whoever was talking to them is on their own.
+        p.chatWith = null;
+      }
       if (p.napDesk) { p.napDesk.napper = null; p.napDesk = null; }
     }
 
@@ -565,6 +711,28 @@
       if (p.poi && now < p.until) return;
       this.release(p);
       const plan = this.plan;
+      if (plan.zones && p.zone && this.roam !== false) return this.roamTo(p);
+      if (plan.zones && p.zone) {
+        // Stay inside your zone: waiting and errors stay put, the others
+        // drift between the spots of their own room.
+        // Move around inside the zone so it stays alive: pace at the rack,
+        // fidget in the meeting room (and after 5 minutes go and look out
+        // the door), drift around the pantry and the lounge.
+        const waited = Date.now() - (p.s.lastEventAt || Date.now());
+        const prev = p.lastPoi;
+        let free = plan.zones[p.zone].filter((q) => !q.taken && (!q.restless || waited > 5 * 60_000));
+        if (free.length > 1 && prev) free = free.filter((q) => q !== prev);
+        if (!free.length) return;
+        const restless = free.filter((q) => q.restless);
+        const choice = restless.length && Math.random() < 0.5 ? restless[0] : free[Math.floor(Math.random() * free.length)];
+        choice.taken = p.key;
+        p.poi = choice;
+        p.lastPoi = choice;
+        p.until = Infinity;
+        p.stay = ({ wait: choice.restless ? rand(6, 10) : rand(18, 35), error: rand(4, 8), done: rand(10, 20), idle: rand(20, 45) }[p.zone] || 20) * 1000;
+        this.goTo(p, choice);
+        return;
+      }
       const workingDesks = new Set([...this.deskOf.values()].map((i) => plan.desks[i]));
       const sleepy = p.s.status === 'idle';
       const weighted = [];
@@ -589,6 +757,236 @@
       p.until = Infinity; // set on arrival
       p.stay = (choice.act === 'nap' ? rand(25, 60) : choice.act === 'pingpong' ? rand(15, 30) : rand(8, 20)) * 1000;
       this.goTo(p, choice);
+    }
+
+    // Off duty and free to go anywhere: a favourite spot for their state
+    // (pantry when just done, sofa when idle, the rack when it broke, the
+    // meeting room or the door when waiting on you), but also a chat with
+    // whoever is standing around, the cat, the printer, a stretch.
+    roamTo(p) {
+      const plan = this.plan;
+      const now = Date.now();
+      const waited = now - (p.s.lastEventAt || now);
+      const prev = p.lastPoi;
+      const options = [];
+      for (const q of plan.pois) {
+        if (q.taken || q === prev) continue;
+        if (q.restless && !(p.zone === 'wait' && waited > 5 * 60_000)) continue;
+        let w = q.zone === p.zone ? 3 : q.zone === 'wait' ? 0.4 : 1;
+        if (q.restless) w = 4;
+        if (q.pair) w *= plan.pois.some((o) => o.pair === q.pair && o !== q && o.taken) ? 4 : 0.6;
+        if (p.zone === 'idle' && night() && (q.act === 'couch' || q.act === 'beanbag')) w *= 3;
+        if (lunch() && q.act === 'stool') w *= 3;
+        options.push([q, w]);
+      }
+      // Someone standing about who isn't busy talking: go and chat.
+      for (const o of this.people.values()) {
+        if (o === p || o.mode !== 'wander' || o.held || o.path.length || !o.poi || o.poi.sit || o.chatWith || o.poi.partner || o.until === Infinity) continue;
+        const side = Math.random() < 0.5 ? 0.75 : -0.75;
+        const spot = [[o.x + side, o.y], [o.x - side, o.y], [o.x, o.y + 0.75]].find(([x, y]) => !plan.grid.blocked(x, y));
+        if (spot) options.push([{ x: spot[0], y: spot[1], act: 'chat', face: 'front', partner: o.key }, 2.5]);
+      }
+      const cat = this.cat;
+      if (!this.noCat && !cat.path.length && !this.catFan && !plan.grid.blocked(cat.x + 0.6, cat.y)) {
+        options.push([{ x: cat.x + 0.6, y: cat.y, act: 'petcat', face: 'front', cat: true }, 1]);
+      }
+      for (let k = 0; k < 6 && options.length < 40; k++) {
+        const x = rand(0.8, plan.W - 0.8), y = rand(1.2, plan.D - 0.8);
+        if (!plan.grid.blocked(x, y)) { options.push([{ x, y, act: 'stretch', face: Math.random() < 0.5 ? 'front' : 'back' }, 0.8]); break; }
+      }
+      if (!options.length) return;
+      let r = Math.random() * options.reduce((a, [, w]) => a + w, 0);
+      let choice = options[0][0];
+      for (const [q, w] of options) { r -= w; if (r <= 0) { choice = q; break; } }
+      choice.taken = p.key;
+      if (choice.partner) {
+        const o = this.people.get(choice.partner);
+        o.chatWith = p.key;
+        o.until = Math.max(o.until, now + 16_000);
+      }
+      if (choice.cat) { this.catFan = p.key; cat.until = Infinity; }
+      p.poi = choice;
+      if (plan.pois.includes(choice)) p.lastPoi = choice;
+      p.until = Infinity;
+      const base = { wait: [6, 12], error: [5, 9], done: [10, 18], idle: [15, 35] }[p.zone] || [10, 20];
+      const span = { chat: [8, 14], petcat: [6, 10], stretch: [3, 5] }[choice.act] || base;
+      p.stay = rand(span[0], span[1]) * 1000;
+      this.goTo(p, choice);
+    }
+
+    // Walk over to another person and chat with them for a bit; a worker
+    // then goes back to their desk.
+    visit(p, mate, text) {
+      if (p.held || mate.held) return;
+      const spot = this.besideOf(mate);
+      this.endRun(p, false);
+      this.release(p);
+      if (p.visit && p.visit.mate !== mate.key) this.endVisit(p, false);
+      p.visit = { mate: mate.key, x: spot.x, y: spot.y, text, until: Infinity };
+      mate.chatWith = p.key;
+      if (mate.mode === 'wander' && mate.until !== Infinity) mate.until = Math.max(mate.until, Date.now() + 14_000);
+      p.event = { text: `去找 ${this.label(mate.s)}`.slice(0, 24), at: Date.now(), zone: 'held' };
+      this.goTo(p, spot);
+    }
+
+    // The visit carries on while the visitor has not arrived; once there they
+    // talk for a while, then part.
+    stepVisit(p, wall) {
+      const v = p.visit;
+      const mate = this.people.get(v.mate);
+      if (!mate || mate.leaving || mate.held) return this.endVisit(p, true);
+      if (p.path.length) return;
+      if (v.until === Infinity) {
+        // They moved on while we walked over: follow them once.
+        if (Math.hypot(mate.x - v.x, mate.y - v.y) > 1.6 && !v.followed) {
+          v.followed = true;
+          const q = this.besideOf(mate);
+          v.x = q.x; v.y = q.y;
+          this.goTo(p, q);
+          return;
+        }
+        v.until = wall + rand(8000, 11000);
+        mate.chatWith = p.key;
+        if (mate.mode === 'wander') mate.until = Math.max(mate.until === Infinity ? 0 : mate.until, v.until + 500);
+      } else if (wall > v.until) this.endVisit(p, true);
+    }
+
+    endVisit(p, back) {
+      const v = p.visit;
+      if (!v) return;
+      p.visit = null;
+      const mate = this.people.get(v.mate);
+      if (mate && mate.chatWith === p.key) mate.chatWith = null;
+      if (!back) return;
+      if (p.mode === 'work' && p.desk) this.goTo(p, p.desk.seat);
+      else if (p.mode === 'wander') { p.until = 0; p.poi = null; }
+    }
+
+    // A worker waiting on a long command sometimes fetches a coffee, and
+    // hurries back when something happens.
+    coffeeRun(p, wall) {
+      if (p.run) {
+        if (!longRun(p.s)) return this.endRun(p, true);
+        if (p.path.length) return;
+        if (p.run.until === Infinity) p.run.until = wall + rand(5000, 9000);
+        else if (wall > p.run.until) this.endRun(p, true);
+        return;
+      }
+      if (!longRun(p.s) || p.path.length || Math.hypot(p.x - p.desk.seat.x, p.y - p.desk.seat.y) > 0.05) return;
+      if (p.nextRun == null) p.nextRun = wall + rand(0, 60_000);
+      if (wall < p.nextRun) return;
+      p.nextRun = wall + rand(120_000, 240_000);
+      const spots = this.plan.pois.filter((q) => !q.taken && /^(coffee|water|vending)$/.test(q.act));
+      if (!spots.length) return;
+      const q = spots.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+      q.taken = p.key;
+      p.run = { poi: q, until: Infinity };
+      this.goTo(p, q);
+    }
+
+    endRun(p, back) {
+      if (!p.run) return;
+      if (p.run.poi.taken === p.key) p.run.poi.taken = null;
+      p.run = null;
+      if (back && p.desk) this.goTo(p, p.desk.seat);
+    }
+
+    // ------------------------------------------------------------ pick up and drop
+
+    grab(e) {
+      if (e.button !== 0 || !this.canHold()) return;
+      const r = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const h = [...this.hit].reverse().find((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1);
+      if (h) this.press = { key: h.key, x: e.clientX, y: e.clientY, id: e.pointerId };
+    }
+
+    drag(e) {
+      const pr = this.press;
+      let p = this.held;
+      if (!p) {
+        if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) < 6) return;
+        p = this.people.get(pr.key);
+        if (!p || p.leaving) { this.press = null; return; }
+        this.held = p;
+        p.held = true;
+        p.path = [];
+        this.endRun(p, false);
+        this.endVisit(p, false);
+        this.release(p);
+        p.until = 0;
+        p.event = { text: pick(HELD_TEXT, p.h + Math.floor(Date.now() / 1000), 3), at: Date.now(), zone: 'held' };
+        try { this.canvas.setPointerCapture(pr.id); } catch {}
+        this.canvas.style.cursor = 'grabbing';
+        this.onHover(null);
+      }
+      // Held by the scruff: feet dangle a little below the pointer.
+      const at = this.heldAt(e);
+      p.x = clamp(at.x, 0.2, this.plan.W - 0.2);
+      p.y = clamp(at.y, 0.2, this.plan.D - 0.2);
+    }
+
+    drop(e) {
+      const p = this.held;
+      this.press = null;
+      if (!p) return;
+      this.held = null;
+      this.dropped = true;
+      setTimeout(() => (this.dropped = false), 0);
+      p.held = false;
+      const spot = this.freeSpot(p.x, p.y);
+      p.x = spot.x; p.y = spot.y;
+      p.path = [];
+      p.landed = Date.now();
+      p.event = { text: p.mode === 'work' ? '回座位…' : '呼～', at: Date.now(), zone: 'held' };
+      this.canvas.style.cursor = 'default';
+      if (e) this.pointer(e);
+    }
+
+    canHold() { return !!this.cam; }
+
+    // Where a held person's feet are over the floor: dangling a little below the pointer.
+    heldAt(e) { return this.toFloor(e, 28 + HOLD_Z * TH); }
+
+    // Pointer position on the floor, `lift` px below the pointer.
+    toFloor(e, lift = 0) {
+      const r = this.canvas.getBoundingClientRect();
+      const X = (e.clientX - r.left - this.cam.ox) / this.cam.zoom;
+      const Y = (e.clientY - r.top - this.cam.oy) / this.cam.zoom + lift;
+      const a = (2 * X) / TW, b = (2 * Y) / TH;
+      return { x: (a + b) / 2, y: (b - a) / 2 };
+    }
+
+    // Free floor right next to someone, to stand and talk.
+    besideOf(mate) {
+      const g = this.plan.grid;
+      for (let d = 0.7; d < 4; d += 0.2) {
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2 + 0.3;
+          const x = mate.x + Math.cos(a) * d, y = mate.y + Math.sin(a) * d;
+          if (!g.blocked(x, y)) return { x, y };
+        }
+      }
+      return this.freeSpot(mate.x, mate.y);
+    }
+
+    // The nearest spot nobody's furniture is standing on.
+    freeSpot(x, y) {
+      const g = this.plan.grid;
+      if (!g.blocked(x, y)) return { x, y };
+      for (let d = 0.25; d < 4; d += 0.25) {
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2;
+          const nx = x + Math.cos(a) * d, ny = y + Math.sin(a) * d;
+          if (!g.blocked(nx, ny)) return { x: nx, y: ny };
+        }
+      }
+      return { ...this.plan.door };
+    }
+
+    setRoam(v) {
+      this.roam = v;
+      for (const p of this.people.values()) if (p.mode === 'wander' && !p.held) { this.release(p); p.until = 0; p.path = []; }
     }
 
     setVisible(v) { this.visible = v; if (v) this.resize(); }
@@ -626,7 +1024,7 @@
         if (mx >= h.x0 && mx <= h.x1 && my >= h.y0 && my <= h.y1) { found = h; break; }
       }
       const key = found ? found.key : null;
-      this.canvas.style.cursor = key ? 'pointer' : 'default';
+      if (!this.held) this.canvas.style.cursor = key ? 'grab' : 'default';
       if (key !== this.hoverKey || click) {
         this.hoverKey = key;
         const p = key && this.people.get(key);
@@ -1079,7 +1477,9 @@
     screen(x, y, z, w, h, p) {
       const P = (a, b, cc) => this.iso(a, b, cc);
       const st = p ? p.s.status : 'off';
-      const base = { thinking: '#3a3160', tool: '#14324f', typing: '#123d2e', waiting: '#4d3510', error: '#4a1612' }[st] || this.pal.screenOff;
+      const kind = p && this.plan.zones ? workKind(p.s) : null;
+      const base = kind === 'shell' ? '#0b1510' : kind === 'read' ? '#d9d6cc' : kind === 'chat' ? '#1d2a3a'
+        : { thinking: '#3a3160', tool: '#14324f', typing: '#123d2e', waiting: '#4d3510', error: '#4a1612' }[st] || this.pal.screenOff;
       const corners = [P(x, y, z), P(x + w, y, z), P(x + w, y, z + h), P(x, y, z + h)];
       this.poly(corners, base);
       if (!p) return;
@@ -1091,7 +1491,59 @@
       c.clip();
       const t = this.t / 1000;
       const col = STATUS_COLOR[st];
-      if (st === 'tool' || st === 'typing') {
+      const line = (zz, x0, len, color, lw = 1.5) => {
+        const a = P(x + x0, y, zz), b = P(x + x0 + Math.min(len, w - x0 - 0.05), y, zz);
+        c.strokeStyle = color; c.lineWidth = lw;
+        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+      };
+      const rows = (speed, color) => {
+        const scroll = (t * speed + p.phase) % 1;
+        for (let i = -1; i < 6; i++) {
+          const zz = z + h - 0.05 - ((i + scroll) * h) / 5;
+          const len = 0.12 + ((p.h >> ((i + 8) & 15)) % 7) / 20;
+          line(zz, 0.05, len, color(i));
+        }
+      };
+      if (kind === 'shell') {
+        // Terminal: green output streaming, a blinking cursor at the bottom.
+        rows(longRun(p.s) ? 0.25 : 2.6, (i) => (i % 4 === 0 ? '#9dffb0' : 'rgba(80,220,120,.75)'));
+        if (Math.sin(t * 6) > 0) line(z + 0.06, 0.06, 0.06, '#9dffb0', 2.5);
+      } else if (kind === 'edit') {
+        // Code: indented, colourful lines.
+        const CODE = ['#c678dd', '#61afef', '#e5c07b', '#98c379', 'rgba(255,255,255,.7)'];
+        const scroll = (t * 0.6 + p.phase) % 1;
+        for (let i = -1; i < 6; i++) {
+          const zz = z + h - 0.05 - ((i + scroll) * h) / 5;
+          const indent = 0.05 + ((p.h >> (i & 7)) % 3) * 0.06;
+          line(zz, indent, 0.08, CODE[(i + 5) % 5]);
+          line(zz, indent + 0.1, 0.06 + ((p.h >> ((i + 3) & 15)) % 5) / 25, CODE[(i + 7) % 5]);
+        }
+      } else if (kind === 'read') {
+        // A page being read: grey text, a highlight sliding down it.
+        rows(0.35, () => 'rgba(60,60,60,.6)');
+        const hl = ((t * 0.3 + p.phase) % 1) * h;
+        line(z + h - 0.08 - hl, 0.04, w - 0.08, 'rgba(255,200,40,.55)', 3);
+      } else if (kind === 'chat') {
+        // Messages going back and forth.
+        const n = Math.floor(t * 1.2 + p.phase) % 4;
+        for (let i = 0; i < 4; i++) {
+          const zz = z + h - 0.1 - (i * h) / 4.5;
+          const mine = (i + n) % 2 === 0;
+          line(zz, mine ? w * 0.45 : 0.06, w * 0.4, mine ? '#4fa3ff' : 'rgba(255,255,255,.75)', 3);
+        }
+      } else if (kind === 'plan') {
+        // A checklist ticking off.
+        const done = Math.floor(t * 0.8 + p.phase) % 5;
+        for (let i = 0; i < 4; i++) {
+          const zz = z + h - 0.12 - (i * h) / 4.5;
+          line(zz, 0.06, 0.04, i < done ? '#5f9a4c' : 'rgba(255,255,255,.5)', 3);
+          line(zz, 0.14, w * 0.45, 'rgba(255,255,255,.6)');
+        }
+      } else if (kind === 'agent') {
+        // Handing work out: arrows going off to the side.
+        const k = (t * 0.9 + p.phase) % 1;
+        for (let i = 0; i < 3; i++) line(z + h * (0.25 + i * 0.25), 0.06 + k * (w - 0.3), 0.14, i === 1 ? col : 'rgba(255,255,255,.7)', 2.5);
+      } else if (st === 'tool' || st === 'typing') {
         const scroll = (t * (st === 'tool' ? 2.2 : 1.2) + p.phase) % 1;
         for (let i = -1; i < 6; i++) {
           const zz = z + h - 0.05 - ((i + scroll) * h) / 5;
@@ -1134,16 +1586,52 @@
 
     stateOf(p) {
       const s = p.s || {};
+      if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
+      if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
       if (p.path.length) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
+      if (p.visit) {
+        const mate = this.people.get(p.visit.mate);
+        return { pose: 'stand', face: 'front', act: mate && mate.chatWith === p.key ? 'chat' : 'lookaround', sitZ: 0 };
+      }
+      if (p.mode === 'work' && p.run) {
+        const q = p.run.poi;
+        return { pose: 'stand', face: q.face, act: q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
+      }
       if (p.mode === 'work' && p.desk) {
         const face = p.desk.side === 'n' ? 'front' : 'back';
         if (s.status === 'waiting' || s.status === 'error') return { pose: 'stand', face, act: 'wave', sitZ: 0 };
         if (p.desk.pose === 'stand') return { pose: 'stand', face, act: 'station', sitZ: 0 };
-        return { pose: 'sit', face, act: s.status === 'tool' || s.status === 'typing' ? 'type' : 'think', sitZ: 0.34 };
+        if (!this.plan.zones) return { pose: 'sit', face, act: s.status === 'tool' || s.status === 'typing' ? 'type' : 'think', sitZ: 0.34 };
+        const kind = workKind(s);
+        const t = this.t / 1000;
+        let act;
+        if (kind === 'think') act = ['think', 'chin', 'scratch', 'lookup'][Math.floor((t + p.phase * 3) / 4) % 4];
+        else if ((kind === 'shell' || kind === 'agent') && longRun(s)) act = 'leanback';
+        else act = { reply: 'type', edit: 'typefast', shell: 'type', read: 'deskread', agent: 'point', chat: 'phone', plan: 'write' }[kind];
+        // Someone came over to talk.
+        const guest = p.chatWith && this.people.get(p.chatWith);
+        if (guest && guest.visit && guest.visit.mate === p.key && !guest.path.length) return { pose: 'sit', face, act: 'chat', sitZ: 0.34 };
+        // Nobody works without a break: a stretch, a sip, a neck roll now and then.
+        const cyc = (t + p.phase * 5) % 26;
+        if (cyc < 2.4 && kind !== 'reply') act = ['stretch', 'sip', 'neck'][Math.floor((t + p.phase * 5) / 26) % 3];
+        return { pose: 'sit', face, act, sitZ: 0.34 };
       }
       if (p.mode === 'wander' && p.poi) {
         const q = p.poi;
-        return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: q.act, sitZ: q.sit || 0 };
+        let act = q.act;
+        if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
+        if (q.act === 'stool' && lunch()) act = 'eat';
+        if (q.act === 'chat') {
+          const mate = this.people.get(q.partner);
+          if (!mate || mate.chatWith !== p.key) act = 'lookaround';
+        }
+        // Being talked to: turn to them and chat back.
+        if (p.chatWith) {
+          const mate = this.people.get(p.chatWith);
+          if (mate && !mate.path.length && ((mate.poi && mate.poi.partner === p.key) || (mate.visit && mate.visit.mate === p.key))) act = 'chat';
+        }
+        if (p.zone === 'error') act = 'scratch';
+        return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act, sitZ: q.sit || 0 };
       }
       return { pose: 'stand', face: 'front', act: null, sitZ: 0 };
     }
@@ -1155,6 +1643,7 @@
       const st = this.stateOf(p);
       p.pose = st.pose;
       const moving = st.pose === 'walk';
+      const held = st.pose === 'held';
       const seated = st.pose === 'sit';
       const front = st.face !== 'back';
       const b = this.iso(p.x, p.y, st.sitZ);
@@ -1163,7 +1652,16 @@
 
       const fb = this.iso(p.x, p.y, 0);
       c.fillStyle = this.pal.shadow;
-      c.beginPath(); c.ellipse(fb.x, fb.y, 10, 5, 0, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.ellipse(fb.x, fb.y, held ? 7 : 10, held ? 3.5 : 5, 0, 0, Math.PI * 2); c.fill();
+      // Roaming about: a ring at their feet in their state's colour.
+      const ring = p.mode === 'wander' && { wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done }[p.zone];
+      if (ring && !held) {
+        c.strokeStyle = ring;
+        c.globalAlpha = 0.45 + 0.35 * Math.sin(t * 3 + p.phase);
+        c.lineWidth = 2;
+        c.beginPath(); c.ellipse(fb.x, fb.y, 12, 6, 0, 0, Math.PI * 2); c.stroke();
+        c.globalAlpha = 1;
+      }
       if (this.hoverKey === p.key) {
         c.strokeStyle = STATUS_COLOR[s.status] || '#888';
         c.lineWidth = 2;
@@ -1178,17 +1676,22 @@
       c.save();
       c.translate(x, y);
       c.scale(sc, sc);
+      if (held) { c.translate(0, -30); c.rotate(Math.sin(t * 5 + p.phase) * 0.14); c.translate(0, 30); }
+      // Landing: a little squash.
+      if (p.landed && Date.now() - p.landed < 250) c.scale(1.12, 0.88);
 
       c.fillStyle = p.pants;
       if (seated) {
         c.fillRect(-5, -4, 4, 5);
         c.fillRect(1, -4, 4, 5);
       } else {
-        c.fillRect(-5, -10, 4, 10 + step * 2);
-        c.fillRect(1, -10, 4, 10 - step * 2);
+        // Dangling legs kick when held.
+        const leg = held ? Math.sin(t * 11 + p.phase) * 2 : step * 2;
+        c.fillRect(-5, -10, 4, 10 + leg);
+        c.fillRect(1, -10, 4, 10 - leg);
         c.fillStyle = '#2a2a2a';
-        c.fillRect(-5, -1 + step, 4, 2);
-        c.fillRect(1, -1 - step, 4, 2);
+        c.fillRect(-5, -1 + leg, 4, 2);
+        c.fillRect(1, -1 - leg, 4, 2);
       }
       const hip = seated ? -4 : -10;
       this.roundRect(-7, hip - 13, 14, 14, 3, p.shirt);
@@ -1197,11 +1700,129 @@
       c.fillStyle = arm;
       const sip = Math.sin(t * 0.9 + p.phase) > 0.6;
       switch (st.act) {
+        case 'held': {
+          // Arms flailing.
+          const k = Math.sin(t * 13 + p.phase) * 3;
+          c.fillRect(-10, hip - 24 + k, 3, 13);
+          c.fillRect(7, hip - 24 - k, 3, 13);
+          hand(-8.5, hip - 25 + k); hand(8.5, hip - 25 - k);
+          break;
+        }
+        case 'stretch': {
+          const k = Math.sin(t * 2 + p.phase) * 1;
+          c.fillRect(-7, hip - 27 + k, 3, 15);
+          c.fillRect(4, hip - 27 - k, 3, 15);
+          hand(-5.5, hip - 28 + k); hand(5.5, hip - 28 - k);
+          break;
+        }
+        case 'sip': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(5, hip - 16, 3, 7);
+          c.fillStyle = '#fafafa'; c.fillRect(4, hip - 21, 5, 6);
+          c.fillStyle = '#6b3f22'; c.fillRect(5, hip - 21, 3, 1.5);
+          break;
+        }
+        case 'neck': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(5, hip - 22, 3, 11);
+          hand(5, hip - 22);
+          break;
+        }
+        case 'eat': {
+          const k = Math.sin(t * 4 + p.phase) > 0.2 ? 1 : 0;
+          c.fillRect(-9, hip - 11, 3, 8);
+          c.fillRect(5, hip - 12 - k * 6, 3, 8);
+          c.fillStyle = '#c9773a'; c.fillRect(-6, hip - 6, 12, 4);
+          c.fillStyle = '#fff'; c.fillRect(-5, hip - 7, 10, 1.5);
+          break;
+        }
+        case 'chat': {
+          // Talking with their hands.
+          const k = Math.sin(t * 5 + p.phase * 2);
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 13 + k * 2, 3, 8);
+          hand(7.5 + Math.max(0, k) * 2, hip - 14 + k * 2);
+          break;
+        }
+        case 'petcat': {
+          const k = Math.sin(t * 4 + p.phase) * 1.5;
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6 + k, hip - 9, 3, 12);
+          hand(7.5 + k, hip + 3);
+          break;
+        }
+        case 'printer': {
+          c.fillRect(-9, hip - 13, 3, 8);
+          c.fillRect(6, hip - 13, 3, 8);
+          c.fillStyle = '#fafafa'; c.fillRect(-6, hip - 14, 12, 7);
+          break;
+        }
         case 'wave': {
           const wave = Math.sin(t * 8 + p.phase) * 2;
           c.fillRect(6, hip - 26, 3, 14);
           hand(7.5 + wave * 0.5, hip - 27);
           c.fillStyle = arm; c.fillRect(-9, hip - 11, 3, 10);
+          break;
+        }
+        case 'typefast': {
+          const k1 = Math.sin(t * 30 + p.phase) > 0 ? 1 : 0;
+          c.fillRect(-9, hip - 11 - k1 * 1.5, 3, 8);
+          c.fillRect(6, hip - 11 - (1 - k1) * 1.5, 3, 8);
+          break;
+        }
+        case 'deskread': {
+          // One hand on the mouse, scrolling now and then.
+          const k = Math.sin(t * 2 + p.phase) > 0.3 ? 1 : 0;
+          c.fillRect(-9, hip - 11, 3, 9);
+          c.fillRect(6, hip - 12 - k, 3, 8);
+          break;
+        }
+        case 'write': {
+          const k = Math.sin(t * 9 + p.phase);
+          c.fillRect(-9, hip - 11, 3, 9);
+          c.fillRect(6 + k, hip - 12, 3, 8);
+          hand(7.5 + k, hip - 4);
+          break;
+        }
+        case 'chin':
+        case 'scratch': {
+          // Hand at the chin, or scratching the head.
+          c.fillRect(-9, hip - 11, 3, 10);
+          const up = st.act === 'scratch' ? 25 + Math.sin(t * 9 + p.phase) * 1.2 : 18;
+          c.fillRect(5, hip - up + 2, 3, up - 10);
+          hand(st.act === 'scratch' ? 4 : 3, hip - up);
+          break;
+        }
+        case 'lookup': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 11, 3, 10);
+          break;
+        }
+        case 'leanback': {
+          // Arms crossed, waiting for a long command; a sip of coffee now and then.
+          c.fillRect(-8, hip - 9, 16, 3);
+          if (sip) { c.fillStyle = '#fafafa'; c.fillRect(5, hip - 16, 5, 6); c.fillStyle = '#6b3f22'; c.fillRect(6, hip - 16, 3, 1.5); }
+          break;
+        }
+        case 'point': {
+          // Sending a helper off: arm out to the side.
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 12, 10, 3);
+          hand(17, hip - 10.5);
+          break;
+        }
+        case 'tap': {
+          // Drumming fingers on the table.
+          const k = Math.sin(t * 14 + p.phase) > 0 ? 1.5 : 0;
+          c.fillRect(-9, hip - 11, 3, 9);
+          c.fillRect(6, hip - 12 - k, 3, 8);
+          break;
+        }
+        case 'peek': {
+          // Hand over the eyes, looking out for you.
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(5, hip - 24, 3, 12);
+          c.fillRect(-2, hip - 25, 9, 2.5);
           break;
         }
         case 'type': {
@@ -1266,7 +1887,8 @@
       }
 
       const napping = st.act === 'nap';
-      const hy = hip - 20 + (napping ? 7 : 0) + (st.act === 'think' ? Math.sin(t * 1.5 + p.phase) * 0.6 : 0);
+      const lean = { lookup: -1.5, leanback: -1, deskread: 1, typefast: 0.6, peek: -0.5, stretch: -1, neck: 1.2, petcat: 2 }[st.act] || 0;
+      const hy = hip - 20 + (napping ? 7 : 0) + lean + (st.act === 'think' || st.act === 'tap' ? Math.sin(t * 1.5 + p.phase) * 0.6 : 0);
       c.fillStyle = p.skin;
       c.beginPath(); c.arc(0, hy, 7, 0, Math.PI * 2); c.fill();
       c.fillStyle = p.hair;
@@ -1275,12 +1897,19 @@
         if (p.hairStyle === 1) { c.fillRect(-7.3, hy - 2, 2.5, 8); c.fillRect(4.8, hy - 2, 2.5, 8); }
         if (p.hairStyle === 2) { c.beginPath(); c.arc(0, hy - 8, 3.2, 0, Math.PI * 2); c.fill(); }
         c.fillStyle = '#2a2018';
-        const sleepy = s.status === 'idle';
+        const sleepy = s.status === 'idle' && !held;
         const blink = Math.sin(t * 0.7 + p.phase * 3) > 0.985;
-        c.fillRect(-3, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
-        c.fillRect(1.6, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
+        // Looking around: eyes glance left and right.
+        const look = st.act === 'lookaround' || st.act === 'dazed' ? Math.round(Math.sin(t * 2.2 + p.phase) * 1.5) : 0;
+        c.fillRect(-3 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
+        c.fillRect(1.6 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
         c.strokeStyle = '#2a2018'; c.lineWidth = 1;
-        if (p.mode === 'wander' && !sleepy) {
+        if (held || st.act === 'chat') {
+          // An open mouth: shouting, or talking.
+          const o = held ? 1.8 : 0.6 + Math.abs(Math.sin(t * 9 + p.phase)) * 1.2;
+          c.fillStyle = '#5a2a22';
+          c.beginPath(); c.ellipse(0, hy + 3.2, 1.6, o, 0, 0, Math.PI * 2); c.fill();
+        } else if (p.mode === 'wander' && !sleepy) {
           c.beginPath(); c.arc(0, hy + 2.2, 2, 0.15 * Math.PI, 0.85 * Math.PI); c.stroke();
         } else if (s.status === 'error' && p.mode === 'work') {
           c.beginPath(); c.arc(0, hy + 4.5, 2, 1.15 * Math.PI, 1.85 * Math.PI); c.stroke();
@@ -1294,11 +1923,50 @@
         c.strokeStyle = '#222'; c.lineWidth = 2;
         c.beginPath(); c.arc(0, hy, 8, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
       }
+      if (st.act === 'dazed') {
+        // Seeing stars after being put down.
+        c.fillStyle = '#f2c94c';
+        c.font = '700 7px ui-sans-serif, system-ui, sans-serif';
+        c.textAlign = 'center';
+        for (let i = 0; i < 3; i++) {
+          const a = t * 5 + (i * Math.PI * 2) / 3;
+          c.fillText('★', Math.cos(a) * 9, hy - 9 + Math.sin(a) * 3);
+        }
+      }
       c.restore();
+
+      // Subagents at work: small helpers beside the desk.
+      if (p.mode === 'work' && !moving) {
+        const kids = this.helpers(s);
+        kids.slice(0, 3).forEach((k, i) => this.helper(x + 17 + i * 11, fb.y - 2, k, p, i));
+        if (kids.length > 3) {
+          c.fillStyle = this.pal.text; c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.textAlign = 'center';
+          c.fillText(`+${kids.length - 3}`, x + 17 + 3 * 11, fb.y - 8);
+        }
+      }
 
       const headTop = y + (hy - 8) * sc;
       this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
+    }
+
+    // A small helper figure (a running subagent), busy at the parent's side.
+    helper(x, y, k, p, i) {
+      const c = this.ctx;
+      const t = this.t / 1000;
+      const ph = p.phase + i * 1.7;
+      c.save();
+      c.translate(x, y + Math.abs(Math.sin(t * 6 + ph)) * -1);
+      c.scale(0.55, 0.55);
+      c.fillStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(0, 2, 9, 4, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = p.pants; c.fillRect(-5, -10, 4, 10); c.fillRect(1, -10, 4, 10);
+      this.roundRect(-7, -23, 14, 14, 3, STATUS_COLOR[k.status] || p.shirt);
+      c.fillStyle = this.shade(STATUS_COLOR[k.status] || p.shirt, -18);
+      const a = Math.sin(t * 14 + ph) > 0 ? 1 : 0;
+      c.fillRect(-9, -21 - a, 3, 8); c.fillRect(6, -21 - (1 - a), 3, 8);
+      c.fillStyle = p.skin; c.beginPath(); c.arc(0, -30, 6.5, 0, Math.PI * 2); c.fill();
+      c.fillStyle = p.hair; c.beginPath(); c.arc(0, -31.5, 6.8, Math.PI * 1.05, Math.PI * 1.95); c.fill();
+      c.restore();
     }
 
     bubble(p, at) {
@@ -1331,7 +1999,24 @@
       };
 
       let top = y;
-      if (p.mode === 'work' && !p.path.length) {
+      if (p.held) {
+        // Held up: no status bubble, just the name and what they shout.
+      } else if (p.visit && at.act === 'chat' && p.visit.text) {
+        // What they came to say.
+        top = pill('💬 ' + p.visit.text, pal.text, pal.bubble, y - 12);
+      } else if (at.act === 'chat' && p.zone !== 'wait') {
+        // Taking turns talking.
+        const mine = Math.floor(t / 1.6 + (p.chatWith ? 0.5 : 0)) % 2 === 0;
+        if (mine) {
+          this.roundRect(x - 4, y - 24, 26, 15, 7, pal.bubble);
+          c.beginPath(); c.moveTo(x, y - 10); c.lineTo(x - 3, y - 4); c.lineTo(x + 5, y - 10); c.fillStyle = pal.bubble; c.fill();
+          c.fillStyle = pal.text;
+          for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(x + 3 + i * 6, y - 16.5, 1.6, 0, Math.PI * 2); c.fill(); }
+          top = y - 24;
+        }
+      } else if (p.mode === 'work' && p.run && !p.path.length) {
+        top = pill('☕ 等指令跑完', '#fff', STATUS_COLOR.tool, y - 12);
+      } else if (p.mode === 'work' && !p.path.length) {
         const col = STATUS_COLOR[st] || '#888';
         if (st === 'thinking') {
           c.fillStyle = pal.bubble;
@@ -1353,8 +2038,7 @@
           for (let i = 0; i < n; i++) { c.beginPath(); c.arc(x + 7 + i * 8, y - 16, 2, 0, Math.PI * 2); c.fill(); }
           top = y - 24;
         } else if (st === 'tool') {
-          const tool = (s.activity || 'tool').split(/[:\s]/)[0];
-          top = pill('⚙ ' + tool, '#fff', col, y - 12);
+          top = pill('⚙ ' + this.doing(s), '#fff', col, y - 12);
         } else if (st === 'waiting' || st === 'error') {
           const jump = Math.abs(Math.sin(t * 4)) * 4;
           c.fillStyle = col;
@@ -1365,6 +2049,24 @@
           c.font = font(600, 10);
           top = y - 22 - jump;
         }
+      } else if (p.mode === 'wander' && (p.zone === 'wait' || p.zone === 'error')) {
+        // Waiting on you (!), left you a decision (?), or failed (red !).
+        const col = STATUS_COLOR[p.zone === 'error' ? 'error' : 'waiting'];
+        const jump = Math.abs(Math.sin(t * 4)) * 4;
+        c.fillStyle = col;
+        c.beginPath(); c.arc(x, y - 12 - jump, 9, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#fff';
+        c.font = font(800, 12);
+        c.fillText(st === 'done' ? '?' : '!', x, y - 11.5 - jump);
+        c.font = font(600, 10);
+        top = y - 22 - jump;
+      } else if (p.mode === 'wander' && p.zone === 'done') {
+        // Finished: a check mark (paused sign if it was interrupted).
+        const col = st === 'interrupted' ? STATUS_COLOR.interrupted : STATUS_COLOR.done;
+        c.fillStyle = col;
+        c.beginPath(); c.arc(x, y - 10, 7, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#fff'; c.font = font(800, 9); c.fillText(st === 'interrupted' ? 'Ⅱ' : '✓', x, y - 9.5); c.font = font(600, 10);
+        top = y - 18;
       } else if (p.mode === 'wander') {
         const justDone = st === 'done' && Date.now() - (s.lastEventAt || 0) < 3 * 60_000;
         const dozing = at.act === 'nap' || (st === 'idle' && (at.act === 'couch' || at.act === 'beanbag' || (p.poi && p.poi.sleepy)));
@@ -1397,11 +2099,49 @@
         }
       }
 
+      // Waiting a while: how long, under the bubble.
+      if (p.mode === 'wander' && (p.zone === 'wait' || p.zone === 'error')) {
+        const mins = Math.floor((Date.now() - (s.lastEventAt || Date.now())) / 60_000);
+        if (mins >= 1) {
+          c.font = font(700, 9);
+          c.fillStyle = mins >= 15 ? STATUS_COLOR.error : pal.text;
+          c.fillText(`等了 ${mins >= 60 ? Math.floor(mins / 60) + ' 小時' : mins + ' 分'}`, x, y + 18);
+          c.font = font(600, 10);
+        }
+      }
+      // Going in circles: smoke over the head.
+      if (s.stuck && p.mode === 'work') {
+        for (let i = 0; i < 3; i++) {
+          const k = (t * 0.7 + i / 3) % 1;
+          c.globalAlpha = 0.55 * (1 - k);
+          c.fillStyle = '#8f8f8a';
+          c.beginPath(); c.arc(x - 12 + i * 4 + Math.sin(t * 2 + i) * 2, top - 4 - k * 16, 3 + k * 4, 0, Math.PI * 2); c.fill();
+        }
+        c.globalAlpha = 1;
+      }
+
       const hover = this.hoverKey === p.key;
-      if (!s.subagent || hover) {
-        pill(this.label(s), pal.text, pal.tagBg, top - 11, p.mode === 'work' || hover ? 1 : 0.7, true);
+      if ((!s.subagent && p.zone !== 'idle') || hover) {
+        const loud = p.mode === 'work' || p.zone === 'wait' || p.zone === 'error' || hover;
+        top = pill(this.label(s), pal.text, pal.tagBg, top - 11, loud ? 1 : 0.7, true);
       } else if (badge) {
         this.agentBadge(badge, x, top - 11);
+      }
+      // What just happened, floating up and fading out.
+      if (p.event) {
+        const age = (Date.now() - p.event.at) / 1000;
+        if (age > 4.5) p.event = null;
+        else {
+          const col = { work: STATUS_COLOR.tool, wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done, held: '#8b6be6' }[p.event.zone] || pal.text;
+          c.globalAlpha = Math.min(1, (4.5 - age) * 1.5);
+          c.font = font(800, 12);
+          const w = c.measureText(p.event.text).width + 14;
+          const yy = top - 22 - age * 6;
+          this.roundRect(x - w / 2, yy - 9, w, 18, 9, col);
+          c.fillStyle = '#fff';
+          c.fillText(p.event.text, x, yy + 0.5);
+          c.globalAlpha = 1;
+        }
       }
       c.restore();
     }
@@ -1510,7 +2250,21 @@
     step(dt) {
       const wall = Date.now();
       for (const [k, p] of this.people) {
-        if (p.mode === 'wander') {
+        if (p.held) continue;
+        // Just put down: a moment to get their bearings, then carry on.
+        if (p.landed) {
+          if (wall - p.landed < 1100) continue;
+          p.landed = 0;
+          if (p.leaving) this.goTo(p, this.plan.door);
+          else if (p.mode === 'work' && p.desk) this.goTo(p, p.desk.seat);
+          else if (p.mode === 'wander') {
+            p.poi = { x: p.x, y: p.y, act: 'lookaround', face: 'front' };
+            p.until = wall + rand(2500, 4000);
+          }
+        }
+        if (p.visit) this.stepVisit(p, wall);
+        else if (p.mode === 'work' && p.desk && this.plan.zones) this.coffeeRun(p, wall);
+        if (p.mode === 'wander' && !p.visit) {
           if (p.poi && !p.path.length && p.until === Infinity) p.until = wall + p.stay;
           this.wander(p, wall);
         }
@@ -1547,7 +2301,7 @@
         items.push({ depth: dk.x + 0.7 + dk.y + 0.4, draw: () => this.desk(dk, p) });
         items.push({ depth: dk.seat.x + dk.seat.y - 0.06, draw: () => this.chair(dk, p) });
       }
-      for (const p of this.people.values()) items.push({ depth: p.x + p.y + 0.01, person: p });
+      for (const p of this.people.values()) items.push({ depth: p.held ? 1e9 : p.x + p.y + 0.01, person: p });
       items.push({ depth: this.cat.x + this.cat.y, draw: () => this.drawCat() });
       items.sort((a, b) => a.depth - b.depth);
 
@@ -1558,6 +2312,7 @@
         else it.draw();
       }
       this.pingPongBall();
+      if (!this.compact && this.roam === false) this.zoneSigns();
       if (this.compact) {
         // Keep labels readable when the room is scaled down for PiP.
         c.save();
