@@ -75,6 +75,10 @@ Touch ID 要用到 Swift：沒有 Command Line Tools 時請使用者自己跑 `x
 圖例旁的按鈕可切成「依狀態分區」（會議室＝等你、機房前＝出錯、茶水間＝剛做完、休息區＝閒置）。會聊天、摸貓、印東西、伸懶腰、午餐吃便當；
 長指令跑超過 90 秒會去倒咖啡；卡住會冒煙並進「等你處理」；子代理畫成桌邊小助手；session 互傳訊息時，送出方會走去找對方聊天。
 按住人物可拖曳拎起、放開落在最近的空地（2D、3D 都可以）；單點開面板，游標直接在傳話框，Enter 送出、Shift+Enter 換行。
+丟到別人身上＝轉話：開對方面板、填好前一人最後的回覆（`〔轉自「…」〕` 開頭），按 Enter 才送；送出後前一人走過去聊。
+等你超過 3 分鐘舉牌冒汗、超過 10 分鐘到畫面最前面敲螢幕；音效（叮／警報／敲門／升等）圖例旁可關，存在 localStorage `wmad.sound`。
+經驗值：`src/progress.js`，工具呼叫 +1、做完一輪 +5，存 `~/.whatsmyagentdoing/progress.json`（測試用 `WMAD_PROGRESS_FILE` 改路徑）；
+log 是從尾巴讀的，所以已記錄過的 session 重啟後只算之後的增量。等級 60／200／600／1500 經驗換裝；辦公室累積完成輪數 10／50／120／250／500 解鎖家具（`UNLOCKS` 在 public/office.js）。
 
 `--update` 跟著 clone 時的分支更新（`git pull --rebase`）。改 web/office3d.js 後要 `npm run build`。
-測試：`node --test tests/hub.cjs tests/parsers-hub.cjs tests/zones-hub.cjs tests/watcher.cjs`。
+測試：`node --test tests/hub.cjs tests/parsers-hub.cjs tests/zones-hub.cjs tests/watcher.cjs tests/progress-hub.cjs`。

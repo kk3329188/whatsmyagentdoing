@@ -9,6 +9,7 @@ const path = require('node:path');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wmad-hub-'));
 process.env.WMAD_REMOTE_DIR = path.join(root, 'inbox');
 process.env.WMAD_DESKTOP_META_DIR = path.join(root, 'meta');
+process.env.WMAD_PROGRESS_FILE = path.join(root, 'progress.json');
 const hub = require('../src/hub');
 const ID = '11111111-2222-4333-8444-555555555555';
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));

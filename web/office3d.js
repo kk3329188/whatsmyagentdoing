@@ -228,6 +228,7 @@ export class Office3D extends window.Office {
     this.scene.add(this.room);
     this.screens.clear();
     this.blinkers = [];
+    this.tvScreen = this.neonMat = null;
     const { W, D, OW, MR, PY } = plan;
     const dark = this.pal.dark;
 
@@ -544,6 +545,41 @@ export class Office3D extends window.Office {
         this.lampLight.position.set(p.x, 1.6, p.y);
         this.room.add(this.lampLight);
         break;
+      // Unlocked by the office's experience.
+      case 'tv': {
+        this.place('cabinetTelevision', p.x, p.y, 1.1, 0.4, { h: 0.42 });
+        this.place('televisionModern', p.x + 0.1, p.y + 0.08, 0.9, 0.25, { y0: 0.42, h: 0.6 });
+        this.tvScreen = this.boxMesh(p.x + 0.17, p.y + 0.34, 0.5, 0.76, 0.005, 0.44, 0x000000, { emissive: 0x3b8ee0, ei: 0.8, shadow: false });
+        break;
+      }
+      case 'trophy': {
+        this.boxMesh(p.x, p.y, 0, 0.45, 0.9, 1.25, dark ? 0x6e533b : 0xa8825a);
+        const gold = new THREE.MeshStandardMaterial({ color: 0xf2c230, metalness: 0.8, roughness: 0.25 });
+        for (let i = 0; i < 3; i++) {
+          const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.04, 0.14, 12), gold);
+          cup.position.set(p.x + 0.22, 1.25 + 0.12, p.y + 0.15 + i * 0.3);
+          const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.05, 10), gold);
+          foot.position.set(p.x + 0.22, 1.25 + 0.025, p.y + 0.15 + i * 0.3);
+          cup.castShadow = true;
+          this.room.add(cup, foot);
+        }
+        break;
+      }
+      case 'neon': {
+        const cv = document.createElement('canvas');
+        cv.width = 512; cv.height = 96;
+        const c = cv.getContext('2d');
+        c.font = '900 64px ui-sans-serif, system-ui, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillStyle = '#ffffff'; c.fillText(p.text, 256, 50);
+        const tex = new THREE.CanvasTexture(cv);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.neonMat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xff44aa, emissiveIntensity: 1.4, transparent: true });
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.42), this.neonMat);
+        m.position.set(p.x + 1.1, 2.2, 0.02);
+        this.room.add(m);
+        break;
+      }
       case 'rug':
         this.place('rugRectangle', p.x, p.y, p.w, p.d, { y0: 0.004 });
         break;
@@ -997,16 +1033,97 @@ export class Office3D extends window.Office {
     const mixer = new THREE.AnimationMixer(obj);
     const actions = {};
     for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
-    let head = null, armR = null;
-    obj.traverse((o) => { if (o.name === 'head') head = o; if (o.name === 'arm-right') armR = o; });
+    let head = null, armR = null, torso = null, headMesh = null, bodyMesh = null;
+    obj.traverse((o) => {
+      if (o.name === 'head') head = o; if (o.name === 'arm-right') armR = o; if (o.name === 'torso') torso = o;
+      if (o.name === 'head-mesh') headMesh = o; if (o.name === 'body-mesh') bodyMesh = o;
+    });
+    // Measured in the rest pose (at the origin, facing +z) so clothes can be
+    // hung on the bones later, whatever pose they are in.
+    obj.updateMatrixWorld(true);
+    const restOf = (n) => n && { inv: n.matrixWorld.clone().invert(), q: n.getWorldQuaternion(new THREE.Quaternion()).invert(), s: n.getWorldScale(new THREE.Vector3()) };
+    const rest = {
+      head: restOf(head), torso: restOf(torso), root: restOf(obj),
+      headBox: headMesh ? new THREE.Box3().setFromObject(headMesh) : null,
+      bodyBox: bodyMesh ? new THREE.Box3().setFromObject(bodyMesh) : null,
+    };
     const prop = new THREE.Group();
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 10), new THREE.MeshStandardMaterial({ color: 0xffffff }));
     const book = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.04), new THREE.MeshStandardMaterial({ color: 0xc96442 }));
     prop.add(cup, book);
     this.scene.add(obj, prop);
-    a = { obj, mixer, actions, current: null, head, headRest: head ? head.rotation.x : 0, armR, prop, cup, book, yaw: 0, last: { x: p.x, y: p.y } };
+    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, prop, cup, book, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
+    // Held up over their head after waiting on you a while.
+    if (rest.headBox) {
+      a.sign = this.signBoard();
+      this.wear(a, obj, rest.root, a.sign, new THREE.Vector3(0, rest.headBox.max.y + 0.16, 0));
+      a.sign.visible = false;
+    }
     this.actors.set(p.key, a);
     return a;
+  }
+
+  // Hang a mesh (sized in world units) on a bone at a point measured in the rest pose.
+  wear(a, node, rest, mesh, at) {
+    if (!node || !rest) return;
+    mesh.position.copy(at.clone().applyMatrix4(rest.inv));
+    mesh.quaternion.copy(rest.q);
+    mesh.scale.set(1 / rest.s.x, 1 / rest.s.y, 1 / rest.s.z);
+    mesh.castShadow = true;
+    node.add(mesh);
+  }
+
+  signBoard() {
+    const cv = document.createElement('canvas');
+    cv.width = 128; cv.height = 64;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#fffdf4'; c.fillRect(0, 0, 128, 64);
+    c.strokeStyle = '#e09412'; c.lineWidth = 8; c.strokeRect(4, 4, 120, 56);
+    c.fillStyle = '#e09412'; c.font = '900 30px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('等你！', 64, 34);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const plain = new THREE.MeshStandardMaterial({ color: 0xfffdf4 });
+    const face = new THREE.MeshStandardMaterial({ map: tex });
+    return new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.02), [plain, plain, plain, plain, face, face]);
+  }
+
+  // What their level lets them wear: a lanyard, headphones, a tie, a crown.
+  dress(a, level) {
+    if (a.level === level) return;
+    a.level = level;
+    for (const m of a.outfit) if (m.parent) m.parent.remove(m);
+    a.outfit = [];
+    const { headBox: hb, bodyBox: bb } = a.rest;
+    if (!hb || !bb) return;
+    const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...extra });
+    const put = (node, rest, mesh, at) => { this.wear(a, node, rest, mesh, at); a.outfit.push(mesh); };
+    const hw = (hb.max.x - hb.min.x) / 2, hc = hb.getCenter(new THREE.Vector3());
+    const bh = bb.max.y - bb.min.y, bw = bb.max.x - bb.min.x;
+    if (level >= 4) {
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.14, bh * 0.62, 0.012), mat(0xb03a2e));
+      put(a.torso, a.rest.torso, tie, new THREE.Vector3(0, bb.max.y - bh * 0.36, bb.max.z + 0.004));
+    } else if (level >= 2) {
+      const card = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.2, bh * 0.26, 0.01), mat(0xfafafa));
+      put(a.torso, a.rest.torso, card, new THREE.Vector3(0, bb.max.y - bh * 0.5, bb.max.z + 0.004));
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.2, bh * 0.06, 0.012), mat(0x3b8ee0));
+      put(a.torso, a.rest.torso, strap, new THREE.Vector3(0, bb.max.y - bh * 0.38, bb.max.z + 0.005));
+    }
+    if (level === 3 || level === 4) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(hw * 1.04, 0.012, 6, 20, Math.PI), mat(0xe2e2e6, { metalness: 0.4 }));
+      put(a.head, a.rest.head, band, new THREE.Vector3(hc.x, hc.y, hc.z));
+      for (const sx of [-1, 1]) {
+        const cup = new THREE.Mesh(new THREE.CylinderGeometry(hw * 0.32, hw * 0.32, 0.05, 14), mat(0x3a3a44));
+        cup.rotation.z = Math.PI / 2;
+        const g = new THREE.Group();
+        g.add(cup);
+        put(a.head, a.rest.head, g, new THREE.Vector3(hc.x + sx * hw * 1.04, hc.y, hc.z));
+      }
+    }
+    if (level >= 5) {
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(hw * 0.5, hw * 0.42, hw * 0.4, 8, 1, true), mat(0xf2c230, { metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide, emissive: 0x332200 }));
+      put(a.head, a.rest.head, crown, new THREE.Vector3(hc.x, hb.max.y + hw * 0.18, hc.z));
+    }
   }
 
   play(a, name) {
@@ -1021,6 +1138,8 @@ export class Office3D extends window.Office {
   facing(p, st) {
     if (st.pose === 'walk') return null;
     if (p.held || p.landed) return 0;
+    // Knocking: on your side of the screen.
+    if (st.act === 'knock') return Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.y);
     // Chatting: turn to each other.
     const mate = st.act === 'chat' && this.people.get((p.visit && p.visit.mate) || (p.poi && p.poi.partner) || p.chatWith);
     if (mate) return Math.atan2(mate.x - p.x, mate.y - p.y);
@@ -1050,7 +1169,7 @@ export class Office3D extends window.Office {
       p.pose = st.pose;
       const anim = {
         held: 'fall', dazed: 'emote-no', chat: 'interact-right', stretch: 'emote-yes', sip: 'holding-right', eat: 'holding-right',
-        printer: 'pick-up', neck: 'idle', lookaround: 'idle',
+        printer: 'pick-up', neck: 'idle', lookaround: 'idle', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
         walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
         phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
@@ -1092,6 +1211,8 @@ export class Office3D extends window.Office {
         if (st.act === 'nap') { a.head.rotation.x = a.headRest + 0.55; a.napped = true; }
         else if (a.napped) { a.head.rotation.x = a.headRest; a.napped = false; }
       }
+      this.dress(a, (p.s && p.s.level) || 1);
+      if (a.sign) a.sign.visible = st.act === 'sign';
       // hand-held props
       a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
       a.book.visible = st.act === 'read';
@@ -1205,6 +1326,8 @@ export class Office3D extends window.Office {
       b.m.material.emissiveIntensity = on ? 1.2 : 0.05;
     }
     if (this.arcadeScreen) this.arcadeScreen.material.emissive.setHSL((t * 0.05) % 1, 0.7, 0.5);
+    if (this.tvScreen) this.tvScreen.material.emissive.setHSL((Math.floor(t / 2.6) * 0.27) % 1, 0.6, 0.45);
+    if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
     if (this.rods) this.rods.forEach((r, k) => { r.position.z = this.plan.props.find((q) => q.t === 'foosball').y + 0.4 + (fbPlaying ? Math.sin(t * 8 + k) * 0.06 : 0); r.rotation.z = fbPlaying ? Math.sin(t * 12 + k) * 0.6 : 0; });
     this.updateBall();
@@ -1224,7 +1347,7 @@ export class Office3D extends window.Office {
       const scale = p.s.subagent ? 0.8 : 1;
       const base = this.plan.terrain && st.pose !== 'sit' ? this.groundHeight(p.x, p.y) : 0;
       const floatUp = p.held ? HELD_LIFT : st.pose !== 'walk' && p.poi && p.poi.float ? 0.45 + Math.sin((this.t / 1000 + p.phase) * 0.9) * 0.18 : 0;
-      const top = (st.pose === 'sit' ? this.seatHeight(p.x, p.y, st.sitZ) + CHAR_HEIGHT * 0.8 * scale : base + CHAR_HEIGHT * scale) + floatUp;
+      const top = (st.pose === 'sit' ? this.seatHeight(p.x, p.y, st.sitZ) + CHAR_HEIGHT * 0.8 * scale : base + CHAR_HEIGHT * scale) + floatUp + (st.act === 'sign' ? 0.3 : 0);
       v.set(p.x, top + 0.05, p.y).project(this.camera);
       const sx = (v.x + 1) / 2 * this.cw, sy = (1 - v.y) / 2 * this.ch;
       const foot = new THREE.Vector3(p.x, 0, p.y).project(this.camera);

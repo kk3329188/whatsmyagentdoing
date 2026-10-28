@@ -253,3 +253,111 @@ test('a message received does not make the receiver walk; the sender comes to a 
   assert.equal(st.pose, 'sit');
   assert.equal(st.act, 'chat');
 });
+
+test('dropping one person on another passes the first one\'s reply on and lands them side by side', () => {
+  const o = load(true);
+  canvasFor(o);
+  o.label = (s) => s.key;
+  const relays = [];
+  o.onRelay = (from, to) => relays.push([from.key, to.key]);
+  const who = settle(o, [at('done', { n: 'a', reply: '查好了' }), at('tool', { activity: 'Read a.js' })]);
+  const a = who('claude:donea'), b = who('claude:tool');
+  b.x = b.desk.seat.x; b.y = b.desk.seat.y; b.path = [];
+  o.hit = [{ key: a.key, x0: 0, x1: 1000, y0: 0, y1: 1000 }];
+  o.grab(ev(100, 100));
+  o.drag(ev(200, 200));
+  // Hold them right over the desk worker.
+  const pt = o.iso(b.x, b.y, 0);
+  o.drag(ev(pt.x + 300, pt.y + 100 - 28 - 0.55 * 32));
+  assert.equal(o.dropOn, b.key, 'the one underneath is highlighted');
+  assert.equal(o.mateUnder(a), b);
+  o.drop(ev(0, 0));
+  assert.deepEqual(relays, [['claude:donea', 'claude:tool']]);
+  assert.equal(o.dropOn, null);
+  assert.ok(Math.hypot(a.x - b.x, a.y - b.y) < 1.5, 'landed next to them');
+  assert.equal(o.plan.grid.blocked(a.x, a.y), false);
+  // Once the message is sent they walk over and talk.
+  o.relayed(a.key, b.key, '〔轉自「a」〕\n查好了');
+  assert.ok(a.visit);
+  assert.match(a.visit.text, /^轉話：查好了/);
+});
+
+test('dropping far from anyone does not relay', () => {
+  const o = load(true);
+  canvasFor(o);
+  const relays = [];
+  o.onRelay = (from, to) => relays.push([from, to]);
+  const who = settle(o, [at('done', { n: 'a' }), at('tool', { activity: 'Read a.js' })]);
+  const a = who('claude:donea');
+  o.hit = [{ key: a.key, x0: 0, x1: 1000, y0: 0, y1: 1000 }];
+  o.grab(ev(100, 100));
+  o.held = a; a.held = true;
+  a.x = 0.5; a.y = o.plan.D - 0.5;
+  o.dropOn = o.mateUnder(a) ? 'x' : null;
+  assert.equal(o.dropOn, null);
+  o.drop(ev(0, 0));
+  assert.equal(relays.length, 0);
+});
+
+test('waiting on you a while: a sign after 3 minutes, knocking at the front after 10', () => {
+  for (const roam of [true, false]) {
+    const o = load(roam);
+    let who = settle(o, [at('waiting', { ago: 30_000 })]);
+    let p = who('claude:waiting');
+    p.path = []; if (p.poi) { p.x = p.poi.x; p.y = p.poi.y; }
+    assert.notEqual(o.stateOf(p).act, 'sign', 'not yet');
+
+    const o2 = load(roam);
+    who = settle(o2, [at('waiting', { ago: 4 * MIN })]);
+    p = who('claude:waiting');
+    p.path = [];
+    const act = o2.stateOf(p).act;
+    assert.ok(act === 'sign' || act === 'peek' || act === 'lookaround' || act === 'chat', `${roam}: ${act}`);
+    if (p.poi && p.poi.act !== 'peek' && p.poi.act !== 'chat') assert.equal(act, 'sign');
+
+    const o3 = load(roam);
+    who = settle(o3, [at('waiting', { ago: 11 * MIN }), at('waiting', { n: 2, ago: 12 * MIN })]);
+    const k1 = who('claude:waiting'), k2 = who('claude:waiting2');
+    for (const k of [k1, k2]) {
+      assert.equal(k.poi.act, 'knock', `${roam}: comes to knock`);
+      assert.ok(k.poi.y > o3.plan.D - 1, 'at the front edge');
+      assert.equal(o3.plan.grid.blocked(k.poi.x, k.poi.y), false);
+      k.path = []; k.x = k.poi.x; k.y = k.poi.y;
+      assert.equal(o3.stateOf(k).act, 'knock');
+    }
+    assert.ok(Math.abs(k1.poi.x - k2.poi.x) >= 0.6, 'side by side, not on top of each other');
+  }
+});
+
+test('the office unlocks furniture as finished turns add up', () => {
+  const o = load(true);
+  o.cat = { x: o.plan.W - 3, y: o.plan.D - 2, path: [], until: 0, face: 1 };
+  assert.equal(o.setProgress({ turns: 0 }).length, 0, 'first call reports nothing new');
+  assert.ok(!o.plan.props.some((q) => q.t === 'tv'));
+  const plants = o.plan.props.filter((q) => q.t === 'plant').length;
+  assert.equal(o.setProgress({ turns: 0 }).length, 0);
+  const fresh = o.setProgress({ turns: 130 });
+  assert.equal(fresh.length, 3, fresh.join());
+  assert.ok(o.plan.props.filter((q) => q.t === 'plant').length > plants, 'more plants');
+  assert.ok(o.plan.props.some((q) => q.t === 'tv'), 'a TV in the lounge');
+  assert.ok(o.plan.pois.some((q) => q.act === 'tv'), 'something to watch');
+  assert.ok(o.cat2, 'a second cat');
+  assert.ok(!o.plan.props.some((q) => q.t === 'trophy'));
+  o.setProgress({ turns: 600 });
+  assert.ok(o.plan.props.some((q) => q.t === 'trophy'));
+  assert.ok(o.plan.neon);
+  // The new furniture blocks none of the spots people go to (one plant spot was already blocked).
+  const blocked = (plan) => plan.pois.filter((q) => !q.sit && plan.grid.blocked(q.x, q.y)).map((q) => `${q.act}@${q.x},${q.y}`).join();
+  assert.equal(blocked(o.plan), blocked(load(true).plan));
+  for (const d of o.plan.desks) assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, d.seat.x, d.seat.y).length, 'desks reachable');
+});
+
+test('levelling up shows above their head', () => {
+  const o = load(true);
+  settle(o, [at('tool', { activity: 'Read a.js', level: 2 })]);
+  o.first = false;
+  o.update([at('tool', { activity: 'Read a.js', level: 3 })]);
+  const p = o.people.get('claude:tool');
+  assert.match(p.event.text, /升等！Lv3 資深/);
+  assert.equal(p.event.zone, 'level');
+});

@@ -48,6 +48,20 @@
   // Picked up with the mouse: how high they dangle, and what they say.
   const HOLD_Z = 0.55;
   const HELD_TEXT = ['哇！', '放我下來！', '欸欸欸', '咦？要去哪', '我還在忙耶'];
+  // Experience: what each level is called, and what the office unlocks as
+  // its lifetime count of finished turns grows (src/progress.js).
+  const LEVEL_TITLE = ['新人', '新人', '正職', '資深', '主管', '傳奇'];
+  const UNLOCKS = [
+    { id: 'plants', at: 10, name: '🌿 盆栽' },
+    { id: 'tv', at: 50, name: '📺 休息區電視' },
+    { id: 'cat2', at: 120, name: '🐈‍⬛ 第二隻貓（2D）' },
+    { id: 'trophy', at: 250, name: '🏆 獎盃櫃' },
+    { id: 'neon', at: 500, name: '✨ 霓虹招牌' },
+  ];
+  // Waiting on you this long: hold up a sign, then come and knock on the screen.
+  const SIGN_MS = 3 * 60_000;
+  const KNOCK_MS = 10 * 60_000;
+  const waitedMs = (s) => Date.now() - (s.lastEventAt || Date.now());
   const lunch = () => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h >= 12 && h < 13.5; };
   const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
 
@@ -82,6 +96,7 @@
     coffee: '☕', water: '💧', fridge: '🍎', sink: '🫧', stool: '💬', couch: '💬', beanbag: '🎧',
     window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
     vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
+    tv: '📺', trophy: '🏆',
   };
 
   function hash(str) {
@@ -227,9 +242,11 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { onHover, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
+    constructor(root, { onHover, onRelay, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
       this.root = root;
       this.onHover = onHover || (() => {});
+      // Dropped one person onto another: pass the first one's last reply on.
+      this.onRelay = onRelay || null;
       this.label = label || ((s) => s.project || s.agent);
       // What a working person's bubble says (default: the tool's name).
       this.doing = doing || ((s) => (s.activity || 'tool').split(/[:\s]/)[0]);
@@ -504,6 +521,34 @@
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
 
+      // ---- unlocked by the office's experience (setProgress)
+      const un = this.unlocks || new Set();
+      // Only on floor nothing else stands on, so no path is cut off.
+      const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
+      if (un.has('plants')) {
+        for (const [x, y] of [[W - 0.45, MR - 0.55], [W - 0.45, PY - 0.9], [0.45, 1.6]]) {
+          if (!fits(x - 0.2, y - 0.2, 0.4, 0.4)) continue;
+          add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4);
+        }
+      }
+      if (un.has('tv')) {
+        const vx = mx + 4.1, vy = ly + 2.8;
+        if (fits(vx, vy, 1.1, 0.4)) {
+          add(vx + 0.55 + vy + 0.2, () => this.tv(vx, vy));
+          prop('tv', { x: vx, y: vy });
+          solid(vx, vy, 1.1, 0.4);
+          poi(vx + 0.55, Math.min(D - 0.3, vy + 1.05), 'tv', 'back', { zone: 'idle' });
+        }
+      }
+      if (un.has('trophy') && fits(0.1, 3.2, 0.45, 0.9)) {
+        add(0.32 + 3.65, () => this.trophyCase(0.1, 3.2));
+        prop('trophy', { x: 0.1, y: 3.2 });
+        solid(0.1, 3.2, 0.45, 0.9);
+        poi(0.95, 3.65, 'trophy', 'back', { yaw: -Math.PI / 2 });
+      }
+      const neon = un.has('neon') ? { x: Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
+      if (neon) prop('neon', neon);
+
       const posters = [
         { y: 2.2, color: '#c96442', text: 'SHIP IT' },
         { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
@@ -518,7 +563,7 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
     }
 
     // Signs painted on the floor naming each zone.
@@ -596,12 +641,9 @@
       this.offDuty = off.length - wanderers.length;
 
       const cap = this.plan.desks.length;
+      this.nWorking = working.length;
       // Scene packs have a fixed floor plan; the built-in office grows with the team.
-      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35))) {
-        this.plan = this.buildPlan(working.length);
-        this.deskOf.clear();
-        for (const p of this.people.values()) { p.poi = null; p.napDesk = null; p.desk = null; p.until = 0; }
-      }
+      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35))) this.rebuild();
 
       const workKeys = new Set(working.map((s) => s.key));
       for (const k of [...this.deskOf.keys()]) if (!workKeys.has(k)) this.deskOf.delete(k);
@@ -633,6 +675,10 @@
           p.event = { text: EVENT_TEXT[nowZone](s), at: Date.now(), zone: nowZone };
         }
         p.lastZone = nowZone;
+        if (!this.first && s.level && p.level && s.level > p.level) {
+          p.event = { text: `升等！Lv${s.level} ${LEVEL_TITLE[s.level] || ''}`, at: Date.now(), zone: 'level' };
+        }
+        p.level = s.level || 1;
         if (isWorker) {
           this.release(p);
           const desk = desks[this.deskOf.get(s.key)];
@@ -668,6 +714,32 @@
         }
       }
       this.first = false;
+    }
+
+    // A new floor plan: everyone picks their desk and spot again.
+    rebuild() {
+      this.plan = this.buildPlan(this.nWorking || 0);
+      this.deskOf.clear();
+      for (const p of this.people.values()) {
+        p.poi = null; p.napDesk = null; p.desk = null; p.until = 0; p.run = null;
+      }
+    }
+
+    // The office's lifetime count of finished turns: furniture it has earned.
+    // Returns the names of things unlocked by this call (none on the first).
+    setProgress(office) {
+      const turns = (office && office.turns) || 0;
+      const have = new Set(UNLOCKS.filter((u) => turns >= u.at).map((u) => u.id));
+      const key = [...have].join();
+      if (key === this.unlockKey) return [];
+      const fresh = this.unlockKey == null ? [] : UNLOCKS.filter((u) => have.has(u.id) && !this.unlocks.has(u.id)).map((u) => u.name);
+      this.unlockKey = key;
+      this.unlocks = have;
+      if (have.has('cat2') && !this.cat2 && this.cat) {
+        this.cat2 = { x: this.cat.x - 1.5, y: this.cat.y - 0.5, path: [], until: 0, face: -1, color: '#3b3b40' };
+      }
+      if (!this.plan.fixed) this.rebuild();
+      return fresh;
     }
 
     release(p) {
@@ -711,6 +783,8 @@
       if (p.poi && now < p.until) return;
       this.release(p);
       const plan = this.plan;
+      // Waited on you for ages: come to the front and knock on the screen.
+      if (plan.zones && p.zone === 'wait' && waitedMs(p.s) > KNOCK_MS) return this.knock(p);
       if (plan.zones && p.zone && this.roam !== false) return this.roamTo(p);
       if (plan.zones && p.zone) {
         // Stay inside your zone: waiting and errors stay put, the others
@@ -781,7 +855,7 @@
       }
       // Someone standing about who isn't busy talking: go and chat.
       for (const o of this.people.values()) {
-        if (o === p || o.mode !== 'wander' || o.held || o.path.length || !o.poi || o.poi.sit || o.chatWith || o.poi.partner || o.until === Infinity) continue;
+        if (o === p || o.mode !== 'wander' || o.held || o.path.length || !o.poi || o.poi.sit || o.chatWith || o.poi.partner || o.poi.act === 'knock' || o.until === Infinity) continue;
         const side = Math.random() < 0.5 ? 0.75 : -0.75;
         const spot = [[o.x + side, o.y], [o.x - side, o.y], [o.x, o.y + 0.75]].find(([x, y]) => !plan.grid.blocked(x, y));
         if (spot) options.push([{ x: spot[0], y: spot[1], act: 'chat', face: 'front', partner: o.key }, 2.5]);
@@ -814,6 +888,25 @@
       this.goTo(p, choice);
     }
 
+    // The front edge of the floor, right in front of you; side by side when
+    // several are knocking.
+    knock(p) {
+      const plan = this.plan;
+      const y = plan.D - 0.45;
+      const taken = [...this.people.values()].filter((o) => o !== p && o.poi && o.poi.act === 'knock').map((o) => o.poi.x);
+      let spot = null;
+      for (let k = 0; k < 24 && !spot; k++) {
+        const x = plan.W * 0.55 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 0.8;
+        if (x < 0.6 || x > plan.W - 0.6 || plan.grid.blocked(x, y) || taken.some((t) => Math.abs(t - x) < 0.6)) continue;
+        spot = { x, y };
+      }
+      if (!spot) return this.roam !== false ? this.roamTo(p) : undefined;
+      p.poi = { ...spot, act: 'knock', face: 'front' };
+      p.until = Infinity;
+      p.stay = rand(30, 45) * 1000;
+      this.goTo(p, spot);
+    }
+
     // Walk over to another person and chat with them for a bit; a worker
     // then goes back to their desk.
     visit(p, mate, text) {
@@ -827,6 +920,14 @@
       if (mate.mode === 'wander' && mate.until !== Infinity) mate.until = Math.max(mate.until, Date.now() + 14_000);
       p.event = { text: `去找 ${this.label(mate.s)}`.slice(0, 24), at: Date.now(), zone: 'held' };
       this.goTo(p, spot);
+    }
+
+    // A message was passed from one to the other through the panel.
+    relayed(fromKey, toKey, text) {
+      const p = this.people.get(fromKey), mate = this.people.get(toKey);
+      if (!p || !mate || p === mate || p.leaving || mate.leaving) return;
+      p.landed = 0;
+      this.visit(p, mate, '轉話：' + String(text || '').replace(/^〔[^〕]*〕\s*/, '').slice(0, 30));
     }
 
     // The visit carries on while the visitor has not arrived; once there they
@@ -924,6 +1025,20 @@
       const at = this.heldAt(e);
       p.x = clamp(at.x, 0.2, this.plan.W - 0.2);
       p.y = clamp(at.y, 0.2, this.plan.D - 0.2);
+      // Right over someone else: letting go passes your last reply to them.
+      const mate = this.onRelay ? this.mateUnder(p) : null;
+      this.dropOn = mate ? mate.key : null;
+    }
+
+    // The person standing closest under a held one, if near enough.
+    mateUnder(p) {
+      let best = null, bd = 0.95;
+      for (const o of this.people.values()) {
+        if (o === p || o.leaving || o.held) continue;
+        const d = Math.hypot(o.x - p.x, o.y - p.y);
+        if (d < bd) { bd = d; best = o; }
+      }
+      return best;
     }
 
     drop(e) {
@@ -934,11 +1049,14 @@
       this.dropped = true;
       setTimeout(() => (this.dropped = false), 0);
       p.held = false;
-      const spot = this.freeSpot(p.x, p.y);
+      const mate = this.dropOn && this.people.get(this.dropOn);
+      this.dropOn = null;
+      const spot = mate ? this.besideOf(mate) : this.freeSpot(p.x, p.y);
       p.x = spot.x; p.y = spot.y;
       p.path = [];
       p.landed = Date.now();
-      p.event = { text: p.mode === 'work' ? '回座位…' : '呼～', at: Date.now(), zone: 'held' };
+      p.event = { text: mate ? `有話跟 ${this.label(mate.s)} 說`.slice(0, 24) : p.mode === 'work' ? '回座位…' : '呼～', at: Date.now(), zone: 'held' };
+      if (mate) this.onRelay(p.s, mate.s);
       this.canvas.style.cursor = 'default';
       if (e) this.pointer(e);
     }
@@ -1162,6 +1280,19 @@
       this.onWall('y0', OW + 0.5, 2.2, (c) => {
         c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText('MEETING', 0, 0);
       });
+      // unlocked: a neon sign over the windows
+      const neon = this.plan.neon;
+      if (neon) {
+        this.onWall('y0', neon.x, 2.28, (c) => {
+          const hue = (t * 40) % 360;
+          c.font = '900 13px ui-sans-serif, system-ui, sans-serif';
+          c.shadowColor = `hsl(${hue},100%,60%)`;
+          c.shadowBlur = 8 + Math.sin(t * 6) * 3;
+          c.fillStyle = `hsl(${hue},100%,${pal.dark ? 75 : 55}%)`;
+          c.fillText(neon.text, 0, 0);
+          c.shadowBlur = 0;
+        });
+      }
       // left wall: posters, clock, door
       for (const ps of this.plan.posters) {
         this.poly([P(0, ps.y, 0.95), P(0, ps.y + 0.9, 0.95), P(0, ps.y + 0.9, 1.95), P(0, ps.y, 1.95)], ps.color);
@@ -1358,6 +1489,35 @@
       this.box(x, y + 0.7, 0.8, 0.7, 0.2, 0.08, '#4a3a8a', '#3a2a6a', '#2b1f52');
       const j = this.iso(x + 0.25, y + 0.8, 0.88);
       this.ctx.fillStyle = '#e04a4a'; this.ctx.beginPath(); this.ctx.arc(j.x, j.y - 3, 2.5, 0, Math.PI * 2); this.ctx.fill();
+    }
+
+    // Unlocked furniture.
+    tv(x, y) {
+      const pal = this.pal;
+      this.box(x, y, 0, 1.1, 0.4, 0.42, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR);
+      this.box(x + 0.08, y + 0.14, 0.42, 0.94, 0.1, 0.62, '#222', '#1a1a1e', '#2a2a2e');
+      // The picture changes now and then.
+      const k = Math.floor(this.t / 2600) % 4;
+      const col = ['#3b8ee0', '#5f9a4c', '#c96442', '#8b6be6'][k];
+      const P = (a, b, z) => this.iso(a, b, z);
+      const sy = y + 0.245;
+      this.poly([P(x + 0.13, sy, 0.47), P(x + 0.97, sy, 0.47), P(x + 0.97, sy, 0.99), P(x + 0.13, sy, 0.99)], col);
+      this.poly([P(x + 0.13, sy, 0.47), P(x + 0.55, sy, 0.47), P(x + 0.55, sy, 0.7), P(x + 0.13, sy, 0.7)], 'rgba(255,255,255,.18)');
+    }
+
+    trophyCase(x, y) {
+      const pal = this.pal;
+      this.box(x, y, 0, 0.45, 0.9, 1.25, this.shade(pal.deskTop, 5), pal.deskL, pal.deskR);
+      const c = this.ctx;
+      const t = this.t / 1000;
+      for (let i = 0; i < 3; i++) {
+        const b = this.iso(x + 0.22, y + 0.15 + i * 0.3, 1.25);
+        const shine = 0.5 + 0.5 * Math.sin(t * 2 + i * 2);
+        c.fillStyle = `rgb(${220 + shine * 30},${170 + shine * 40},40)`;
+        c.beginPath(); c.moveTo(b.x - 4, b.y - 9); c.lineTo(b.x + 4, b.y - 9); c.lineTo(b.x + 2, b.y - 3); c.lineTo(b.x - 2, b.y - 3); c.closePath(); c.fill();
+        c.fillRect(b.x - 0.8, b.y - 3, 1.6, 2.5);
+        c.fillRect(b.x - 2.5, b.y - 1, 5, 1.5);
+      }
     }
 
     floorLamp(x, y) {
@@ -1631,6 +1791,8 @@
           if (mate && !mate.path.length && ((mate.poi && mate.poi.partner === p.key) || (mate.visit && mate.visit.mate === p.key))) act = 'chat';
         }
         if (p.zone === 'error') act = 'scratch';
+        // Waiting a while: hold up a sign (unless talking or looking out the door).
+        if (p.zone === 'wait' && act !== 'knock' && act !== 'chat' && act !== 'peek' && waitedMs(s) > SIGN_MS) act = 'sign';
         return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act, sitZ: q.sit || 0 };
       }
       return { pose: 'stand', face: 'front', act: null, sitZ: 0 };
@@ -1661,6 +1823,12 @@
         c.lineWidth = 2;
         c.beginPath(); c.ellipse(fb.x, fb.y, 12, 6, 0, 0, Math.PI * 2); c.stroke();
         c.globalAlpha = 1;
+      }
+      if (this.dropOn === p.key) {
+        c.strokeStyle = '#8b6be6';
+        c.lineWidth = 3;
+        const r = 16 + Math.sin(t * 8) * 2;
+        c.beginPath(); c.ellipse(fb.x, fb.y, r, r / 2, 0, 0, Math.PI * 2); c.stroke();
       }
       if (this.hoverKey === p.key) {
         c.strokeStyle = STATUS_COLOR[s.status] || '#888';
@@ -1695,6 +1863,17 @@
       }
       const hip = seated ? -4 : -10;
       this.roundRect(-7, hip - 13, 14, 14, 3, p.shirt);
+      // What their level lets them wear: a lanyard, then a tie.
+      const lv = s.level || 1;
+      if (front && lv >= 4) {
+        c.fillStyle = '#b03a2e';
+        c.beginPath(); c.moveTo(-1.6, hip - 13); c.lineTo(1.6, hip - 13); c.lineTo(1.2, hip - 11.5); c.lineTo(2.2, hip - 4); c.lineTo(0, hip - 2); c.lineTo(-2.2, hip - 4); c.lineTo(-1.2, hip - 11.5); c.closePath(); c.fill();
+      } else if (front && lv >= 2) {
+        c.strokeStyle = '#3b8ee0'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(-3.5, hip - 13); c.lineTo(0, hip - 6.5); c.lineTo(3.5, hip - 13); c.stroke();
+        c.fillStyle = '#fafafa'; c.fillRect(-2.2, hip - 7, 4.4, 5);
+        c.fillStyle = '#3b8ee0'; c.fillRect(-2.2, hip - 7, 4.4, 1.2);
+      }
       const arm = this.shade(p.shirt, -18);
       const hand = (hx, hy) => { c.fillStyle = p.skin; c.beginPath(); c.arc(hx, hy, 2.2, 0, Math.PI * 2); c.fill(); };
       c.fillStyle = arm;
@@ -1706,6 +1885,30 @@
           c.fillRect(-10, hip - 24 + k, 3, 13);
           c.fillRect(7, hip - 24 - k, 3, 13);
           hand(-8.5, hip - 25 + k); hand(8.5, hip - 25 - k);
+          break;
+        }
+        case 'sign': {
+          // Holding up a sign over their head, bobbing it.
+          const k = Math.abs(Math.sin(t * 3 + p.phase)) * 2;
+          c.fillRect(-8, hip - 30 - k, 3, 19 + k);
+          c.fillRect(5, hip - 30 - k, 3, 19 + k);
+          this.roundRect(-14, hip - 44 - k, 28, 14, 2, '#fffdf4', STATUS_COLOR.waiting);
+          c.fillStyle = STATUS_COLOR.waiting;
+          c.font = '800 8px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+          c.textAlign = 'center'; c.textBaseline = 'middle';
+          c.fillText('等你！', 0, hip - 36.5 - k);
+          break;
+        }
+        case 'knock': {
+          // Knocking on the glass between you and them.
+          const k = Math.sin(t * 9 + p.phase) > 0 ? 1 : 0;
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(5, hip - 21 + k * 2, 3, 10);
+          hand(6.5, hip - 22 + k * 2);
+          if (k) {
+            c.strokeStyle = 'rgba(255,255,255,.75)'; c.lineWidth = 1;
+            c.beginPath(); c.arc(6.5, hip - 22, 4 + (t * 20 % 4), 0, Math.PI * 2); c.stroke();
+          }
           break;
         }
         case 'stretch': {
@@ -1919,9 +2122,17 @@
         if (p.hairStyle === 2) { c.beginPath(); c.arc(0, hy - 7, 3.2, 0, Math.PI * 2); c.fill(); }
         if (p.hairStyle === 1) c.fillRect(-6, hy, 12, 8);
       }
-      if (st.act === 'arcade' || st.act === 'beanbag') {
-        c.strokeStyle = '#222'; c.lineWidth = 2;
+      if (st.act === 'arcade' || st.act === 'beanbag' || (lv >= 3 && lv < 5)) {
+        c.strokeStyle = lv >= 3 ? '#e2e2e6' : '#222'; c.lineWidth = 2;
         c.beginPath(); c.arc(0, hy, 8, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+        if (lv >= 3) { c.fillStyle = '#3a3a44'; c.fillRect(-9.5, hy - 2.5, 3, 5); c.fillRect(6.5, hy - 2.5, 3, 5); }
+      }
+      if (lv >= 5) {
+        // A crown for the old hands.
+        const cy = hy - (napping ? 6 : 8.5);
+        c.fillStyle = '#f2c230';
+        c.beginPath(); c.moveTo(-5, cy); c.lineTo(-5, cy - 4); c.lineTo(-2.5, cy - 2); c.lineTo(0, cy - 5.5); c.lineTo(2.5, cy - 2); c.lineTo(5, cy - 4); c.lineTo(5, cy); c.closePath(); c.fill();
+        c.fillStyle = '#c0392b'; c.beginPath(); c.arc(0, cy - 1.4, 0.9, 0, Math.PI * 2); c.fill();
       }
       if (st.act === 'dazed') {
         // Seeing stars after being put down.
@@ -1945,7 +2156,8 @@
         }
       }
 
-      const headTop = y + (hy - 8) * sc;
+      // Bubbles go above the sign when one is held up.
+      const headTop = y + (st.act === 'sign' ? hip - 46 : hy - 8) * sc;
       this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
     }
@@ -1999,7 +2211,9 @@
       };
 
       let top = y;
-      if (p.held) {
+      if (this.dropOn === p.key) {
+        top = pill('放開＝把話轉給我', '#fff', '#8b6be6', y - 12);
+      } else if (p.held) {
         // Held up: no status bubble, just the name and what they shout.
       } else if (p.visit && at.act === 'chat' && p.visit.text) {
         // What they came to say.
@@ -2049,6 +2263,11 @@
           c.font = font(600, 10);
           top = y - 22 - jump;
         }
+      } else if (at.act === 'knock' && !p.path.length) {
+        // Knock knock: and how long it has been waiting.
+        const k = Math.sin(t * 9 + p.phase) > 0;
+        c.font = font(800, 11);
+        top = pill(k ? '叩叩！在嗎？' : '叩叩…', '#fff', STATUS_COLOR.waiting, y - 12);
       } else if (p.mode === 'wander' && (p.zone === 'wait' || p.zone === 'error')) {
         // Waiting on you (!), left you a decision (?), or failed (red !).
         const col = STATUS_COLOR[p.zone === 'error' ? 'error' : 'waiting'];
@@ -2099,6 +2318,15 @@
         }
       }
 
+      // Waiting a while: sweating it.
+      if (p.mode === 'wander' && p.zone === 'wait' && waitedMs(s) > SIGN_MS && !p.held) {
+        const k = (t * 0.8 + p.phase) % 1;
+        c.globalAlpha = 1 - k;
+        c.fillStyle = '#6cb6ff';
+        const dx = x + 11, dy = y - 4 + k * 8;
+        c.beginPath(); c.moveTo(dx, dy - 4); c.quadraticCurveTo(dx + 3, dy, dx, dy + 1.5); c.quadraticCurveTo(dx - 3, dy, dx, dy - 4); c.fill();
+        c.globalAlpha = 1;
+      }
       // Waiting a while: how long, under the bubble.
       if (p.mode === 'wander' && (p.zone === 'wait' || p.zone === 'error')) {
         const mins = Math.floor((Date.now() - (s.lastEventAt || Date.now())) / 60_000);
@@ -2132,7 +2360,7 @@
         const age = (Date.now() - p.event.at) / 1000;
         if (age > 4.5) p.event = null;
         else {
-          const col = { work: STATUS_COLOR.tool, wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done, held: '#8b6be6' }[p.event.zone] || pal.text;
+          const col = { work: STATUS_COLOR.tool, wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done, held: '#8b6be6', level: '#c99a14' }[p.event.zone] || pal.text;
           c.globalAlpha = Math.min(1, (4.5 - age) * 1.5);
           c.font = font(800, 12);
           const w = c.measureText(p.event.text).width + 14;
@@ -2164,8 +2392,7 @@
       c.restore();
     }
 
-    moveCat(dt, now) {
-      const k = this.cat;
+    moveCat(dt, now, k = this.cat) {
       if (!k.path.length && now > k.until) {
         const { W, D, grid } = this.plan;
         let tx, ty, tries = 0;
@@ -2182,8 +2409,7 @@
       }
     }
 
-    drawCat() {
-      const k = this.cat;
+    drawCat(k = this.cat) {
       const c = this.ctx;
       const p = this.iso(k.x, k.y, 0);
       const t = this.t / 1000;
@@ -2193,7 +2419,7 @@
       c.scale(k.face, 1);
       c.fillStyle = this.pal.shadow;
       c.beginPath(); c.ellipse(0, 0, 8, 3, 0, 0, Math.PI * 2); c.fill();
-      const col = '#e09a4a';
+      const col = k.color || '#e09a4a';
       c.fillStyle = col;
       if (walking) {
         const s = Math.sin(t * 14) * 1.5;
@@ -2279,6 +2505,7 @@
         }
       }
       this.moveCat(dt, wall);
+      if (this.cat2) this.moveCat(dt, wall, this.cat2);
     }
 
     draw() {
@@ -2303,6 +2530,7 @@
       }
       for (const p of this.people.values()) items.push({ depth: p.held ? 1e9 : p.x + p.y + 0.01, person: p });
       items.push({ depth: this.cat.x + this.cat.y, draw: () => this.drawCat() });
+      if (this.cat2) items.push({ depth: this.cat2.x + this.cat2.y, draw: () => this.drawCat(this.cat2) });
       items.sort((a, b) => a.depth - b.depth);
 
       this.hit = [];
@@ -2345,6 +2573,8 @@
   }
 
   window.Office = Office;
+  window.OFFICE_UNLOCKS = UNLOCKS;
+  window.OFFICE_LEVEL_TITLE = LEVEL_TITLE;
   window.OFFICE_AGENT_BADGES = AGENT_BADGES;
   window.OfficeGrid = Grid;
 })();

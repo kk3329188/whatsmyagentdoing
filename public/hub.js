@@ -97,6 +97,8 @@
   let openKey = null;
   let draft = '';
   let flash = '';
+  let relayFrom = null; // key of the session whose reply is being passed on
+  let opts = {};
 
   const panel = document.createElement('aside');
   panel.className = 'hub-panel';
@@ -105,8 +107,11 @@
   bar.className = 'hub-needs';
   bar.hidden = true;
 
-  function mount({ roam = true, onRoam } = {}) {
+  function mount(o = {}) {
+    opts = o;
+    let { roam = true, onRoam } = o;
     document.body.appendChild(panel);
+    document.body.appendChild(toastEl);
     const wrap = document.getElementById('officeWrap');
     wrap.parentNode.insertBefore(bar, wrap);
     // What you can read off a person, and a switch between roaming freely
@@ -128,11 +133,134 @@
         ['var(--idle)', '休息區＝閒置；坐不下就走出門＝下班'],
       ];
       key.innerHTML = items.map(([c, t]) => `<span><span class="dot" style="color:${c}"></span>${t}</span>`).join('')
-        + `<span class="hub-roam">按住人物可拎起來拖到別處・<button type="button">${roam ? '改成依狀態分區' : '改成自由走動'}</button></span>`;
-      key.querySelector('button').onclick = () => { roam = !roam; draw(); if (onRoam) onRoam(roam); };
+        + `<span class="hub-roam">按住人物拖到別處；丟到別人身上＝把他最後的回覆轉過去・<button type="button" data-k="roam">${roam ? '改成依狀態分區' : '改成自由走動'}</button>`
+        + `<button type="button" data-k="sound">${Sound.on ? '🔔 音效開' : '🔕 音效關'}</button></span>`;
+      key.querySelector('[data-k=roam]').onclick = () => { roam = !roam; draw(); if (onRoam) onRoam(roam); };
+      key.querySelector('[data-k=sound]').onclick = () => { Sound.set(!Sound.on); draw(); if (Sound.on) Sound.play('done'); };
     };
+    Sound.on = o.sound !== false;
+    Sound.onChange = o.onSound;
     draw();
     wrap.appendChild(key);
+    wrap.appendChild(xpEl);
+  }
+
+  // ---- sounds: made on the fly, no files
+
+  const Sound = {
+    on: true,
+    ctx: null,
+    last: 0,
+    set(v) { this.on = v; if (this.onChange) this.onChange(v); },
+    // Browsers only allow sound after you have clicked or typed on the page.
+    unlock() {
+      try {
+        if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+      } catch {}
+    },
+    tone(at, freq, len, { type = 'sine', vol = 0.18, to = null } = {}) {
+      const c = this.ctx;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, at);
+      if (to) o.frequency.exponentialRampToValueAtTime(to, at + len);
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(vol, at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+      o.connect(g).connect(c.destination);
+      o.start(at); o.stop(at + len + 0.02);
+    },
+    // done: a two-note ding · error: a short alarm · wait: knock knock · level: a little fanfare
+    play(kind) {
+      if (!this.on || !this.ctx || this.ctx.state !== 'running') return;
+      const now = performance.now();
+      if (now - this.last < 1200) return;
+      this.last = now;
+      const t = this.ctx.currentTime + 0.02;
+      if (kind === 'done') { this.tone(t, 880, 0.35); this.tone(t + 0.13, 1320, 0.5); }
+      else if (kind === 'error') { for (let i = 0; i < 3; i++) this.tone(t + i * 0.22, i % 2 ? 330 : 440, 0.18, { type: 'square', vol: 0.07 }); }
+      else if (kind === 'wait') { this.tone(t, 190, 0.09, { type: 'triangle', vol: 0.5, to: 90 }); this.tone(t + 0.16, 190, 0.09, { type: 'triangle', vol: 0.5, to: 90 }); }
+      else if (kind === 'level') { [523, 659, 784, 1047].forEach((f, i) => this.tone(t + i * 0.09, f, 0.25, { type: 'triangle', vol: 0.12 })); }
+    },
+  };
+  for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => Sound.unlock(), { capture: true });
+
+  const isWait = (s) => s.status === 'waiting' || (s.status === 'done' && !!(s.ask || s.needs));
+  const BUSY = new Set(['thinking', 'tool', 'typing']);
+  const seen = new Map(); // key -> { status, wait, level, reminded }
+  // Called with each snapshot: a ding when a turn finishes, an alarm on an
+  // error, a knock when one starts waiting on you (and again after 10 minutes).
+  function chime(sessions, first) {
+    let sound = null;
+    const rank = { level: 1, done: 2, wait: 3, error: 4 };
+    const want = (k) => { if (!sound || rank[k] > rank[sound]) sound = k; };
+    for (const s of sessions) {
+      if (s.subagent) continue;
+      const b = seen.get(s.key);
+      const now = { status: s.status, wait: isWait(s), level: s.level || 1, reminded: b ? b.reminded : false };
+      if (!now.wait) now.reminded = false;
+      if (b && !first) {
+        if (s.status === 'error' && b.status !== 'error') want('error');
+        else if (now.wait && !b.wait) want('wait');
+        else if (s.status === 'done' && BUSY.has(b.status)) want('done');
+        if (now.level > b.level) want('level');
+        if (now.wait && !now.reminded && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) { now.reminded = true; want('wait'); }
+      } else if (now.wait && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) now.reminded = true;
+      seen.set(s.key, now);
+    }
+    if (sound) Sound.play(sound);
+  }
+
+  // ---- experience and unlocks
+
+  const xpEl = document.createElement('div');
+  xpEl.className = 'legend hub-xp';
+  xpEl.hidden = true;
+  const toastEl = document.createElement('div');
+  toastEl.className = 'hub-toast';
+  toastEl.hidden = true;
+  let toastTimer = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toastEl.hidden = true), 5000);
+  }
+  function progress(office, fresh) {
+    if (!office) { xpEl.hidden = true; return; }
+    const list = window.OFFICE_UNLOCKS || [];
+    const have = list.filter((u) => office.turns >= u.at);
+    const next = list.find((u) => office.turns < u.at);
+    xpEl.hidden = false;
+    xpEl.innerHTML = `<span>🏢 辦公室累積完成 <b>${office.turns}</b> 輪</span>`
+      + `<span>已解鎖：${have.length ? have.map((u) => esc(u.name)).join('、') : '還沒有'}</span>`
+      + (next ? `<span>下一個：${esc(next.name)}（再 ${next.at - office.turns} 輪）</span>` : '<span>全部解鎖了 🎉</span>')
+      + '<span class="hub-muted">每個人：做一個動作 +1、做完一輪 +5 經驗，升等會換裝（識別證→耳機→領帶→皇冠）</span>';
+    if (fresh && fresh.length) { toast(`🎉 辦公室解鎖：${fresh.join('、')}`); Sound.play('level'); }
+  }
+
+  const LV_MIN = [0, 0, 60, 200, 600, 1500];
+  function levelLine(s) {
+    if (!s.level) return '';
+    const title = (window.OFFICE_LEVEL_TITLE || [])[s.level] || '';
+    const span = s.next ? s.next - LV_MIN[s.level] : 0;
+    const pct = s.next ? Math.round(((s.xp - LV_MIN[s.level]) / span) * 100) : 100;
+    return `<div class="hub-lv"><b>Lv${s.level} ${esc(title)}</b><span class="hub-bar"><i style="width:${pct}%"></i></span><span class="hub-muted">${s.next ? `經驗 ${s.xp}/${s.next}` : `經驗 ${s.xp}・滿級`}</span></div>`;
+  }
+
+  // Dropped one person on another in the office: pass the first one's last
+  // reply on to the second, after you have looked it over.
+  function relay(from, to) {
+    if (PRIVATE || !from || !to || from.key === to.key) return;
+    if (!to.controllable) { toast('只能把話轉給 Claude Code 的 session'); return; }
+    const said = from.recap || from.reply || from.ask || '';
+    const head = `〔轉自「${cut(name(from), 30)}」〕`;
+    open(to.key);
+    relayFrom = from.key;
+    draft = said ? `${head}\n${cut(said, 3800)}` : `${head}\n`;
+    render();
+    focusBox();
   }
 
   async function post(action, body) {
@@ -218,6 +346,8 @@
         </div>
         <button class="hub-x" aria-label="關閉">×</button>
       </div>
+      ${levelLine(s)}
+      ${relayFrom && canSay ? `<div class="hub-relay">↪ 轉話：把「${esc(cut(name(state.data.sessions.find((x) => x.key === relayFrom) || {}), 24))}」的最後回覆轉給這個 session。可以先改內容，按 Enter 送出。<button class="hub-btn" data-act="unrelay">不轉了</button></div>` : ''}
       ${need ? `<div class="hub-need"><b>${s.stuck ? '可能卡住' : '等你處理'}</b>${esc(s.stuck || need)}
         ${s.choices && canSay ? `<div class="hub-row hub-choices">${s.choices.map((c, i) => `<button class="hub-btn primary" data-choice="${i}" title="${esc(c.message)}">${esc(c.label)}</button>`).join('')}</div>` : ''}
         ${s.options ? `<div class="hub-row hub-choices">${s.options.map((o) => `<span class="hub-chip">${esc(o)}</span>`).join('')}</div><p class="hub-muted">選擇題要切過去才能回答。</p>` : ''}
@@ -275,13 +405,14 @@
     if (box && document.activeElement !== box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
   function open(key) {
-    if (openKey !== key) { draft = ''; flash = ''; }
+    if (openKey !== key) { draft = ''; flash = ''; relayFrom = null; }
     openKey = key;
     render();
     focusBox();
   }
   function close() {
     openKey = null;
+    relayFrom = null;
     panel.hidden = true;
     panel.innerHTML = '';
   }
@@ -290,13 +421,24 @@
     const s = state.data.sessions.find((x) => x.key === openKey);
     if (!s) return;
     let r;
-    if (kind !== 'open') { flash = '送出中…（這個瀏覽器第一次用要按 Touch ID）'; updateLive(s); }
+    if (kind !== 'open' && kind !== 'unrelay') { flash = '送出中…（這個瀏覽器第一次用要按 Touch ID）'; updateLive(s); }
+    if (kind === 'unrelay') {
+      relayFrom = null; draft = '';
+      const box = panel.querySelector('textarea');
+      if (box) box.value = '';
+      render(); focusBox();
+      return;
+    }
     if (kind === 'say') {
       const box = panel.querySelector('textarea');
       const text = (preset != null ? preset : box ? box.value : draft).trim();
       if (!text) return;
       r = await post('say', { key: s.key, text });
       if (r.ok && preset == null) { draft = ''; if (box) box.value = ''; }
+      if (r.ok && relayFrom && preset == null) {
+        if (opts.onRelayed) opts.onRelayed(relayFrom, s.key, text);
+        relayFrom = null;
+      }
     } else {
       r = await post(kind, { key: s.key });
     }
@@ -338,7 +480,7 @@
 
   let PRIVATE = false;
   window.Hub = {
-    mount, render, open, close, label, doing, words, steps, name,
+    mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },
   };

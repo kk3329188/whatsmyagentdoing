@@ -47,6 +47,8 @@ function newSession(agent, id, file) {
     errStreak: 0,     // tool calls that failed in a row
     talk: [],         // messages with other sessions, newest last: { peer, dir: 'out'|'in', at, text }
     spawning: null,   // tool_use id of a start_session call whose result names the new session
+    tools: 0,         // tool calls seen and turns finished, for experience points (src/progress.js)
+    turns: 0,
   };
 }
 
@@ -98,7 +100,10 @@ function stamp(s, ts) {
   return Number.isFinite(t) ? t : null;
 }
 
+const BUSY = new Set(['thinking', 'tool', 'typing', 'waiting']);
 function set(s, status, activity) {
+  if ((status === 'tool' || status === 'waiting') && activity && activity !== s.activity) s.tools++;
+  if (status === 'done' && BUSY.has(s.status)) s.turns++;
   s.status = status;
   if (activity !== undefined) s.activity = activity;
   if (status !== 'error') s.error = null;

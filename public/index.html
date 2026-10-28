@@ -219,6 +219,16 @@
   .hub-roam { margin-left: auto; }
   .hub-roam button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 2px 10px; font: inherit; cursor: pointer; }
   .hub-roam button:hover { border-color: var(--tool); }
+  .hub-roam button + button { margin-left: 6px; }
+  .hub-xp { margin-top: 4px; }
+  .hub-xp b { color: var(--ink); }
+  .hub-lv { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 12px; }
+  .hub-lv b { color: #c99a14; white-space: nowrap; }
+  .hub-lv .hub-bar { flex: 1; margin: 0; }
+  .hub-relay { margin: 10px 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #8b6be6 14%, transparent); border: 1px solid color-mix(in srgb, #8b6be6 45%, transparent); font-size: 12px; line-height: 1.5; }
+  .hub-relay .hub-btn { margin-left: 6px; padding: 1px 8px; }
+  .hub-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60; padding: 10px 16px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.25); max-width: calc(100vw - 32px); }
+  .hub-toast[hidden] { display: none; }
   .office-canvas { touch-action: none; }
   .hub-needs button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 10px; font: inherit; cursor: pointer; }
   .hub-needs button:hover { border-color: var(--waiting); }
@@ -575,9 +585,12 @@ function onData(data) {
     }
     state.prev.set(s.key, s.status);
   }
+  if (!PIP) Hub.chime(data.sessions, first);
   state.data = data;
   state.loaded = true;
   applyLang(chooseLang(data.lang));
+  const fresh = office && office.setProgress ? office.setProgress(data.office) : [];
+  if (!PIP) Hub.progress(data.office, fresh);
   render();
   Hub.setPrivate(data.privacy);
   Hub.render();
@@ -680,6 +693,8 @@ const officeOpts = {
   helpers: (s) => state.data.sessions.filter((k) => k.subagent && k.parentId === s.id && ACTIVE.has(k.status)),
   zoneLabels: { work: '🖥 工作區', wait: '✋ 等你回覆／拍板', error: '⚠ 出錯', done: '☕ 剛做完', idle: '🛋 閒置' },
   roam: store.get('roam', true),
+  // Dropping one person on another passes the first one's last reply on.
+  onRelay: (from, to) => { if (!PIP) Hub.relay(from, to); },
   onHover(s, at, click) {
     if (click) {
       // Clicking a person opens their session panel.
@@ -733,6 +748,7 @@ async function makeOffice() {
   }
   office = mine;
   office.offDutyLabel = L.wentHome;
+  if (state.data && state.data.office && office.setProgress) office.setProgress(state.data.office);
   render();
   const ok = await mine.ready;
   if (office !== mine) return;
@@ -860,6 +876,9 @@ window.addEventListener('storage', (e) => {
 Hub.mount({
   roam: officeOpts.roam,
   onRoam(v) { store.set('roam', v); officeOpts.roam = v; if (office && office.setRoam) office.setRoam(v); },
+  sound: store.get('sound', true),
+  onSound(v) { store.set('sound', v); },
+  onRelayed(from, to, text) { if (office && office.relayed) office.relayed(from, to, text); },
 });
 applyLang(chooseLang(null));
 syncControls();

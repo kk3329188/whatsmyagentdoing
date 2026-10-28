@@ -20,7 +20,9 @@ const MOUNTS = { '/assets/': path.join(__dirname, '..', 'assets') };
 const scenes = require('./scenes');
 const updater = require('./update');
 const hub = require('./hub');
+const { Progress } = require('./progress');
 const desktop = new hub.DesktopMeta();
+const progress = new Progress();
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -91,6 +93,8 @@ function view(s, now, { privacy }) {
     controllable: s.agent === 'claude' && !s.subagent,
     pending: s.agent === 'claude' && !s.subagent ? hub.pending(s.id) : 0,
     ack: s.agent === 'claude' && !s.subagent ? hub.lastAck(s.id) : null,
+    // Experience points: { level, xp, next } (see src/progress.js).
+    ...(s.subagent ? {} : progress.level(`${s.agent}:${s.id}`)),
     // Other sessions it just sent a message to or got one from.
     talk: (s.talk || [])
       .filter((t) => now - t.at < TALK_MS)
@@ -134,10 +138,11 @@ function snapshot(watcher, opts) {
   const now = Date.now();
   if (!opts.demo) desktop.refresh(now);
   const raw = watcher.sessions();
+  if (!opts.demo) progress.update(raw, now);
   // Archived desktop sessions are closed work: keep them out of the office.
   const sessions = raw.map((s) => view(s, now, opts)).filter((s) => !s.archived);
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), sessions };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
@@ -157,6 +162,7 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   // Status can flip with no new log lines (see view()), so re-check on a clock.
   setInterval(() => push(false), 5000).unref();
   setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 20000).unref();
+  if (!opts.demo) setInterval(() => progress.save(), 10000).unref();
 
   const server = http.createServer((req, res) => {
     // Refuse anything not addressed to loopback (blocks DNS-rebinding pages
@@ -211,6 +217,7 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       for (const c of clients) c.end();
+      progress.save();
       setTimeout(onShutdown, 50);
     } else if (url.pathname === '/api/version') {
       updater.checkLatest().finally(() => {
