@@ -77,6 +77,9 @@ Touch ID 要用到 Swift：沒有 Command Line Tools 時請使用者自己跑 `x
 按住人物可拖曳拎起、放開落在最近的空地（2D、3D 都可以）；單點開面板，游標直接在傳話框，Enter 送出、Shift+Enter 換行。
 丟到別人身上＝轉話：開對方面板、填好前一人最後的回覆（`〔轉自「…」〕` 開頭），按 Enter 才送；送出後前一人走過去聊。
 等你超過 3 分鐘舉牌冒汗、超過 10 分鐘到畫面最前面敲螢幕；音效（叮／警報／敲門／升等）圖例旁可關，存在 localStorage `wmad.sound`。
+兩層樓（內建辦公室、非子母畫面）：index.html 建兩個 Office（`floor: 1|2`，各自一個 `.floor-view` 容器，沒看的那層 setVisible(false) 不畫）；
+誰在哪層由 `OfficeFloors.split`（public/office.js）決定：等你／出錯／剛做完／工作（前 12 個）／秘書在 1F，閒置與超額工作在 2F，2F 的工作者做完前不下樓；換層的 key 傳給 `update(list, { moved })`，走電梯（plan.lift）不走門。
+2F 平面是 `upstairs()`（沒有你的桌與排隊，door＝電梯）；樓層分頁顯示各層人數，按 1／2 切換，選的樓層存 `wmad.floor`。載入時等「看得見那層」畫好才收 loading。
 你的桌（plan.boss）在前緣、秘書桌（plan.sec）在旁；zone wait 的人依等待時間排到 plan.queue（最多 6 格），排第一且等 >10 分會敲桌，排不下的照舊亂逛／敲螢幕。
 秘書＝面板「設為秘書」存的標題片段（日期去掉，localStorage `wmad.secretary`）所符合的最新 Claude session，沒設時用 /秘書|總機|secretary/，固定坐秘書桌；離開 ≥10 分鐘回來時 `Hub.welcome` 出摘要卡、`office.deliver` 讓秘書走到你桌前。
 日報：18 點後第一次活動自動出一次（localStorage `wmad.reportDay`），資料來自 progress.js 的 today（今日輪數、回覆時間）；程式碼尾巴按資料夾合併。

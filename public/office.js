@@ -96,7 +96,7 @@
     coffee: '☕', water: '💧', fridge: '🍎', sink: '🫧', stool: '💬', couch: '💬', beanbag: '🎧',
     window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
     vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
-    tv: '📺', trophy: '🏆',
+    tv: '📺', trophy: '🏆', run: '🏃', yoga: '🧘',
   };
 
   function hash(str) {
@@ -242,11 +242,13 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { onHover, onRelay, onCommand, isSecretary, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
+    constructor(root, { floor = 1, onHover, onRelay, onCommand, isSecretary, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
       this.root = root;
       this.onHover = onHover || (() => {});
       // Dropped one person onto another: pass the first one's last reply on.
       this.onRelay = onRelay || null;
+      // Which floor this view is (2 = upstairs: breaks and overflow desks).
+      this.floor = floor;
       // Dropped someone on a piece of furniture (printer, whiteboard, coffee, door).
       this.onCommand = onCommand || null;
       // Which session works as your secretary (sits beside your desk, brings news).
@@ -279,7 +281,7 @@
       this.t = performance.now();
       this.pal = palette();
       this.plan = this.buildPlan(0);
-      this.cat = { x: this.plan.W - 3, y: this.plan.D - 2, path: [], until: 0, face: 1 };
+      this.cat = { x: this.plan.W - 3, y: this.plan.D - 2, path: [], until: 0, face: 1, color: floor === 2 ? '#8f8f96' : null };
       this.theme = matchMedia('(prefers-color-scheme: dark)');
       this.onTheme = () => (this.pal = palette());
       this.theme.addEventListener('change', this.onTheme);
@@ -353,7 +355,7 @@
       };
 
       // ---- cubicle pods: 4 desks back to back with a divider
-      for (let p = 0; p < pods; p++) {
+      const cubicles = (count) => { for (let p = 0; p < count; p++) {
         const c = p % podCols, r = Math.floor(p / podCols);
         const px = 1.3 + c * 4.2, py = 2.0 + r * 4.7;
         const panel = PANEL[p % PANEL.length];
@@ -369,7 +371,16 @@
         prop('panel', { x: px - 0.18, y: py - 0.05, w: 0.08, d: 1.82, h: 1.15, color: panel });
         add(px - 0.1 + py + 0.86, () => this.box(px - 0.18, py - 0.05, 0, 0.08, 1.82, 1.15, this.shade(panel, 25), panel, this.shade(panel, -15)));
         solid(px - 0.18, py + 0.8, 3.25, 0.12, 0.05);
+      } };
+      // The lift on the left wall, the same spot on both floors.
+      const lift = { x: 0.55, y: D - 3.0 };
+      prop('lift', { y: lift.y });
+      if (this.floor === 2) {
+        // Upstairs: a few hot desks for overflow work, the rest is for breaks.
+        cubicles(Math.max(1, Math.ceil(nWorking / 4)));
+        return this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift });
       }
+      cubicles(pods);
 
       // ---- open office extras
       const rx = OW - 1.15;
@@ -601,7 +612,158 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, boss, sec, queue, targets, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+    }
+
+    // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
+    // Same footprint as downstairs; you come and go by the lift.
+    upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
+      const pal = this.pal;
+      const mx = OW;
+      const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
+      const used = desks.length / 4;
+
+      // yoga mats where a pod would be
+      if (pods > used) {
+        const c = used % podCols, r = Math.floor(used / podCols);
+        const px = 1.3 + c * 4.2, py = 2.0 + r * 4.7;
+        ['#c96442', '#7fb08a', '#7d93c4'].forEach((col, i) => {
+          const x = px + i * 1.05, y = py + 0.2;
+          add(x + y, () => this.yogaMat(x, y, col));
+          prop('yoga', { x, y, color: col });
+          poi(x + 0.35, y + 0.75, 'yoga', 'front', { zone: 'idle' });
+        });
+      }
+      // gym: two treadmills and a weight bench
+      const tx = 2.4, ty = OD + 1.0;
+      for (let k = 0; k < 2; k++) {
+        const x = tx + k * 1.2;
+        add(x + 0.35 + ty + 0.7, () => this.treadmill(x, ty));
+        prop('treadmill', { x, y: ty });
+        solid(x, ty, 0.7, 0.35);
+        poi(x + 0.35, ty + 0.8, 'run', 'back', { zone: 'idle', lift: 0.16 });
+      }
+      for (let k = 0; k < 2; k++) {
+        const x = tx + 2.6 + k * 1.05, y = ty + 0.1;
+        add(x + y, () => this.yogaMat(x, y, k ? '#c9a24c' : '#8b6be6'));
+        prop('yoga', { x, y, color: k ? '#c9a24c' : '#8b6be6' });
+        poi(x + 0.35, y + 0.75, 'yoga', 'front', { zone: 'idle' });
+      }
+      const pp = { x0: tx - 0.2, x1: tx + 4.6, y: ty + 0.7 };
+      // front corner: vending machines and foosball
+      const fy = OD + 3.7;
+      if (D - fy >= 2.2) {
+        add(0.5 + fy + 0.4 + 2, () => this.vending(2.0, fy + 0.6, '#5f9a4c'));
+        prop('vending', { x: 2.0, y: fy + 0.6, color: '#5f9a4c' });
+        solid(2.0, fy + 0.6, 0.75, 0.75);
+        poi(2.4, fy + 1.75, 'vending', 'back', { zone: 'idle' });
+        const fx = 3.6, fby = fy + 0.6;
+        add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
+        prop('foosball', { x: fx, y: fby });
+        solid(fx, fby, 1.6, 0.8, 0.05);
+        poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
+        poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
+      }
+      for (const [x, y] of [[0.45, 0.45], [OW - 0.45, 0.45], [OW - 0.45, D - 0.6]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
+      const windows = [];
+      for (let x = 1.0; x < OW - 2.6; x += 2.4) { windows.push(x); poi(x + 0.75, 0.75, 'window', 'back', { zone: 'idle' }); }
+
+      // ---- library behind glass (top right)
+      for (const [y, d] of [[0, 1], [1, 1], [2, 1], [3, 0.6], [4.6, MR - 4.6]]) this.glassX(add, mx, y, d);
+      for (let x = mx; x < W - 0.01; x += 1) this.glassY(add, x, MR, Math.min(1, W - x));
+      prop('glass', { x: mx, y: 0, w: 0, d: 3.6 });
+      prop('glass', { x: mx, y: 4.6, w: 0, d: MR - 4.6 });
+      prop('glass', { x: mx, y: MR, w: RW, d: 0 });
+      solid(mx - 0.05, 0, 0.1, 3.6, 0.05);
+      solid(mx - 0.05, 4.6, 0.1, MR - 4.6, 0.05);
+      solid(mx, MR - 0.05, RW, 0.1, 0.05);
+      const shX = mx + 0.4, shW = RW - 0.8;
+      longBox(shX, 0.1, 0, shW, 0.45, 1.45, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR, { extra: (x0, x1) => this.books(x0, x1, 0.55) });
+      solid(shX, 0.1, shW, 0.45);
+      prop('shelf', { x: shX, y: 0.1, w: shW, d: 0.45 });
+      for (let k = 0; k < 3; k++) poi(shX + 0.8 + k * 2.0, 0.95, 'read', 'back', { zone: 'idle' });
+      const sty = 2.0, stx = mx + 1.4;
+      add(stx + 1.5 + sty + 0.7, () => this.meetingTable(stx, sty));
+      prop('meetingTable', { x: stx, y: sty, w: 3.0, d: 1.4 });
+      solid(stx, sty, 3.0, 1.4);
+      for (let k = 0; k < 3; k++) {
+        const cx = stx + 0.5 + k * 1.0;
+        add(cx + sty - 0.45, () => this.stool(cx, sty - 0.4, 0.4, '#555c66'));
+        add(cx + sty + 1.78, () => this.stool(cx, sty + 1.8, 0.4, '#555c66'));
+        prop('chair', { x: cx, y: sty - 0.4, face: 'front' });
+        prop('chair', { x: cx, y: sty + 1.8, face: 'back' });
+        poi(cx, sty - 0.4, 'read', 'front', { sit: 0.42, zone: 'idle' });
+        poi(cx, sty + 1.8, 'read', 'back', { sit: 0.42, zone: 'idle' });
+      }
+      add(W - 0.9 + MR - 1.0, () => this.beanbag(W - 0.9, MR - 1.0, '#7d93c4'));
+      prop('beanbag', { x: W - 0.9, y: MR - 1.0, color: '#7d93c4' });
+      poi(W - 0.9, MR - 1.0, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
+
+      // ---- cafe (middle right)
+      const cy = MR + 0.3;
+      longBox(mx + 1.0, cy, 0, RW - 2.3, 0.7, 0.9, pal.counter, pal.counterL, pal.counterR, { bias: -0.5 });
+      solid(mx + 1.0, cy, RW - 2.3, 0.7);
+      prop('counter', { x: mx + 1.0, y: cy, w: RW - 2.3, d: 0.7 });
+      prop('coffee', { x: mx + 2.4, y: cy + 0.12 });
+      prop('fridge', { x: W - 1.15, y: cy });
+      add(mx + 2.65 + cy + 0.35, () => this.coffeeMachine(mx + 2.4, cy + 0.12));
+      add(W - 0.75 + cy + 0.4, () => this.fridge(W - 1.15, cy));
+      solid(W - 1.15, cy, 0.85, 0.75);
+      poi(mx + 2.65, cy + 1.2, 'coffee', 'back', { zone: 'idle' });
+      poi(mx + 4.15, cy + 1.2, 'sink', 'back', { zone: 'idle' });
+      poi(W - 0.75, cy + 1.3, 'fridge', 'back', { zone: 'idle' });
+      for (const rtx of [mx + 1.9, mx + 4.9]) {
+        const rty = MR + 2.9;
+        add(rtx + rty, () => this.roundTable(rtx, rty));
+        prop('roundTable', { x: rtx, y: rty });
+        solid(rtx - 0.45, rty - 0.45, 0.9, 0.9);
+        for (const [sx, sy, face] of [[rtx - 0.95, rty, 'front'], [rtx + 0.95, rty, 'front'], [rtx, rty + 0.95, 'back']]) {
+          if (sx > W - 0.3) continue;
+          add(sx + sy - 0.02, () => this.stool(sx, sy, 0.45, '#c9a24c'));
+          poi(sx, sy, 'stool', face, { sit: 0.47, zone: 'idle' });
+          prop('barStool', { x: sx, y: sy });
+        }
+      }
+
+      // ---- lounge (bottom right): sofa, TV, beanbags, two arcades
+      const lx = mx + 0.6, ly = PY + 0.4;
+      add(lx + ly + 0.6, () => this.couch(lx, ly + 0.6));
+      prop('couch', { x: lx, y: ly + 0.6, w: 2.8, d: 0.8 });
+      solid(lx, ly + 0.6, 2.8, 0.8);
+      for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle', sleepy: true });
+      add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
+      prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
+      solid(lx + 0.6, ly + 2.0, 1.6, 0.7);
+      const vx = mx + 4.1, vy = ly + 2.8;
+      add(vx + 0.55 + vy + 0.2, () => this.tv(vx, vy));
+      prop('tv', { x: vx, y: vy });
+      solid(vx, vy, 1.1, 0.4);
+      poi(vx + 0.55, Math.min(D - 0.3, vy + 1.05), 'tv', 'back', { zone: 'idle' });
+      add(lx + 0.4 + ly + 3.6, () => this.beanbag(lx + 0.4, ly + 3.6, '#c96442'));
+      prop('beanbag', { x: lx + 0.4, y: ly + 3.6, color: '#c96442' });
+      poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
+      for (const ay of [ly + 0.2, ly + 1.3]) {
+        const ax = W - 1.2;
+        if (!fits(ax, ay, 0.7, 0.7)) continue;
+        add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
+        prop('arcade', { x: ax, y: ay });
+        solid(ax, ay, 0.7, 0.7);
+        poi(ax - 0.45, ay + 0.35, 'arcade', 'back', { zone: 'idle', yaw: Math.PI / 2 });
+      }
+      add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
+      prop('plant', { x: W - 0.5, y: D - 0.5 });
+      prop('rug', { x: OW + 0.3, y: PY + 0.6, w: 4.0, d: D - PY - 1.0 });
+
+      const posters = [{ y: 2.2, color: '#7fb08a', text: 'BREAK' }, { y: 4.6, color: '#7d93c4', text: 'RECHARGE' }];
+      const zones = {};
+      for (const z of ZONE_ORDER) zones[z] = pois.filter((q) => q.zone === z);
+      const zoneAt = { work: { x: OW / 2 - 0.6, y: 1.0 }, idle: { x: lx + 1.4, y: ly + 2.35 } };
+      // Drop someone on these upstairs: the cafe's coffee machine stops them, the lift hides them.
+      const targets = [
+        { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
+        { id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' },
+      ];
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
 
     // The sign over your desk: how many are waiting in line.
@@ -668,8 +830,10 @@
 
     // ------------------------------------------------------------ sessions → people
 
-    update(sessions) {
+    // `moved`: keys that just changed floors; they take the lift instead of the door.
+    update(sessions, { moved = null } = {}) {
       const zoned = !!this.plan.zones;
+      const viaLift = (k) => !!(moved && moved.has(k) && this.plan.lift);
       // The secretary keeps their own desk beside yours, whatever they are doing.
       const sec = this.plan.sec && this.isSecretary
         ? sessions.filter((s) => !s.subagent && this.isSecretary(s)).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0))[0]
@@ -745,7 +909,11 @@
         if (!isWorker && atDesk(s)) continue; // no desk left
         shown.add(s.key);
         let p = this.people.get(s.key);
-        if (!p) { p = this.newPerson(s); this.people.set(s.key, p); }
+        if (!p) {
+          p = this.newPerson(s, viaLift(s.key) ? this.plan.lift : null);
+          this.people.set(s.key, p);
+          if (viaLift(s.key) && !this.first) { this.liftOpen = Date.now(); p.event = { text: this.floor === 2 ? '上樓了' : '下樓了', at: Date.now(), zone: 'held' }; }
+        }
         p.s = s;
         p.leaving = false;
         // Something happened: say it above their head for a moment.
@@ -803,8 +971,12 @@
           p.leaving = true;
           p.mode = 'leave';
           this.release(p);
+          this.endRun(p, false);
+          this.endVisit(p, false);
           p.desk = null;
-          this.goTo(p, this.plan.door);
+          p.viaLift = viaLift(k);
+          if (p.viaLift) p.event = { text: this.floor === 2 ? '下樓去' : '上樓去', at: Date.now(), zone: 'held' };
+          this.goTo(p, p.viaLift ? this.plan.lift : this.plan.door);
         }
       }
       this.first = false;
@@ -848,9 +1020,9 @@
       if (p.napDesk) { p.napDesk.napper = null; p.napDesk = null; }
     }
 
-    newPerson(s) {
+    newPerson(s, from = null) {
       const h = hash(s.key);
-      const door = this.plan.door;
+      const door = from || this.plan.door;
       return {
         key: s.key, h, s,
         skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: pick(PANTS, h, 13),
@@ -1402,8 +1574,14 @@
         this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 0.9), P(x, 0, 0.9)], pal.trim);
         this.poly([P(x, 0.05), P(x + 1.5, 0.05), P(x + 1.95, 1.2), P(x + 0.45, 1.2)], sky.night ? 'rgba(120,140,200,.06)' : 'rgba(255,250,230,.16)');
       }
-      // meeting room whiteboard + sign
+      // meeting room whiteboard + sign (downstairs); a sign for the library upstairs
+      if (this.plan.floor === 2) {
+        this.onWall('y0', OW + 0.5, 2.2, (c) => {
+          c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText('LIBRARY · 2F', 0, 0);
+        });
+      }
       const wx = OW + 2.4;
+      if (this.plan.floor !== 2) {
       this.poly([P(wx, 0, 0.8), P(wx + 2.6, 0, 0.8), P(wx + 2.6, 0, 1.95), P(wx, 0, 1.95)], '#fdfdfb', pal.trim);
       const pins = this.pins || [];
       if (pins.length) {
@@ -1429,6 +1607,7 @@
       this.onWall('y0', OW + 0.5, 2.2, (c) => {
         c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText('MEETING', 0, 0);
       });
+      }
       // unlocked: a neon sign over the windows
       const neon = this.plan.neon;
       if (neon) {
@@ -1457,6 +1636,8 @@
         hand(((d.getHours() % 12) + d.getMinutes() / 60) / 12 * Math.PI * 2, 5.5, 2);
         hand((d.getMinutes() / 60) * Math.PI * 2, 8, 1.4);
       });
+      this.drawLift();
+      if (this.plan.floor === 2) return;
       const dy = this.plan.door.y;
       this.poly([P(0, dy - 0.6, 0), P(0, dy + 0.6, 0), P(0, dy + 0.6, 1.8), P(0, dy - 0.6, 1.8)], pal.trim);
       this.poly([P(0, dy - 0.52, 0), P(0, dy + 0.52, 0), P(0, dy + 0.52, 1.72), P(0, dy - 0.52, 1.72)], this.shade(pal.deskL, -10));
@@ -1638,6 +1819,47 @@
       this.box(x, y + 0.7, 0.8, 0.7, 0.2, 0.08, '#4a3a8a', '#3a2a6a', '#2b1f52');
       const j = this.iso(x + 0.25, y + 0.8, 0.88);
       this.ctx.fillStyle = '#e04a4a'; this.ctx.beginPath(); this.ctx.arc(j.x, j.y - 3, 2.5, 0, Math.PI * 2); this.ctx.fill();
+    }
+
+    // Upstairs: gym gear.
+    treadmill(x, y) {
+      const c = this.ctx;
+      this.box(x + 0.05, y + 0.35, 0, 0.6, 1.05, 0.14, '#3a3a40', '#2a2a2e', '#323238');
+      // the belt moves
+      const k = (this.t / 120) % 1;
+      for (let i = 0; i < 4; i++) {
+        const yy = y + 0.4 + ((i + k) / 4) * 0.95;
+        this.poly([this.iso(x + 0.1, yy, 0.141), this.iso(x + 0.6, yy, 0.141), this.iso(x + 0.6, yy + 0.02, 0.141), this.iso(x + 0.1, yy + 0.02, 0.141)], 'rgba(255,255,255,.18)');
+      }
+      this.box(x + 0.05, y + 0.25, 0, 0.06, 0.06, 1.0, '#888', '#777', '#999');
+      this.box(x + 0.59, y + 0.25, 0, 0.06, 0.06, 1.0, '#888', '#777', '#999');
+      this.box(x, y, 0.95, 0.7, 0.32, 0.12, '#2a2a2e', '#1f1f22', '#26262a');
+      const d = this.iso(x + 0.35, y + 0.32, 1.02);
+      c.fillStyle = '#5cf08a'; c.fillRect(d.x - 4, d.y - 2, 8, 3);
+    }
+
+    yogaMat(x, y, color) {
+      this.box(x, y, 0, 0.7, 1.5, 0.02, color, this.shade(color, -25), this.shade(color, -15));
+    }
+
+    // The lift on the left wall: doors slide open when someone comes or goes.
+    drawLift() {
+      const L = this.plan.lift;
+      if (!L) return;
+      const P = (a, b, z) => this.iso(a, b, z);
+      const y0 = L.y - 0.55, y1 = L.y + 0.55;
+      this.poly([P(0, y0 - 0.08, 0), P(0, y1 + 0.08, 0), P(0, y1 + 0.08, 1.95), P(0, y0 - 0.08, 1.95)], '#8d939a');
+      const since = Date.now() - (this.liftOpen || 0);
+      const open = since < 1600 ? Math.sin(Math.min(1, since / 1600) * Math.PI) * 0.45 : 0;
+      const mid = L.y;
+      this.poly([P(0, mid - open, 0), P(0, mid + open, 0), P(0, mid + open, 1.85), P(0, mid - open, 1.85)], '#2a2a2e');
+      this.poly([P(0, y0, 0), P(0, mid - open, 0), P(0, mid - open, 1.85), P(0, y0, 1.85)], '#c3c8ce', '#9aa0a8');
+      this.poly([P(0, mid + open, 0), P(0, y1, 0), P(0, y1, 1.85), P(0, mid + open, 1.85)], '#c3c8ce', '#9aa0a8');
+      this.onWall('x0', L.y, 2.15, (c) => {
+        c.fillStyle = '#1c1c1e'; c.fillRect(-14, -7, 28, 12);
+        c.fillStyle = '#ffb347'; c.font = '800 8px ui-sans-serif, system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(this.floor === 2 ? '▼ 2F' : '▲ 1F', 0, -1);
+      });
     }
 
     // Unlocked furniture.
@@ -1945,7 +2167,7 @@
         if (q.act === 'queue') act = p.queue === 0 && waitedMs(s) > KNOCK_MS ? 'knock' : 'lookaround';
         // Waiting a while: hold up a sign (unless talking or looking out the door).
         if (p.zone === 'wait' && act !== 'knock' && act !== 'chat' && act !== 'peek' && waitedMs(s) > SIGN_MS) act = 'sign';
-        return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act, sitZ: q.sit || 0 };
+        return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act, sitZ: q.sit || q.lift || 0 };
       }
       return { pose: 'stand', face: 'front', act: null, sitZ: 0 };
     }
@@ -1956,12 +2178,12 @@
       const s = p.s || {};
       const st = this.stateOf(p);
       p.pose = st.pose;
-      const moving = st.pose === 'walk';
+      const moving = st.pose === 'walk' || st.act === 'run';
       const held = st.pose === 'held';
       const seated = st.pose === 'sit';
       const front = st.face !== 'back';
       const b = this.iso(p.x, p.y, st.sitZ);
-      const step = moving ? Math.sin(t * 12 + p.phase) : 0;
+      const step = moving ? Math.sin(t * (st.act === 'run' ? 18 : 12) + p.phase) : 0;
       const bob = moving ? Math.abs(step) * 1.5 : 0;
 
       const fb = this.iso(p.x, p.y, 0);
@@ -2071,6 +2293,14 @@
             c.strokeStyle = 'rgba(255,255,255,.75)'; c.lineWidth = 1;
             c.beginPath(); c.arc(6.5, hip - 22, 4 + (t * 20 % 4), 0, Math.PI * 2); c.stroke();
           }
+          break;
+        }
+        case 'yoga': {
+          // Arms out to the sides, slowly rising and falling.
+          const k = Math.sin(t * 0.8 + p.phase) * 3;
+          c.fillRect(-17, hip - 13 - k, 10, 3);
+          c.fillRect(7, hip - 13 - k, 10, 3);
+          hand(-17, hip - 11.5 - k); hand(17, hip - 11.5 - k);
           break;
         }
         case 'stretch': {
@@ -2668,6 +2898,7 @@
           if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
           else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
         } else if (p.leaving) {
+          if (p.viaLift) this.liftOpen = wall;
           this.people.delete(k);
         }
       }
@@ -2747,7 +2978,44 @@
     }
   }
 
+  // Which floor each session is on. Downstairs: the ones at work (up to
+  // `cap`), waiting on you, failed, just finished, and the secretary.
+  // Upstairs: the idle ones, and work beyond the downstairs desks. Someone
+  // already working upstairs stays there until they stop, so nobody bounces
+  // between floors. `prev`: key -> { floor, zone } from the last call.
+  // Returns { floors: Map key -> { floor, zone }, moved: Set of keys that changed floor }.
+  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null } = {}) {
+    const floors = new Map();
+    const workers = [];
+    // Only the newest matching session is the secretary (as in update()).
+    const sec = isSecretary && sessions.filter((s) => !s.subagent && isSecretary(s)).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0))[0];
+    for (const s of sessions) {
+      if (s.subagent) continue;
+      const zone = zoneOf(s);
+      if (s === sec) floors.set(s.key, { floor: 1, zone });
+      else if (zone === 'work') workers.push(s);
+      else floors.set(s.key, { floor: zone === 'idle' ? 2 : 1, zone });
+    }
+    const was = (s) => prev.get(s.key);
+    const stayUp = workers.filter((s) => was(s) && was(s).floor === 2 && was(s).zone === 'work');
+    const rest = workers.filter((s) => !stayUp.includes(s))
+      .sort((a, b) => (+!!(was(b) && was(b).floor === 1)) - (+!!(was(a) && was(a).floor === 1)) || (a.startedAt || 0) - (b.startedAt || 0));
+    rest.forEach((s, i) => floors.set(s.key, { floor: i < cap ? 1 : 2, zone: 'work' }));
+    for (const s of stayUp) floors.set(s.key, { floor: 2, zone: 'work' });
+    // Helpers go wherever the session that sent them is.
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+    for (const s of sessions) {
+      if (!s.subagent) continue;
+      const parent = byId.get(s.parentId);
+      floors.set(s.key, { floor: (parent && floors.get(parent.key) || { floor: 1 }).floor, zone: zoneOf(s) });
+    }
+    const moved = new Set();
+    for (const [k, v] of floors) if (prev.has(k) && prev.get(k).floor !== v.floor) moved.add(k);
+    return { floors, moved };
+  }
+
   window.Office = Office;
+  window.OfficeFloors = { split: splitFloors, zoneOf };
   window.OFFICE_UNLOCKS = UNLOCKS;
   window.OFFICE_LEVEL_TITLE = LEVEL_TITLE;
   window.OFFICE_AGENT_BADGES = AGENT_BADGES;

@@ -421,3 +421,96 @@ test('levelling up shows above their head', () => {
   assert.match(p.event.text, /升等！Lv3 資深/);
   assert.equal(p.event.zone, 'level');
 });
+
+function loadFloor(n, roam = true) {
+  const o = load(roam);
+  o.floor = n;
+  o.plan = o.buildPlan(0);
+  return o;
+}
+const floorsOf = (src) => {
+  const window = {};
+  vm.runInNewContext(src, { window, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} });
+  return window.OfficeFloors;
+};
+const Floors = floorsOf(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'));
+
+test('two floors: work and anything that needs you downstairs, idle ones upstairs, overflow work upstairs and it stays', () => {
+  const sec = (s) => /總機/.test(s.title || '');
+  const ss = [
+    at('waiting'), at('error'), at('done', { n: 'fresh', ago: 5 * MIN }), at('idle', { ago: 60 * MIN }),
+    at('done', { n: 'old', ago: 3 * 60 * MIN }), at('idle', { n: 'desk', title: '總機', ago: 90 * MIN }),
+    ...Array.from({ length: 4 }, (_, i) => at('tool', { n: i, startedAt: i })),
+    { key: 'claude:kid', id: 'kid', subagent: true, parentId: 'p', status: 'tool' },
+  ];
+  ss.push({ ...at('idle', { n: 'p', ago: 60 * MIN }), id: 'p' });
+  const { floors, moved } = Floors.split(ss, new Map(), { cap: 3, isSecretary: sec });
+  const f = (k) => floors.get(k).floor;
+  for (const k of ['claude:waiting', 'claude:error', 'claude:donefresh', 'claude:idledesk', 'claude:tool0', 'claude:tool1', 'claude:tool2']) assert.equal(f(k), 1, k);
+  for (const k of ['claude:idle', 'claude:doneold', 'claude:tool3', 'claude:idlep']) assert.equal(f(k), 2, k);
+  assert.equal(f('claude:kid'), 2, 'a helper goes where its session is');
+  assert.equal(moved.size, 0, 'nobody moved on the first look');
+  // A desk frees up downstairs: the one working upstairs keeps working there.
+  const next = Floors.split(ss.filter((s) => s.key !== 'claude:tool0'), floors, { cap: 3, isSecretary: sec });
+  assert.equal(next.floors.get('claude:tool3').floor, 2);
+  // The idle one starts working: comes downstairs (moved).
+  const woke = ss.map((s) => (s.key === 'claude:idle' ? { ...s, status: 'tool', lastEventAt: Date.now() } : s)).filter((s) => s.key !== 'claude:tool0');
+  const third = Floors.split(woke, next.floors, { cap: 3, isSecretary: sec });
+  assert.equal(third.floors.get('claude:idle').floor, 1);
+  assert.ok(third.moved.has('claude:idle'));
+});
+
+test('upstairs: no desk of yours or queue, a gym, a library, a lift instead of the street door; everything reachable', () => {
+  const o = loadFloor(2);
+  const p = o.plan;
+  assert.equal(p.floor, 2);
+  assert.equal(p.boss, null);
+  assert.equal(p.queue.length, 0);
+  for (const t of ['treadmill', 'yoga', 'shelf', 'tv', 'arcade', 'lift']) assert.ok(p.props.some((q) => q.t === t), t);
+  assert.deepEqual([p.door.x, p.door.y], [p.lift.x, p.lift.y]);
+  for (const q of p.pois) if (!q.sit) {
+    assert.equal(p.grid.blocked(q.x, q.y), false, `${q.act}`);
+    assert.ok(p.grid.path(p.door.x, p.door.y, q.x, q.y).length, `${q.act} reachable`);
+  }
+  assert.ok(p.zones.idle.length > 20, 'lots to do upstairs');
+  // Same footprint as downstairs.
+  const down = loadFloor(1).plan;
+  assert.equal(p.W, down.W);
+  assert.equal(p.D, down.D);
+  assert.deepEqual([p.lift.x, p.lift.y], [down.lift.x, down.lift.y]);
+});
+
+test('changing floors: leave by the lift, arrive by the lift', () => {
+  const down = loadFloor(1), up = loadFloor(2);
+  const s = at('idle', { ago: 60 * MIN });
+  settle(down, [s]);
+  down.first = false; up.first = false;
+  const moved = new Set([s.key]);
+  down.update([], { moved });
+  const leaver = down.people.get(s.key);
+  assert.equal(leaver.viaLift, true);
+  const end = leaver.path[leaver.path.length - 1];
+  assert.ok(Math.hypot(end.x - down.plan.lift.x, end.y - down.plan.lift.y) < 0.3, 'walks to the lift, not the door');
+  up.update([s], { moved });
+  const arrived = up.people.get(s.key);
+  assert.ok(Math.hypot(arrived.x - up.plan.lift.x, arrived.y - up.plan.lift.y) < 0.01, 'steps out of the lift');
+  assert.match(arrived.event.text, /上樓/);
+  // Someone leaving for home still uses the door downstairs.
+  const t = at('done', { n: 'h', ago: 5 * MIN });
+  settle(down, [t]);
+  down.update([]);
+  const home = down.people.get(t.key);
+  const last = home.path[home.path.length - 1];
+  assert.ok(Math.hypot(last.x - down.plan.door.x, last.y - down.plan.door.y) < 0.3);
+});
+
+test('on the treadmill they stand on the belt and run', () => {
+  const o = loadFloor(2);
+  const q = o.plan.pois.find((x) => x.act === 'run');
+  const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
+  o.release(p); p.poi = q; p.path = []; p.x = q.x; p.y = q.y;
+  const st = o.stateOf(p);
+  assert.equal(st.act, 'run');
+  assert.equal(st.pose, 'stand');
+  assert.ok(st.sitZ > 0.1);
+});

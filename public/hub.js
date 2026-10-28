@@ -127,13 +127,13 @@
         ['var(--waiting)', '頭上 ! ＝等你回覆、? ＝留了決定給你（腳下橘圈）'],
         ['var(--error)', '抓頭＋紅圈＝出錯'],
         ['var(--done)', '✓ 綠圈＝30 分鐘內剛做完（Ⅱ＝被中斷）'],
-        ['var(--idle)', '沒圈＝閒置，到處晃'],
+        ['var(--idle)', '閒置的在 2F 休息層'],
       ] : [
         ['var(--tool)', '坐在工作桌＝正在做'],
         ['var(--waiting)', '會議室舉 ! ＝等你回覆、? ＝留了決定給你'],
         ['var(--error)', '機房前＝出錯'],
         ['var(--done)', '茶水間 ✓＝30 分鐘內剛做完（Ⅱ＝被中斷）'],
-        ['var(--idle)', '休息區＝閒置；坐不下就走出門＝下班'],
+        ['var(--idle)', '閒置的上 2F；坐不下就走出門＝下班'],
       ];
       key.innerHTML = items.map(([c, t]) => `<span><span class="dot" style="color:${c}"></span>${t}</span>`).join('')
         + `<span class="hub-roam">按住人物拖到別處；丟到別人身上＝把他最後的回覆轉過去・<button type="button" data-k="roam">${roam ? '改成依狀態分區' : '改成自由走動'}</button>`

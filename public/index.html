@@ -174,6 +174,16 @@
   .office.loading .office-loader { display: flex; }
   .office-loader .spin { width: 26px; height: 26px; border: 3px solid var(--line); border-top-color: var(--tool); border-radius: 50%; animation: spin .8s linear infinite; }
   .office-gl, .office-overlay { position: absolute; inset: 0; }
+  .floor-view { position: absolute; inset: 0; }
+  .floor-view[hidden] { display: none; }
+  .floor-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; }
+  .floor-tabs[hidden] { display: none; }
+  .floor-tabs button { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .floor-tabs button.on { border-color: var(--tool); box-shadow: 0 0 0 2px color-mix(in srgb, var(--tool) 25%, transparent); }
+  .floor-tabs b { font-size: 13px; }
+  .fchip { color: var(--muted); }
+  .fchip[data-z=wait] { color: var(--waiting); font-weight: 700; }
+  .fchip[data-z=error] { color: var(--error); font-weight: 700; }
   .office-overlay { touch-action: none; }
   .tip { position: fixed; z-index: 10; width: 320px; max-width: calc(100vw - 24px); pointer-events: none; display: none; }
   .tip.pinned { pointer-events: auto; }
@@ -390,6 +400,7 @@ function applyLang(code) {
   const sel = document.getElementById('langSel');
   if (sel) sel.options[0].textContent = `🌐 ${L.auto}`;
   if (typeof office !== 'undefined' && office) office.offDutyLabel = L.wentHome;
+  if (typeof office2 !== 'undefined' && office2) office2.offDutyLabel = L.wentHome;
   if (typeof syncControls === 'function') syncControls();
   if (typeof renderSceneSel === 'function') renderSceneSel();
   if (typeof renderVersion === 'function') renderVersion();
@@ -555,8 +566,26 @@ function render() {
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
-    office.setVisible(officeMode && !poppedOut);
-    office.update(officeList);
+    if (office2) {
+      // Two floors: who is where, and who just took the lift.
+      const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary });
+      floorPrev = floors;
+      const on = (n) => officeList.filter((s) => (floors.get(s.key) || { floor: 1 }).floor === n);
+      office2.showAgent = state.showAgent;
+      floorRoots[0].hidden = state.floor !== 1;
+      floorRoots[1].hidden = state.floor !== 2;
+      office.setVisible(officeMode && !poppedOut && state.floor === 1);
+      office2.setVisible(officeMode && !poppedOut && state.floor === 2);
+      office.update(on(1), { moved });
+      office2.update(on(2), { moved });
+      renderFloorTabs(floors, officeList);
+    } else {
+      floorRoots[0].hidden = false;
+      floorRoots[1].hidden = true;
+      floorTabs.hidden = true;
+      office.setVisible(officeMode && !poppedOut);
+      office.update(officeList);
+    }
   }
   document.getElementById('idleToggle').style.display = officeMode ? 'none' : '';
   if (poppedOut) {
@@ -612,6 +641,7 @@ function onData(data) {
   state.loaded = true;
   applyLang(chooseLang(data.lang));
   const fresh = office && office.setProgress ? office.setProgress(data.office) : [];
+  if (office2) office2.setProgress(data.office);
   if (!PIP) Hub.progress(data.office, fresh);
   render();
   Hub.setPrivate(data.privacy);
@@ -735,12 +765,48 @@ const officeOpts = {
     refreshTip();
   },
 };
-let office = null;
+let office = null;   // downstairs (or the only floor)
+let office2 = null;  // upstairs, built-in office only
 let officeKind = null;
 // The 3D office (three.js + models) is only fetched when someone picks it.
 // Until the new office has drawn a settled frame, show a loader instead of a
 // half-built scene.
 const officeEl = document.getElementById('office');
+// Two floors in the built-in office: downstairs the work and everything that
+// needs you, upstairs the breaks and work beyond the downstairs desks. Tabs
+// above say who is on each, so the floor you are not looking at is not a blind spot.
+const floorRoots = [1, 2].map((n) => { const d = document.createElement('div'); d.className = 'floor-view'; d.dataset.floor = n; officeEl.appendChild(d); return d; });
+const floorTabs = document.createElement('div');
+floorTabs.className = 'floor-tabs';
+floorTabs.hidden = true;
+officeEl.parentNode.insertBefore(floorTabs, officeEl);
+state.floor = store.get('floor', 1) === 2 ? 2 : 1;
+let floorPrev = new Map();
+function renderFloorTabs(floors, list) {
+  const count = (n) => {
+    const c = { work: 0, wait: 0, error: 0, done: 0, idle: 0 };
+    for (const s of list) { const f = floors.get(s.key); if (!s.subagent && f && f.floor === n) c[f.zone]++; }
+    return c;
+  };
+  const KINDS = [['wait', '✋', '等你'], ['error', '⚠', '出錯'], ['work', '🖥', '工作中'], ['done', '✓', '剛做完'], ['idle', '🛋', '休息']];
+  const chips = (c) => KINDS.filter(([k]) => c[k]).map(([k, i, t]) => `<span class="fchip" data-z="${k}">${i} ${c[k]} ${t}</span>`).join('') || '<span class="fchip">沒人</span>';
+  const html = [1, 2].map((n) => `<button type="button" data-floor="${n}" class="${state.floor === n ? 'on' : ''}"><b>${n === 1 ? '1F 辦公室' : '2F 休息層'}</b>${chips(count(n))}</button>`).join('')
+    + '<span class="hub-muted">按 1／2 換樓層・閒置的在 2F，等你和出錯的一定在 1F</span>';
+  if (floorTabs.innerHTML !== html) floorTabs.innerHTML = html;
+  floorTabs.hidden = false;
+}
+function setFloor(n) {
+  if (!office2 || state.floor === n) return;
+  state.floor = n;
+  store.set('floor', n);
+  hideTip();
+  render();
+}
+floorTabs.addEventListener('click', (e) => { const b = e.target.closest('[data-floor]'); if (b) setFloor(Number(b.dataset.floor)); });
+document.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+  if (e.key === '1' || e.key === '2') setFloor(Number(e.key));
+});
 function setLoading(on, text) {
   officeEl.classList.toggle('loading', on);
   if (text) document.getElementById('loaderText').textContent = text;
@@ -765,19 +831,26 @@ async function makeOffice() {
     if (officeKind !== kind) return;
   }
   if (office) office.destroy();
+  if (office2) { office2.destroy(); office2 = null; }
+  floorPrev = new Map();
   let mine;
   try {
-    mine = new Cls(officeEl, opts);
+    mine = new Cls(floorRoots[0], { ...opts, floor: 1 });
   } catch (e) {
     console.error(e);
-    mine = new window.Office(officeEl, officeOpts);
+    mine = new window.Office(floorRoots[0], officeOpts);
     if (high) { state.quality = 'mid'; store.set('quality', 'mid'); officeKind = 'mid'; syncControls(); }
+  }
+  // Upstairs exists in the built-in office only (scene packs have their own map).
+  if (!PIP && scene === 'office' && mine instanceof Cls) {
+    try { office2 = new Cls(floorRoots[1], { ...opts, floor: 2 }); office2.offDutyLabel = L.wentHome; } catch (e) { console.error(e); office2 = null; }
   }
   office = mine;
   office.offDutyLabel = L.wentHome;
-  if (state.data && state.data.office && office.setProgress) office.setProgress(state.data.office);
+  if (state.data && state.data.office && office.setProgress) { office.setProgress(state.data.office); if (office2) office2.setProgress(state.data.office); }
   render();
-  const ok = await mine.ready;
+  // A hidden floor does not draw, so wait for whichever one is showing.
+  const ok = await (office2 ? Promise.race([mine.ready, office2.ready]) : mine.ready);
   if (office !== mine) return;
   if (!ok && high) {
     // 3D failed (no WebGL, missing files…): fall back to the 2D office.
@@ -902,10 +975,10 @@ window.addEventListener('storage', (e) => {
 });
 Hub.mount({
   roam: officeOpts.roam,
-  onRoam(v) { store.set('roam', v); officeOpts.roam = v; if (office && office.setRoam) office.setRoam(v); },
+  onRoam(v) { store.set('roam', v); officeOpts.roam = v; for (const o of [office, office2]) if (o && o.setRoam) o.setRoam(v); },
   sound: store.get('sound', true),
   onSound(v) { store.set('sound', v); },
-  onRelayed(from, to, text) { if (office && office.relayed) office.relayed(from, to, text); },
+  onRelayed(from, to, text) { for (const o of [office, office2]) if (o && o.relayed) o.relayed(from, to, text); },
   onAway(text) { return office && office.deliver ? office.deliver(text) : false; },
   onAwayDone() { if (office && office.endErrand) office.endErrand(); },
   onChange() { render(); },

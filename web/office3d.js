@@ -228,7 +228,7 @@ export class Office3D extends window.Office {
     this.scene.add(this.room);
     this.screens.clear();
     this.blinkers = [];
-    this.tvScreen = this.neonMat = null;
+    this.tvScreen = this.neonMat = this.liftDoors = null;
     const { W, D, OW, MR, PY } = plan;
     const dark = this.pal.dark;
 
@@ -286,19 +286,24 @@ export class Office3D extends window.Office {
     this.boxMesh(-T, -T, 0, T, dy - 0.6 + T, WALL_H, 0, { mat: wallMat });
     this.boxMesh(-T, dy + 0.6, 0, T, D - dy - 0.6, WALL_H, 0, { mat: wallMat });
     this.boxMesh(-T, dy - 0.6, 1.8, T, 1.2, WALL_H - 1.8, 0, { mat: wallMat });
-    this.boxMesh(-T + 0.02, dy - 0.55, 0, 0.06, 1.1, 1.78, dark ? 0x5c4431 : 0xa8825a);
-    this.boxMesh(0, dy - 0.6, 0, 0.9, 1.2, 0.01, dark ? 0x5a3b2e : 0xb9654a, { shadow: false });
+    // Downstairs this opening is the front door; upstairs the lift fills it.
+    if (plan.floor !== 2) {
+      this.boxMesh(-T + 0.02, dy - 0.55, 0, 0.06, 1.1, 1.78, dark ? 0x5c4431 : 0xa8825a);
+      this.boxMesh(0, dy - 0.6, 0, 0.9, 1.2, 0.01, dark ? 0x5a3b2e : 0xb9654a, { shadow: false });
+    }
     // posters + whiteboard
     for (const ps of plan.posters) {
       const m = this.textPlane(ps.text, ps.color, 0.9, 1.0);
       m.rotation.y = Math.PI / 2; m.position.set(0.005, 1.45, ps.y + 0.45);
       this.room.add(m);
     }
-    const wb = this.textPlane('', '#fdfdfb', 2.6, 1.15);
-    wb.position.set(OW + 3.7, 1.4, 0.005);
-    this.room.add(wb);
-    this.whiteboardScribbles(OW + 3.7);
-    const sign = this.textPlane('MEETING', dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
+    if (plan.floor !== 2) {
+      const wb = this.textPlane('', '#fdfdfb', 2.6, 1.15);
+      wb.position.set(OW + 3.7, 1.4, 0.005);
+      this.room.add(wb);
+      this.whiteboardScribbles(OW + 3.7);
+    }
+    const sign = this.textPlane(plan.floor === 2 ? 'LIBRARY' : 'MEETING', dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
     sign.position.set(OW + 1.1, 2.15, 0.005);
     this.room.add(sign);
 
@@ -546,6 +551,28 @@ export class Office3D extends window.Office {
         this.lampLight = new THREE.PointLight(0xffd9a0, 0, 4);
         this.lampLight.position.set(p.x, 1.6, p.y);
         this.room.add(this.lampLight);
+        break;
+      // The lift, the same spot on both floors.
+      case 'lift': {
+        const steel = new THREE.MeshStandardMaterial({ color: 0xc3c8ce, metalness: 0.7, roughness: 0.3 });
+        this.boxMesh(0, p.y - 0.63, 0, 0.04, 1.26, 1.95, 0x8d939a, { metal: 0.6, rough: 0.4 });
+        this.liftDoors = [-1, 1].map((k) => this.boxMesh(0.04, p.y + (k < 0 ? -0.55 : 0), 0, 0.03, 0.55, 1.85, 0, { mat: steel }));
+        const ind = this.textPlane(this.plan.floor === 2 ? '▼ 2F' : '▲ 1F', '#1c1c1e', 0.45, 0.18);
+        ind.material.emissive = new THREE.Color(0xffb347); ind.material.emissiveMap = ind.material.map; ind.material.emissiveIntensity = 0.6;
+        ind.rotation.y = Math.PI / 2; ind.position.set(0.02, 2.12, p.y);
+        this.room.add(ind);
+        break;
+      }
+      // Upstairs gym.
+      case 'treadmill': {
+        this.boxMesh(p.x + 0.05, p.y + 0.35, 0, 0.6, 1.05, 0.14, 0x2a2a2e, { rough: 0.6 });
+        for (const dx of [0.05, 0.59]) this.boxMesh(p.x + dx, p.y + 0.25, 0, 0.06, 0.06, 1.0, 0x888888, { metal: 0.5 });
+        this.boxMesh(p.x, p.y, 0.95, 0.7, 0.32, 0.12, 0x26262a);
+        this.boxMesh(p.x + 0.25, p.y + 0.3, 1.03, 0.2, 0.01, 0.06, 0x000000, { emissive: 0x5cf08a, ei: 1, shadow: false });
+        break;
+      }
+      case 'yoga':
+        this.boxMesh(p.x, p.y, 0, 0.7, 1.5, 0.02, new THREE.Color(p.color).getHex(), { rough: 1, shadow: false });
         break;
       // Unlocked by the office's experience.
       case 'tv': {
@@ -1171,7 +1198,7 @@ export class Office3D extends window.Office {
       p.pose = st.pose;
       const anim = {
         held: 'fall', dazed: 'emote-no', chat: 'interact-right', stretch: 'emote-yes', sip: 'holding-right', eat: 'holding-right',
-        printer: 'pick-up', neck: 'idle', lookaround: 'idle', clipboard: 'holding-both', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
+        printer: 'pick-up', neck: 'idle', lookaround: 'idle', clipboard: 'holding-both', run: 'sprint', yoga: 'emote-yes', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
         walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
         phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
@@ -1202,6 +1229,7 @@ export class Office3D extends window.Office {
       // Picked up: dangle and sway under the pointer.
       a.obj.rotation.z = p.held ? Math.sin(this.t / 200 + p.phase) * 0.15 : 0;
       if (p.held) lift = HELD_LIFT + Math.sin(this.t / 150 + p.phase) * 0.03;
+      else if (st.pose === 'stand' && p.poi && p.poi.lift && !p.path.length) lift = p.poi.lift; // on the treadmill
       if (st.pose !== 'walk' && p.poi && p.poi.float) {
         // zero gravity: drift up and down, slowly turning
         const k = this.t / 1000 + p.phase;
@@ -1328,6 +1356,13 @@ export class Office3D extends window.Office {
       b.m.material.emissiveIntensity = on ? 1.2 : 0.05;
     }
     if (this.arcadeScreen) this.arcadeScreen.material.emissive.setHSL((t * 0.05) % 1, 0.7, 0.5);
+    if (this.liftDoors) {
+      const since = Date.now() - (this.liftOpen || 0);
+      const open = since < 1600 ? Math.sin(Math.min(1, since / 1600) * Math.PI) * 0.45 : 0;
+      const ly = this.plan.lift.y;
+      this.liftDoors[0].position.z = ly - 0.275 - open;
+      this.liftDoors[1].position.z = ly + 0.275 + open;
+    }
     if (this.tvScreen) this.tvScreen.material.emissive.setHSL((Math.floor(t / 2.6) * 0.27) % 1, 0.6, 0.45);
     if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
