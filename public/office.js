@@ -1105,7 +1105,7 @@
         if (isWorker) {
           this.release(p);
           const desk = desks[this.deskOf.get(s.key)];
-          if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
+          if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; if (!p.meeting) this.goTo(p, desk.seat); }
           p.mode = 'work';
           p.chores = null;
           p.pretend = false;
@@ -1116,7 +1116,7 @@
           if (!!p.pretend !== fake) { p.pretend = fake; this.release(p); p.poi = null; p.until = 0; p.chores = null; }
           // Changed state: head to the new zone now.
           const zone = zoned ? zoneOf(s) : null;
-          if (p.zone !== zone) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; p.chores = null; }
+          if (p.zone !== zone && !p.meeting) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; p.chores = null; }
           // Just finished a piece of work: pin it on the notice board first.
           if (zone === 'done' && (wasWork || (arrived && viaLift(s.key))) && this.plan.board) p.chores = [this.pinStep()];
           // Someone started working at the desk this one was napping on.
@@ -1147,7 +1147,7 @@
           p.talkSeen = t.at;
           if (t.dir !== 'out' || Date.now() - t.at > 90_000) continue;
           const mate = this.people.get(t.key);
-          if (mate && mate !== p && !mate.leaving && shown.has(mate.key)) this.visit(p, mate, t.text);
+          if (mate && mate !== p && !mate.leaving && shown.has(mate.key) && !this.meet(p, mate, t.text)) this.visit(p, mate, t.text);
         }
       }
       for (const [k, p] of this.people) {
@@ -1405,6 +1405,59 @@
       if (mate.mode === 'wander' && mate.until !== Infinity) mate.until = Math.max(mate.until, Date.now() + 14_000);
       p.event = { text: `去找 ${this.label(mate.s)}`.slice(0, 24), at: Date.now(), zone: 'held' };
       this.goTo(p, spot);
+    }
+
+    // One session messaged another: both go to the meeting room (or the
+    // library table upstairs), sit across the table and talk it over for a
+    // while, taking turns; then back to work. Returns false when there are
+    // no two free chairs facing each other (then they just walk over).
+    meet(p, mate, text) {
+      if (p.held || mate.held || p.meeting || mate.meeting || this.standup || !this.plan.zones) return false;
+      const seats = this.plan.pois.filter((q) => q.sit && (q.act === 'meeting' || q.act === 'read') && !q.taken);
+      let pair = null;
+      for (const a of seats) {
+        const b = seats.find((o) => o !== a && Math.abs(o.x - a.x) < 0.15 && Math.abs(o.y - a.y) > 1 && o.face !== a.face);
+        if (b) { pair = [a, b]; break; }
+      }
+      if (!pair) return false;
+      [[p, pair[0], mate], [mate, pair[1], p]].forEach(([who, seat, other]) => {
+        this.endRun(who, false); this.endVisit(who, false); this.release(who);
+        who.chores = null;
+        seat.taken = who.key;
+        who.meeting = { seat, with: other.key, host: who === p, text: String(text || '').replace(/\s+/g, ' ').slice(0, 40), start: 0, until: Infinity, speaker: null, turn: 0 };
+        this.goTo(who, seat);
+      });
+      p.event = { text: `找 ${this.label(mate.s)} 開會`.slice(0, 24), at: Date.now(), zone: 'held' };
+      mate.event = { text: '好，會議室見', at: Date.now(), zone: 'held' };
+      return true;
+    }
+
+    stepMeeting(p, wall) {
+      const m = p.meeting;
+      const other = this.people.get(m.with);
+      if (!other || other.leaving || !other.meeting || other.meeting.with !== p.key) return this.endMeeting(p);
+      if (!m.host) return; // the one who called it keeps the clock
+      if (p.path.length || other.path.length) return;
+      if (!m.start) { m.start = other.meeting.start = wall; m.until = wall + 20_000; m.next = wall; }
+      if (wall >= m.next) {
+        const lines = ['我覺得可以', '那這樣改呢？', '好，就這麼辦', '我這邊來處理', '有道理', '細節我再補給你'];
+        const speaker = m.turn % 2 === 0 ? p : other;
+        const say = m.turn === 0 ? (m.text ? `「${m.text.length > 20 ? m.text.slice(0, 19) + '…' : m.text}」` : '來討論一下') : lines[(m.turn + p.h) % lines.length];
+        speaker.event = { text: say, at: wall, zone: 'work', ttl: 3.4 };
+        m.speaker = other.meeting.speaker = speaker.key;
+        m.turn++;
+        m.next = wall + 3600;
+      }
+      if (wall > m.until) { this.endMeeting(other); this.endMeeting(p); }
+    }
+
+    endMeeting(p) {
+      const m = p.meeting;
+      if (!m) return;
+      p.meeting = null;
+      if (m.seat.taken === p.key) m.seat.taken = null;
+      if (p.mode === 'work' && p.desk) this.goTo(p, p.desk.seat);
+      else { p.until = 0; p.poi = null; }
     }
 
     // A message was passed from one to the other through the panel.
@@ -1902,6 +1955,8 @@
       const keys = this.meKeys;
       let dx = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0), dy = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
       const grid = this.plan.grid;
+      const sig = [...keys].sort().join('');
+      if (sig !== me.keySig) { me.keySig = sig; me.detour = null; } // a new direction: a new way round
       if (dx || dy) {
         me.path = []; me.homing = false; me.seated = false;
         const ax = this.screenAxes();
@@ -1909,11 +1964,31 @@
         const n = Math.hypot(vx, vy) || 1, v = SPEED * 1.3 * dt;
         vx = vx / n * v; vy = vy / n * v;
         const ok = (x, y) => x > 0.15 && y > 0.15 && x < this.plan.W - 0.15 && y < this.plan.D - 0.08 && !grid.hard(x, y);
-        if (ok(me.x + vx, me.y + vy)) { me.x += vx; me.y += vy; }
-        else if (ok(me.x + vx, me.y)) me.x += vx;
-        else if (ok(me.x, me.y + vy)) me.y += vy;
         me.walkFace = vx + vy >= 0 ? 'front' : 'back';
         me.moving = true;
+        // Already walking round something toward where the keys point.
+        if (me.detour && me.detour.length) {
+          const n = me.detour[0], ddx = n.x - me.x, ddy = n.y - me.y, d = Math.hypot(ddx, ddy), sp = SPEED * 1.3 * dt;
+          if (d <= sp) { me.x = n.x; me.y = n.y; me.detour.shift(); } else { me.x += ddx / d * sp; me.y += ddy / d * sp; }
+          return;
+        }
+        if (ok(me.x + vx, me.y + vy)) { me.x += vx; me.y += vy; me.blockedFor = 0; return; }
+        if (ok(me.x + vx, me.y)) { me.x += vx; me.blockedFor = 0; return; }
+        if (ok(me.x, me.y + vy)) { me.y += vy; me.blockedFor = 0; return; }
+        // Boxed in (a desk ahead, a wall behind): find open floor that way and
+        // walk round to it.
+        me.blockedFor = (me.blockedFor || 0) + dt;
+        if (me.blockedFor < 0.12) return;
+        me.blockedFor = 0;
+        const ux = vx / v, uy = vy / v;
+        for (const r of [1.2, 1.8, 2.5]) {
+          for (const side of [0, 0.5, -0.5, 1, -1]) {
+            const gx = me.x + (ux - uy * side) * r, gy = me.y + (uy + ux * side) * r;
+            if (!ok(gx, gy) || grid.blocked(gx, gy)) continue;
+            const way = grid.path(me.x, me.y, gx, gy);
+            if (way.length) { me.detour = way; return; }
+          }
+        }
         return;
       }
       if (me.path.length) {
@@ -2014,6 +2089,11 @@
       if (bot - top < 120 || right - left < 160) return whole;
       return { x: (left + right) / 2 - r.left, y: (top + bot) / 2 - r.top + 18, w: right - left, h: bot - top };
     }
+
+    // The real weather outside (src/weather.js): clear, partly, cloudy, fog,
+    // rain, snow or storm; null keeps the plain sky.
+    setWeather(w) { this.weather = w || null; }
+    weatherKind() { return this.weather ? this.weather.kind : 'partly'; }
 
     // The company's name over the notice board (both floors), and how many
     // notes are pinned on it today.
@@ -2413,9 +2493,22 @@
 
       // windows with the real sky outside
       const sky = skyColor();
+      const wk = this.weatherKind();
+      const grey = { cloudy: sky.night ? '#262c38' : '#9aa5b0', rain: sky.night ? '#1f2530' : '#7d8894', storm: sky.night ? '#181c26' : '#5e6874', fog: sky.night ? '#3a3f48' : '#c9cfd4' }[wk];
+      // A flash of lightning now and then.
+      const flash = wk === 'storm' && (t % 7.3) < 0.12;
       for (const x of this.plan.windows) {
-        this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 2.0), P(x, 0, 2.0)], sky.sky);
-        if (this.season === 'xmas') {
+        this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 2.0), P(x, 0, 2.0)], flash ? '#e8eef8' : grey || sky.sky);
+        if (wk === 'rain' || wk === 'storm') {
+          this.onWall('y0', x, 1.98, (c) => {
+            c.strokeStyle = 'rgba(210,225,240,.7)'; c.lineWidth = 0.8;
+            for (let i = 0; i < 12; i++) {
+              const fx = ((i * 13 + t * 9) % 46) + 1, fy = ((i * 23 + t * 140) % 34);
+              c.beginPath(); c.moveTo(fx, fy); c.lineTo(fx - 1.2, fy + 5); c.stroke();
+            }
+          });
+        }
+        if (this.season === 'xmas' || wk === 'snow') {
           this.onWall('y0', x, 1.0, (c) => {
             c.fillStyle = 'rgba(255,255,255,.85)';
             for (let i = 0; i < 9; i++) {
@@ -2424,13 +2517,17 @@
             }
           });
         }
-        if (sky.night) {
+        if (sky.night && !grey) {
           this.onWall('y0', x + 0.3, 1.75, (c) => { c.fillStyle = '#f4f1d0'; c.beginPath(); c.arc(0, 0, 3, 0, Math.PI * 2); c.fill(); });
           this.onWall('y0', x + 1.1, 1.55, (c) => { c.fillStyle = 'rgba(255,255,255,.7)'; c.fillRect(0, 0, 1.5, 1.5); });
         } else {
           const cx = x + 0.25 + ((t * 0.02 + x * 0.37) % 1) * 1.0;
-          this.onWall('y0', cx, 1.65, (c) => {
-            c.fillStyle = 'rgba(255,255,255,.85)';
+          if (wk !== 'clear') this.onWall('y0', x + 0.2 + ((t * 0.015 + x * 0.61) % 1) * 1.1, 1.82, (c) => {
+            c.fillStyle = grey ? 'rgba(120,128,138,.75)' : 'rgba(255,255,255,.8)';
+            c.beginPath(); c.ellipse(0, 0, 9, 3.5, 0, 0, Math.PI * 2); c.ellipse(-6, 1, 6, 3, 0, 0, Math.PI * 2); c.fill();
+          });
+          if (!grey || wk === 'cloudy') this.onWall('y0', cx, 1.65, (c) => {
+            c.fillStyle = grey ? 'rgba(150,158,168,.85)' : 'rgba(255,255,255,.85)';
             c.beginPath(); c.ellipse(0, 0, 7, 3, 0, 0, Math.PI * 2); c.ellipse(5, -2, 5, 3, 0, 0, Math.PI * 2); c.fill();
           });
         }
@@ -3174,6 +3271,10 @@
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
       if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
+      if (p.meeting && !p.path.length) {
+        const m = p.meeting;
+        return { pose: 'sit', face: m.seat.face, act: m.speaker === p.key ? 'chat' : m.start ? 'write' : 'lookaround', sitZ: m.seat.sit || 0.42 };
+      }
       if (p.visit) {
         const mate = this.people.get(p.visit.mate);
         return { pose: 'stand', face: 'front', act: mate && mate.chatWith === p.key ? 'chat' : 'lookaround', sitZ: 0 };
@@ -4110,9 +4211,10 @@
             p.until = wall + rand(2500, 4000);
           }
         }
-        if (p.visit) this.stepVisit(p, wall);
+        if (p.meeting) this.stepMeeting(p, wall);
+        else if (p.visit) this.stepVisit(p, wall);
         else if (p.mode === 'work' && p.desk && this.plan.zones && !this.bossIn && !this.trip(p, wall)) this.coffeeRun(p, wall);
-        if (p.mode === 'wander' && !p.visit) {
+        if (p.mode === 'wander' && !p.visit && !p.meeting) {
           if (p.poi && !p.path.length && p.until === Infinity) {
             p.until = wall + p.stay;
             if (p.poi.arrive) { this.lifeMark(p.poi.arrive, wall, p.stay, p); p.poi.arrive = null; }

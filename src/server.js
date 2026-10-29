@@ -22,9 +22,11 @@ const updater = require('./update');
 const hub = require('./hub');
 const { Progress } = require('./progress');
 const { Visitors } = require('./visitors');
+const { Weather } = require('./weather');
 const desktop = new hub.DesktopMeta();
 const progress = new Progress();
 const visitors = new Visitors();
+const weather = new Weather();
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -100,6 +102,7 @@ function view(s, now, { privacy }) {
     ack: s.agent === 'claude' && !s.subagent ? hub.lastAck(s.id) : null,
     // Experience points: { level, xp, next } (see src/progress.js).
     ...(s.subagent ? {} : progress.level(`${s.agent}:${s.id}`)),
+    badges: s.subagent ? [] : progress.badges(`${s.agent}:${s.id}`),
     // Other sessions it just sent a message to or got one from.
     talk: (s.talk || [])
       .filter((t) => now - t.at < TALK_MS)
@@ -173,7 +176,7 @@ function snapshot(watcher, opts) {
   if (!opts.demo) visitors.scan(now);
   const visits = opts.demo ? [] : visitors.recent(now).map((v) => (opts.privacy ? { ...v, text: null, from: '訪客' } : v));
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions, visitors: visits };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions, visitors: visits, weather: opts.demo ? null : weather.tick(now) };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {

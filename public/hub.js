@@ -327,9 +327,41 @@
     const traits = window.OfficeTraits ? window.OfficeTraits(s.key) : [];
     return `<div class="hub-sec hub-card-emp"><h4>🪪 員工資料${bestKey() === s.key ? '　<span class="hub-best">🏆 今日最佳員工</span>' : ''}</h4>
       ${traits.length ? `<div class="hub-traits">${traits.map((t) => `<span class="hub-chip">${t.emoji} ${esc(t.name)}</span>`).join('')}</div>` : ''}
+      ${(s.badges || []).length ? `<div class="hub-traits">${s.badges.map((b) => `<span class="hub-chip hub-badge" title="${esc(new Date(b.at).toLocaleDateString())} 獲得">${b.emoji} ${esc(b.name)}</span>`).join('')}</div>` : ''}
       <div class="hub-emp"><span>工號 <b>${id}</b></span><span>部門 <b>${esc(cut(deptOf(s), 20))}</b></span><span>到職 <b>${esc(since)}</b></span>
       <span>今天 <b>${td ? `${td.turns} 輪・${td.tools} 個動作` : '還沒做完一輪'}</b></span>${last ? `<span>最近 <b>${esc(last)}</b></span>` : ''}</div>
       ${total ? `<div class="hub-skills">${bars}</div>` : ''}</div>`;
+  }
+
+  // ---- badges: the wall, and a cheer when someone earns one
+
+  function showBadges() {
+    const o = state.data && state.data.office;
+    if (!o || !o.badges) return toast('還沒有徽章資料');
+    const nameOf = (k) => { const s = byKey(k); return s ? name(s) : '（已下班的 session）'; };
+    const html = `<h3>🏅 徽章牆</h3><ul class="hub-list">${o.badges.map((b) => `<li class="${b.holders.length ? '' : 'hub-locked'}"><span class="hub-badge-big">${b.emoji}</span><b>${esc(b.name)}</b> <small>${esc(b.desc)}</small>
+      <div class="hub-traits">${b.holders.length ? b.holders.sort((x, y) => x.at - y.at).slice(0, 8).map((h) => `<button data-open="${esc(h.key)}" class="hub-chip">${esc(cut(nameOf(h.key), 16))}</button>`).join('') + (b.holders.length > 8 ? `<span class="hub-muted">還有 ${b.holders.length - 8} 位</span>` : '') : '<span class="hub-muted">還沒有人拿到</span>'}</div></li>`).join('')}</ul>
+      <div class="hub-row"><button class="hub-btn" data-m="close">關閉</button></div>`;
+    modal(html);
+  }
+  const badgeSeen = new Set();
+  let badgeFirst = true;
+  function announceBadges() {
+    const o = state.data && state.data.office;
+    if (!o || !o.recentBadges) return;
+    for (const r of o.recentBadges) {
+      const id = `${r.key}|${r.id}|${r.at}`;
+      if (badgeSeen.has(id)) continue;
+      badgeSeen.add(id);
+      if (badgeFirst || PIP_PAGE) continue;
+      const b = (o.badges || []).find((x) => x.id === r.id);
+      const s = byKey(r.key);
+      if (!b || !s) continue;
+      Sound.play('level');
+      toast(`🏅 ${cut(LIVE ? empId(s) : name(s), 20)} 獲得「${b.name}」${b.emoji}`);
+      if (opts.onBadge) opts.onBadge(r.key, b);
+    }
+    badgeFirst = false;
   }
 
   // ---- the boss walks in (everyone looks busy) and leaves again
@@ -878,6 +910,7 @@
     toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
       + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
       + '<button type="button" data-tool="standup">🗣️ 開晨會</button>'
+      + '<button type="button" data-tool="badges">🏅 徽章牆</button>'
       + '<button type="button" data-tool="replay">⏪ 今日回放</button>'
       + '<button type="button" data-tool="record">🎥 回放錄成影片</button>'
       + '<button type="button" data-tool="live">🎬 直播模式</button>'
@@ -893,6 +926,7 @@
     if (b.dataset.tool === 'boss') toggleBoss();
     if (b.dataset.tool === 'standup' && opts.onStandup) opts.onStandup();
     if (b.dataset.tool === 'replay' && opts.onReplay) opts.onReplay();
+    if (b.dataset.tool === 'badges') showBadges();
     if (b.dataset.tool === 'record' && opts.onRecord) opts.onRecord();
     if (b.dataset.tool === 'live' && opts.onLive) opts.onLive(true);
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
@@ -904,7 +938,7 @@
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
-    standupLine, showMinutes, bestKey,
+    standupLine, showMinutes, bestKey, showBadges, announceBadges,
     setLive(v) { LIVE = !!v; },
     ding(kind) { Sound.play(kind); },
     get live() { return LIVE; },

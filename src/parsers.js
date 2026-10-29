@@ -53,6 +53,7 @@ function newSession(agent, id, file) {
     pendingTasks: {}, // tool_use id -> task, for the ones whose result is worth reacting to
     outcome: null,    // { at, task, ok }: the last test / build / push / commit result
     kinds: {},        // task -> how many tool calls of that kind (what they are good at)
+    okStreak: 0,      // tool calls in a row that did not fail (for the "flawless" badge)
   };
 }
 
@@ -276,6 +277,7 @@ function applyClaude(s, d) {
         s.question = null;
         s.options = null;
         s.errStreak = c.some((x) => x.type === 'tool_result' && x.is_error) ? s.errStreak + 1 : 0;
+        for (const r of c) if (r.type === 'tool_result') s.okStreak = r.is_error ? 0 : s.okStreak + 1;
         for (const r of c) {
           const task = r.type === 'tool_result' && s.pendingTasks[r.tool_use_id];
           if (!task) continue;

@@ -137,3 +137,25 @@ test('today\'s story: each change between working, waiting, error, done and idle
   assert.equal(sp['claude:a'].s[0][0], T - 3600_000);
   assert.equal(sp['claude:sub'], undefined, 'helpers are not tracked');
 });
+
+test('badges: earned from what they do; history already there is given quietly, new ones are announced', () => {
+  const p = new Progress(path.join(os.tmpdir(), `wmad-badges-${process.pid}-${Date.now()}.json`));
+  const s = newSession('claude', 'b1', 'f');
+  s.turns = 60; s.tools = 10; s.startedAt = 0;
+  const T = Date.now();
+  p.update([s], T);
+  const ids = () => p.badges('claude:b1').map((b) => b.id).sort().join();
+  assert.equal(ids(), 'first,marathon', 'from its history');
+  assert.equal(p.office().recentBadges.length, 0, 'no announcement for history');
+  // Ten pushes that went through, one at a time.
+  for (let i = 1; i <= 10; i++) { s.outcome = { at: T + i, task: 'push', ok: true }; p.update([s], T + i * 1000); }
+  assert.match(ids(), /pusher/);
+  const recent = p.office().recentBadges;
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].id, 'pusher');
+  // A failed push does not count; a long run without errors does.
+  s.okStreak = 31; p.update([s], T + 20_000);
+  assert.match(ids(), /flawless/);
+  const wall = p.office().badges.find((b) => b.id === 'pusher');
+  assert.equal(wall.holders[0].key, 'claude:b1');
+});

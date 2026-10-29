@@ -28,6 +28,21 @@ const TRACK_ZONE = (s) => (['thinking', 'tool', 'typing'].includes(s.status) ? '
   : s.status === 'waiting' || (s.status === 'done' && (s.ask || s.needs)) ? 'q'
     : s.status === 'error' ? 'e' : s.status === 'done' || s.status === 'interrupted' ? 'd' : 'i');
 
+// Badges: earned once, kept. `has(rec, today)` decides; rec.k holds counts.
+const BADGES = [
+  { id: 'first', name: '首日報到', emoji: '🎉', desc: '做完第一輪', has: (r) => r.turns >= 1 },
+  { id: 'diligent', name: '今日勤奮', emoji: '💪', desc: '一天做完 10 輪', has: (r, t) => t && t.turns >= 10 },
+  { id: 'marathon', name: '馬拉松', emoji: '🏃', desc: '累計 50 輪', has: (r) => r.turns >= 50 },
+  { id: 'veteran', name: '百輪老將', emoji: '🎖️', desc: '累計 100 輪', has: (r) => r.turns >= 100 },
+  { id: 'tools', name: '工具人', emoji: '🛠️', desc: '累計 500 個動作', has: (r) => r.tools >= 500 },
+  { id: 'pusher', name: '推手', emoji: '🚀', desc: '成功推上去 10 次', has: (r) => r.k.push >= 10 },
+  { id: 'tester', name: '測試達人', emoji: '🧪', desc: '測試通過 20 次', has: (r) => r.k.test >= 20 },
+  { id: 'merger', name: '合併王', emoji: '🔀', desc: '合併 PR 5 次', has: (r) => r.k.merge >= 5 },
+  { id: 'flawless', name: '零失誤', emoji: '✨', desc: '連續 30 個動作沒出錯', has: (r) => r.k.streak >= 30 },
+  { id: 'owl', name: '夜貓', emoji: '🦉', desc: '晚上 10 點後做完 3 輪', has: (r) => r.k.night >= 3 },
+  { id: 'early', name: '早鳥', emoji: '🐦', desc: '早上 8 點前做完一輪', has: (r) => r.k.early >= 1 },
+];
+
 function levelOf(xp) {
   let lv = 1;
   while (lv < LEVELS.length && xp >= LEVELS[lv]) lv++;
@@ -75,8 +90,19 @@ class Progress {
           this.dirty = true;
         }
       }
-      this.seen.set(key, { obj: s, ...cur });
+      // Results that count toward badges: passed tests, pushes, merges; the
+      // longest run of tool calls without a failure.
+      const prevOut = last && last.obj === s ? last.outAt : (s.outcome ? s.outcome.at : 0);
+      this.seen.set(key, { obj: s, ...cur, outAt: s.outcome ? s.outcome.at : 0 });
       if (!rec) { rec = d.sessions[key] = { tools: 0, turns: 0, at: now }; this.dirty = true; }
+      const k = rec.k || (rec.k = { push: 0, test: 0, merge: 0, streak: 0, night: 0, early: 0 });
+      if (s.outcome && s.outcome.ok && s.outcome.at > prevOut && k[s.outcome.task] != null) { k[s.outcome.task]++; this.dirty = true; }
+      if ((s.okStreak || 0) > k.streak) { k.streak = s.okStreak; this.dirty = true; }
+      if (add && add.turns && last && last.obj === s) {
+        const h = new Date(now).getHours();
+        if (h >= 22 || h < 5) k.night += add.turns;
+        if (h >= 5 && h < 8) k.early += add.turns;
+      }
       if (add && (add.tools || add.turns)) {
         rec.tools += add.tools; rec.turns += add.turns; rec.at = now;
         d.tools += add.tools; d.turns += add.turns;
@@ -86,7 +112,29 @@ class Progress {
         }
         this.dirty = true;
       }
+      this.award(key, rec, d.today.sessions[key], now);
     }
+    this.started = true;
+  }
+
+  // New badges for one session. The ones earned by history already there
+  // when the dashboard starts are given quietly (no announcement).
+  award(key, rec, today, now) {
+    const got = rec.badges || (rec.badges = {});
+    for (const b of BADGES) {
+      if (got[b.id] || !b.has(rec, today)) continue;
+      got[b.id] = now;
+      this.dirty = true;
+      if (!this.started) continue;
+      const list = this.data.recentBadges || (this.data.recentBadges = []);
+      list.push({ key, id: b.id, at: now });
+      if (list.length > 50) list.shift();
+    }
+  }
+
+  badges(key) {
+    const got = (this.data.sessions[key] && this.data.sessions[key].badges) || {};
+    return BADGES.filter((b) => got[b.id]).map((b) => ({ id: b.id, name: b.name, emoji: b.emoji, at: got[b.id] }));
   }
 
   level(key) { return levelOf(xpOf(this.data.sessions[key])); }
@@ -122,6 +170,10 @@ class Progress {
     return {
       turns: this.data.turns,
       tools: this.data.tools,
+      // Every badge, who holds it, and the ones just earned.
+      badges: BADGES.map((b) => ({ id: b.id, name: b.name, emoji: b.emoji, desc: b.desc,
+        holders: Object.entries(this.data.sessions).filter(([, r]) => r.badges && r.badges[b.id]).map(([key, r]) => ({ key, at: r.badges[b.id] })) })),
+      recentBadges: (this.data.recentBadges || []).filter((x) => Date.now() - x.at < 86_400_000),
       today: {
         date: t.date,
         turns: rows.reduce((a, r) => a + r.turns, 0),
@@ -149,4 +201,4 @@ class Progress {
   }
 }
 
-module.exports = { Progress, levelOf, LEVELS };
+module.exports = { Progress, levelOf, LEVELS, BADGES };

@@ -2,6 +2,7 @@
 // Isolated dirs only; the gate is a stub script, never the real Touch ID.
 const assert = require('node:assert/strict');
 const test = require('node:test');
+process.env.WMAD_NO_WEATHER = '1'; // no network in tests
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -111,4 +112,29 @@ test('visitors: a new message in a watched folder is a visit; old ones, your own
   assert.equal(visitOf({ id: 'a', userName: 'X', messages: [{ ts: '1', text: '<@U1> 看 <https://a.b|連結>' }] }, 'a', 0, new Set()).text, '看 連結');
   assert.equal(v.add({ from: 'CI 機器人', text: 'build 好了' }, now), true);
   assert.equal(v.add({ text: 'no one' }, now), false);
+});
+
+test('weather: codes become what the windows show; fetched in the background, at most every 15 minutes', async () => {
+  const { Weather, kindOf } = require('../src/weather');
+  assert.equal(kindOf(0).kind, 'clear');
+  assert.equal(kindOf(3).kind, 'cloudy');
+  assert.equal(kindOf(63).kind, 'rain');
+  assert.equal(kindOf(81).kind, 'rain');
+  assert.equal(kindOf(73).kind, 'snow');
+  assert.equal(kindOf(95).kind, 'storm');
+  let calls = 0, asked = '';
+  const saved = process.env.WMAD_NO_WEATHER; delete process.env.WMAD_NO_WEATHER;
+  const w = new Weather({ fetcher: async (url) => { calls++; asked = url; return { ok: true, json: async () => ({ current: { weather_code: 61, temperature_2m: 22.6, is_day: 1 } }) }; } });
+  process.env.WMAD_NO_WEATHER = saved;
+  const t0 = Date.now();
+  assert.equal(w.tick(t0), null, 'nothing yet on the first tick');
+  await new Promise((r) => setTimeout(r, 20));
+  const now = w.tick(t0 + 1000);
+  assert.equal(now.kind, 'rain');
+  assert.equal(now.temp, 23);
+  assert.equal(calls, 1, 'not again within 15 minutes');
+  assert.match(asked, /latitude=.*longitude=/);
+  w.tick(t0 + 16 * 60_000);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(calls, 2);
 });

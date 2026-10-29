@@ -258,6 +258,10 @@
   .hub-skill { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 6px; font-size: 12px; }
   .hub-skill small { color: var(--muted); text-align: right; }
   .hub-traits { display: flex; gap: 6px; margin: 2px 0 6px; flex-wrap: wrap; }
+  .weather-chip { margin-left: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .hub-badge { background: color-mix(in srgb, #ffd76a 30%, var(--panel)); }
+  .hub-badge-big { font-size: 20px; margin-right: 6px; }
+  .hub-locked { opacity: .45; }
   .hub-best { background: #ffd76a; color: #5a4300; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
   #officeWrap { position: relative; }
   /* On air: just the office, full window, with a LIVE badge and a ticker. */
@@ -349,7 +353,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>👀 <span class="company" id="companyName"></span><span data-t="title"></span></h1>
+    <h1>👀 <span class="company" id="companyName"></span><span data-t="title"></span><span class="weather-chip" id="weatherChip" hidden></span></h1>
     <div class="summary" id="summary"></div>
     <button class="newver" id="newVer" hidden></button>
     <div class="controls">
@@ -608,6 +612,9 @@ function render() {
   const co = Hub.company();
   document.title = (needs ? `(${needs}!) ` : working ? `(${working}) ` : '') + (co ? `${co}・` : '') + L.title;
   document.getElementById('companyName').textContent = co;
+  const wx = state.data.weather, chip = document.getElementById('weatherChip');
+  chip.hidden = !wx;
+  if (wx) { chip.textContent = `${wx.emoji} ${wx.temp}°C`; chip.title = `窗外：${wx.label}`; }
 
   const main = document.getElementById('main');
   const officeMode = state.view === 'office';
@@ -624,6 +631,7 @@ function render() {
     office.pins = PIP ? [] : Hub.pinNames();
     // Someone from outside walks in downstairs (src/visitors.js).
     if (!PIP && !replay && office.visitorsIn) { office.masked = Hub.live; if (office.visitorsIn(state.data.visitors) > 0) Hub.ding('wait'); }
+    for (const o of [office, office2]) if (o && o.setWeather) o.setWeather(state.data.weather);
     for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
@@ -696,6 +704,8 @@ function onData(data) {
     state.prev.set(s.key, s.status);
   }
   if (!PIP) Hub.chime(data.sessions, first);
+  state.data = data;
+  if (!PIP) Hub.announceBadges();
   state.data = data;
   state.loaded = true;
   applyLang(chooseLang(data.lang));
@@ -1215,6 +1225,7 @@ Hub.mount({
   onChange() { render(); },
   onStandup() { startStandup(); },
   onReplay() { if (replay) stopReplay(); else startReplay(); },
+  onBadge(key, b) { for (const o of [office, office2]) { const p = o && o.people.get(key); if (p) p.event = { text: `🏅 獲得「${b.name}」`, at: Date.now(), zone: 'level' }; } },
   onRecord() { if (recorder) stopReplay(); else startRecording(); },
   onLive(v) { setLive(v); },
 });

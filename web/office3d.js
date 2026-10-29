@@ -431,6 +431,25 @@ export class Office3D extends window.Office {
     return t;
   }
 
+  // Rain streaks or snowflakes over the window glass (scrolled each frame).
+  weatherTexture(kind) {
+    this.wxTex = this.wxTex || {};
+    if (this.wxTex[kind]) return this.wxTex[kind];
+    const cv = document.createElement('canvas');
+    cv.width = 128; cv.height = 128;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#fff'; c.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < (kind === 'rain' ? 70 : 45); i++) {
+      const x = (i * 37) % 128, y = (i * 71) % 128;
+      if (kind === 'rain') { c.strokeStyle = 'rgba(150,170,190,.9)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x, y); c.lineTo(x - 2, y + 12); c.stroke(); }
+      else { c.fillStyle = 'rgba(150,160,175,.9)'; c.beginPath(); c.arc(x, y, 1.8, 0, Math.PI * 2); c.fill(); }
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 1.5);
+    return (this.wxTex[kind] = tex);
+  }
+
   // A soft round shadow under each person, so they stand on the floor.
   blobShadow() {
     if (!this.blobMat) {
@@ -1657,6 +1676,7 @@ export class Office3D extends window.Office {
   facing(p, st) {
     if (st.pose === 'walk') return null;
     if (p.me) return p.seated ? Math.PI : null;
+    if (p.meeting && !p.path.length) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
     // A visitor talks to whoever sits at the desk they came to.
     if (p.visitor) return p.path.length ? null : Math.atan2(p.desk.seat.x - p.x, p.desk.seat.y - p.y);
     if (p.held || p.landed) return 0;
@@ -1898,8 +1918,20 @@ export class Office3D extends window.Office {
     if (this.closedNow) { this.sun.intensity *= 0.3; this.hemi.intensity *= 0.4; }
     this.deskLamps(!!this.closedNow);
     if (this.windowMat) {
-      this.windowMat.color.setHex(sky.sky);
-      this.windowMat.emissive.setHex(sky.sky);
+      // The real weather: a grey sky, rain running down, snow, lightning.
+      const wx = this.weatherKind();
+      const grey = { cloudy: sky.night ? 0x262c38 : 0x9aa5b0, rain: sky.night ? 0x1f2530 : 0x7d8894, storm: sky.night ? 0x181c26 : 0x5e6874, fog: sky.night ? 0x3a3f48 : 0xc9cfd4 }[wx];
+      const flash = wx === 'storm' && (t % 7.3) < 0.12;
+      const col = flash ? 0xe8eef8 : grey != null ? grey : sky.sky;
+      this.windowMat.color.setHex(col);
+      this.windowMat.emissive.setHex(col);
+      const fx = wx === 'rain' || wx === 'storm' ? 'rain' : wx === 'snow' ? 'snow' : null;
+      if (fx !== this.windowFx) {
+        this.windowFx = fx;
+        this.windowMat.map = fx ? this.weatherTexture(fx) : null;
+        this.windowMat.needsUpdate = true;
+      }
+      if (this.windowMat.map) this.windowMat.map.offset.y = (t * (fx === 'rain' ? 1.6 : 0.25)) % 1;
     }
     if (this.plan.scene) this.animateScene(t, sky);
     if (this.lampLight) this.lampLight.intensity = sky.night ? 2.2 : 0;

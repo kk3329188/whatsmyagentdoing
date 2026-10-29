@@ -209,8 +209,11 @@ test('a dropped wanderer looks around where they landed, then carries on', () =>
   assert.equal(o.stateOf(p).act, 'lookaround');
 });
 
-test('a session that messages another walks over, they chat, then it goes back to its desk', () => {
+const meetingRoomFull = (o) => { for (const q of o.plan.pois) if (q.sit && (q.act === 'meeting' || q.act === 'read')) q.taken = 'someone'; };
+
+test('meeting room full: a session that messages another walks over, they chat, then it goes back to its desk', () => {
   const o = load(true);
+  meetingRoomFull(o);
   o.label = (s) => s.key;
   const now = Date.now();
   let who = settle(o, [at('tool', { activity: 'SendMessage' }), at('idle', { ago: 60 * MIN })]);
@@ -235,8 +238,9 @@ test('a session that messages another walks over, they chat, then it goes back t
   assert.equal(mate.chatWith, null);
 });
 
-test('a message received does not make the receiver walk; the sender comes to a desk worker who chats from their chair', () => {
+test('meeting room full: the receiver stays put; the sender comes to a desk worker who chats from their chair', () => {
   const o = load(true);
+  meetingRoomFull(o);
   const now = Date.now();
   let who = settle(o, [at('tool', { activity: 'Read a.js' }), at('done', { n: 'x' })]);
   const worker = who('claude:tool'), sender = who('claude:donex');
@@ -1064,4 +1068,51 @@ test('a few idle ones stay downstairs to keep the office lively; the same ones, 
   const later = idle.map((s) => (s.key === 'claude:idle9' ? { ...s, lastEventAt: Date.now() } : s));
   const second = Floors.split(later, first.floors);
   assert.equal(second.moved.size, 0);
+});
+
+test('you can always walk away from your desk, whichever key you press (round the furniture if need be)', () => {
+  const o = load(true);
+  o.floor = 1;
+  settle(o, [at('idle', { ago: 60 * MIN })]);
+  const me = o.meOn();
+  const seat = { x: me.x, y: me.y };
+  for (const k of ['w', 'a', 's', 'd']) {
+    Object.assign(me, { x: seat.x, y: seat.y, seated: true, detour: null, path: [] });
+    o.meKey(k, true);
+    for (let i = 0; i < 40; i++) o.stepMe(0.05);
+    o.meKey(k, false);
+    assert.ok(Math.hypot(me.x - seat.x, me.y - seat.y) > 0.9, `${k}: got away from the desk (${Math.hypot(me.x - seat.x, me.y - seat.y).toFixed(2)})`);
+    assert.equal(o.plan.grid.hard(me.x, me.y), false, `${k}: not inside furniture`);
+  }
+});
+
+test('messaging another session: both go to the meeting room, sit across the table and take turns talking, then go back', () => {
+  const o = load(true);
+  const now = Date.now();
+  o.label = (s) => s.key;
+  const a = at('tool', { activity: 'SendMessage' }), b = at('tool', { n: 'b', activity: 'Read a.js' });
+  settle(o, [a, b]);
+  o.first = false;
+  const pa = o.people.get(a.key), pb = o.people.get(b.key);
+  const deskA = pa.desk;
+  o.update([{ ...a, talk: [{ key: b.key, dir: 'out', at: now, text: '幫我看一下這個設計' }] }, b]);
+  assert.ok(pa.meeting && pb.meeting, 'both are off to a meeting');
+  const sa = pa.meeting.seat, sb = pb.meeting.seat;
+  assert.ok(Math.abs(sa.x - sb.x) < 0.15 && Math.abs(sa.y - sb.y) > 1, 'across the table from each other');
+  assert.match(pa.event.text, /開會/);
+  // Arrive.
+  for (const p of [pa, pb]) { p.path = []; p.x = p.meeting.seat.x; p.y = p.meeting.seat.y; }
+  o.stepMeeting(pa, now);
+  assert.equal(o.stateOf(pa).pose, 'sit');
+  assert.equal(pa.meeting.speaker, pa.key, 'the one who called it speaks first');
+  assert.match(pa.event.text, /設計/);
+  o.stepMeeting(pa, now + 3700);
+  assert.equal(pa.meeting.speaker, pb.key, 'then the other');
+  assert.equal(o.stateOf(pb).act, 'chat');
+  assert.equal(o.stateOf(pa).act, 'write', 'the one listening takes notes');
+  o.stepMeeting(pa, now + 30_000);
+  assert.equal(pa.meeting, null);
+  assert.equal(pb.meeting, null);
+  assert.ok(pa.path.length && pa.desk === deskA, 'back to the desk');
+  assert.equal(sa.taken, null);
 });
