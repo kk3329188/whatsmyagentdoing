@@ -56,6 +56,7 @@
 
   // The short line in the bubble above a working person.
   function doing(s) {
+    if (LIVE) return liveDoing(s);
     if (s.status === 'waiting') return '等你';
     return cut(words(s.activity) || '工作中', 16);
   }
@@ -75,7 +76,20 @@
   }
 
   // The name tag: the session's own title, plus how far through its steps.
+  // On air (live mode): nobody's titles, commands or file names, only an
+  // employee number and the kind of work.
+  let LIVE = false;
+  const empId = (s) => `EMP-${String(hashOf(s.key) % 9000 + 1000)}`;
+  function liveDoing(s) {
+    if (s.status === 'waiting') return '等你';
+    if (s.status === 'thinking') return '思考中';
+    if (s.status === 'typing') return '回覆中';
+    if (s.status === 'tool') return KIND_TEXT[s.task] || '工作中';
+    return { done: '做完了', error: '卡住了', idle: '休息中' }[s.status] || '';
+  }
+
   function label(s) {
+    if (LIVE) return s.key === 'me' ? '你' : empId(s);
     const p = steps(s);
     const busy = ACTIVE.has(s.status) || s.status === 'waiting';
     return cut(name(s), 16) + (p && busy && p.done < p.total ? ` · ${p.done}/${p.total}` : '');
@@ -203,7 +217,7 @@
     for (const s of sessions) {
       if (s.subagent) continue;
       const b = seen.get(s.key);
-      const now = { status: s.status, wait: isWait(s), level: s.level || 1, reminded: b ? b.reminded : false };
+      const now = { status: s.status, wait: isWait(s), level: s.level || 1, reminded: b ? b.reminded : false, outcomeAt: s.outcome ? s.outcome.at : 0 };
       if (!now.wait) now.reminded = false;
       if (b && !first) {
         const at = Date.now();
@@ -212,6 +226,12 @@
         else if (now.wait && !b.wait) { want('wait'); log('wait'); }
         else if (s.status === 'done' && BUSY.has(b.status)) { want('done'); log('done'); pinNote(s, at); }
         if (now.level > b.level) { want('level'); log('level'); }
+        // A failed CI run sounds the alarm; a merged PR the fanfare.
+        const o = s.outcome;
+        if (o && o.at > (b.outcomeAt || 0) && Date.now() - state.skew - o.at < 90_000) {
+          if (o.task === 'ci' && !o.ok) want('error');
+          if (o.task === 'merge' && o.ok) want('level');
+        }
         if (now.wait && !now.reminded && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) { now.reminded = true; want('wait'); }
       } else if (now.wait && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) now.reminded = true;
       seen.set(s.key, now);
@@ -251,6 +271,7 @@
   // ---- the stand-up: what each one says, and the minutes
 
   function standupLine(s) {
+    if (LIVE) return liveDoing(s);
     const need = needsYou(s);
     if (need) return `等你：${cut(need, 26)}`;
     if (s.status === 'error') return `卡住了：${cut(s.error || '出錯', 24)}`;
@@ -855,6 +876,8 @@
     toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
       + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
       + '<button type="button" data-tool="standup">🗣️ 開晨會</button>'
+      + '<button type="button" data-tool="replay">⏪ 今日回放</button>'
+      + '<button type="button" data-tool="live">🎬 直播模式</button>'
       + `<button type="button" data-tool="boss" class="${bossIn() ? 'on' : ''}" title="B 鍵也能切換">${bossIn() ? '🚶 老闆走了' : '👔 老闆回來了'}</button>`
       + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
       + '<span class="hub-muted">拖到印表機＝複製報告、白板＝釘選、咖啡機＝叫它停下、門口＝先不顯示</span>';
@@ -866,6 +889,8 @@
     if (b.dataset.tool === 'board') showBoard();
     if (b.dataset.tool === 'boss') toggleBoss();
     if (b.dataset.tool === 'standup' && opts.onStandup) opts.onStandup();
+    if (b.dataset.tool === 'replay' && opts.onReplay) opts.onReplay();
+    if (b.dataset.tool === 'live' && opts.onLive) opts.onLive(true);
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
   });
 
@@ -876,6 +901,13 @@
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
     standupLine, showMinutes, bestKey,
+    setLive(v) { LIVE = !!v; },
+    get live() { return LIVE; },
+    // The ticker on air: recent things, with employee numbers only.
+    tickerLines() {
+      const said = { done: '做完一輪 ✓', error: '卡住了 ⚠', wait: '在等老闆回覆 ✋', level: '升等了 ⭐' };
+      return eventLog.slice(-12).reverse().map((e) => { const s = byKey(e.key); return s && said[e.kind] ? `${empId(s)} ${said[e.kind]}` : null; }).filter(Boolean);
+    },
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },

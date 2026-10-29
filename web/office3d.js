@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
 
 const CHARACTERS = ['male-a', 'male-b', 'male-c', 'male-d', 'male-e', 'male-f',
@@ -90,6 +91,14 @@ export class Office3D extends window.Office {
     root.insertBefore(this.gl.domElement, this.canvas);
 
     this.scene = new THREE.Scene();
+    // Soft light bouncing off everything (an image of a lit room), so
+    // surfaces read as solid instead of flat-shaded.
+    try {
+      const pm = new THREE.PMREMGenerator(this.gl);
+      this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.35;
+      pm.dispose();
+    } catch { /* fine without */ }
     this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 200);
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true;
@@ -106,7 +115,8 @@ export class Office3D extends window.Office {
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 1.6);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(3072, 3072);
+    this.sun.shadow.radius = 3;
     this.sun.shadow.bias = -0.0006;
     this.sun.shadow.normalBias = 0.02;
     this.scene.add(this.sun, this.sun.target);
@@ -275,22 +285,50 @@ export class Office3D extends window.Office {
       m.receiveShadow = true;
       this.room.add(m);
     };
+    // Wooden planks: each a slightly different tone, with grain and seams.
     const planks = this.patternTexture((c, s) => {
-      c.fillStyle = dark ? '#4a3f35' : '#e3cfb0'; c.fillRect(0, 0, s, s);
-      c.strokeStyle = dark ? 'rgba(0,0,0,.25)' : 'rgba(120,90,50,.18)'; c.lineWidth = 2;
-      for (let i = 0; i <= 4; i++) { c.beginPath(); c.moveTo(0, i * s / 4); c.lineTo(s, i * s / 4); c.stroke(); }
-      for (let i = 0; i < 4; i++) { const x = ((i * 37) % 4 + 0.5) * s / 4; c.beginPath(); c.moveTo(x, i * s / 4); c.lineTo(x, (i + 1) * s / 4); c.stroke(); }
-    });
+      const rows = 8, h = s / rows;
+      const tones = dark ? ['#4a3f35', '#463b31', '#4f4339', '#43382f', '#4c4036'] : ['#e3cfb0', '#dcc6a4', '#e8d5b8', '#d7c09d', '#e0caa9'];
+      for (let r = 0; r < rows; r++) {
+        const off = ((r * 53) % 7) / 7 * s;
+        for (let k = -2; k < 3; k++) { // enough planks to cover the row whatever the offset
+          const x0 = off + k * s / 2;
+          c.fillStyle = tones[(r * 3 + k + 7) % tones.length];
+          c.fillRect(x0, r * h, s / 2, h);
+          c.strokeStyle = dark ? 'rgba(0,0,0,.35)' : 'rgba(110,80,45,.28)'; c.lineWidth = 1.5;
+          c.beginPath(); c.moveTo(x0, r * h); c.lineTo(x0, r * h + h); c.stroke();
+        }
+        c.strokeStyle = dark ? 'rgba(255,255,255,.04)' : 'rgba(120,85,40,.10)'; c.lineWidth = 1;
+        for (let g = 0; g < 3; g++) {
+          const y = r * h + h * (0.25 + g * 0.25) + Math.sin(r + g) * 2;
+          c.beginPath(); c.moveTo(0, y); for (let x = 0; x <= s; x += 16) c.lineTo(x, y + Math.sin(x / 23 + r * 3 + g) * 1.5); c.stroke();
+        }
+        c.fillStyle = dark ? 'rgba(0,0,0,.4)' : 'rgba(100,70,40,.3)';
+        c.fillRect(0, r * h, s, 1.5);
+      }
+    }, 512);
     const tiles = this.patternTexture((c, s) => {
       c.fillStyle = dark ? '#3d4044' : '#f4f4f1'; c.fillRect(0, 0, s, s);
       c.fillStyle = dark ? '#35383c' : '#e3e4e0'; c.fillRect(0, 0, s / 2, s / 2); c.fillRect(s / 2, s / 2, s / 2, s / 2);
-    });
-    planks.repeat.set(OW / 2, D / 2);
+      c.fillStyle = dark ? 'rgba(0,0,0,.45)' : 'rgba(150,150,140,.6)';
+      for (const v of [0, s / 2]) { c.fillRect(v, 0, 2, s); c.fillRect(0, v, s, 2); }
+    }, 256);
+    // Carpet: a fine weave.
+    const carpet = this.patternTexture((c, s) => {
+      c.fillStyle = dark ? '#33404d' : '#c9d3dc'; c.fillRect(0, 0, s, s);
+      for (let i = 0; i < 2600; i++) {
+        const x = (i * 97) % s, y = (i * 61 + Math.floor(i / s) * 7) % s;
+        c.fillStyle = (i % 3) ? (dark ? 'rgba(255,255,255,.035)' : 'rgba(255,255,255,.25)') : (dark ? 'rgba(0,0,0,.12)' : 'rgba(60,80,100,.10)');
+        c.fillRect(x, y, 2, 2);
+      }
+    }, 256);
+    carpet.repeat.set((W - OW) / 1.5, MR / 1.5);
+    planks.repeat.set(OW / 3, D / 3);
     floor(0, 0, OW, D, 0xffffff, planks);
-    floor(OW, 0, W - OW, MR, dark ? 0x33404d : 0xc9d3dc);
+    floor(OW, 0, W - OW, MR, 0xffffff, carpet);
     tiles.repeat.set((W - OW), (PY - MR));
     floor(OW, MR, W - OW, PY - MR, 0xffffff, tiles);
-    const planks2 = planks.clone(); planks2.needsUpdate = true; planks2.repeat.set((W - OW) / 2, (D - PY) / 2);
+    const planks2 = planks.clone(); planks2.needsUpdate = true; planks2.repeat.set((W - OW) / 3, (D - PY) / 3);
     floor(OW, PY, W - OW, D - PY, 0xffffff, planks2);
     const pp = plan.pp;
     const mat = new THREE.Mesh(new THREE.PlaneGeometry(pp.x1 - pp.x0 + 1.2, 2.7), new THREE.MeshStandardMaterial({ color: dark ? 0x2f4a3a : 0xbfd8c4, roughness: 1 }));
@@ -325,6 +363,14 @@ export class Office3D extends window.Office {
       this.boxMesh(-T + 0.02, dy - 0.55, 0, 0.06, 1.1, 1.78, dark ? 0x5c4431 : 0xa8825a);
       this.boxMesh(0, dy - 0.6, 0, 0.9, 1.2, 0.01, dark ? 0x5a3b2e : 0xb9654a, { shadow: false });
     }
+    // Skirting boards along the bottom of both walls (not across the doorway).
+    {
+      const trim = dark ? 0x2b2926 : 0xf2ede4;
+      this.boxMesh(0, 0, 0, W, 0.025, 0.11, trim, { shadow: false });
+      const dy0 = plan.door.y - 0.6, dy1 = plan.door.y + 0.6;
+      this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
+      this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
+    }
     // posters + whiteboard
     for (const ps of plan.posters) {
       const m = this.textPlane(ps.text, ps.color, 0.9, 1.0);
@@ -354,14 +400,32 @@ export class Office3D extends window.Office {
     this.collide();
   }
 
-  patternTexture(paint) {
+  patternTexture(paint, size = 128) {
     const cv = document.createElement('canvas');
-    cv.width = cv.height = 128;
-    paint(cv.getContext('2d'), 128);
+    cv.width = cv.height = size;
+    paint(cv.getContext('2d'), size);
     const t = new THREE.CanvasTexture(cv);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
     return t;
+  }
+
+  // A soft round shadow under each person, so they stand on the floor.
+  blobShadow() {
+    if (!this.blobMat) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 64;
+      const c = cv.getContext('2d');
+      const g = c.createRadialGradient(32, 32, 2, 32, 32, 30);
+      g.addColorStop(0, 'rgba(0,0,0,.45)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+      this.blobMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false });
+    }
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), this.blobMat);
+    m.rotation.x = -Math.PI / 2;
+    m.renderOrder = 1;
+    return m;
   }
 
   whiteboardScribbles(cx) {
@@ -422,6 +486,10 @@ export class Office3D extends window.Office {
             this.blinkers.push({ m: led, r, k });
           }
         }
+        // Flashes red when a CI run fails.
+        this.alarmLight = new THREE.PointLight(0xff2a1a, 0, 5, 1.5);
+        this.alarmLight.position.set(p.x + 0.35, 1.6, p.y + 1.0);
+        this.room.add(this.alarmLight);
         break;
       }
       case 'printer':
@@ -438,6 +506,47 @@ export class Office3D extends window.Office {
       case 'plant':
         this.place('pottedPlant', p.x - 0.3, p.y - 0.3, 0.6, 0.6, { h: 1.0 });
         break;
+      case 'deco': {
+        const g = new THREE.Group();
+        const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
+        if (p.kind === 'tree') {
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.25, 8), mat(0x7a5233));
+          trunk.position.y = 0.125; g.add(trunk);
+          [[0.25, 0.48, 0.7], [0.65, 0.37, 0.6], [1.0, 0.25, 0.5]].forEach(([y0, r, h]) => {
+            const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 14), mat(0x2f7d46));
+            cone.position.y = y0 + h / 2; g.add(cone);
+            for (let i = 0; i < 6; i++) {
+              const a = i / 6 * Math.PI * 2 + y0 * 3;
+              const ball = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), mat([0xe0344b, 0xffd23f, 0x3b8ee0][i % 3], { emissive: [0xe0344b, 0xffd23f, 0x3b8ee0][i % 3], emissiveIntensity: 0.6 }));
+              ball.position.set(Math.cos(a) * r * 0.75, y0 + 0.08, Math.sin(a) * r * 0.75);
+              g.add(ball);
+            }
+          });
+          const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.08), mat(0xffd23f, { emissive: 0xffd23f, emissiveIntensity: 1.2 }));
+          star.position.y = 1.58; g.add(star);
+          for (const [dx, dz, c, s2] of [[0.3, 0.2, 0xe0344b, 0.2], [-0.15, 0.35, 0x3b8ee0, 0.16]]) {
+            const box = new THREE.Mesh(new THREE.BoxGeometry(s2, s2 * 0.8, s2), mat(c));
+            box.position.set(dx, s2 * 0.4, dz); g.add(box);
+          }
+        } else if (p.kind === 'pumpkin') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 10), mat(0xe8781e));
+          body.scale.set(1.15, 0.8, 1.15); body.position.y = 0.14; g.add(body);
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.08, 6), mat(0x4c7a2a));
+          stem.position.y = 0.3; g.add(stem);
+          const glow = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), mat(0xffd23f, { emissive: 0xffb020, emissiveIntensity: 1.5 }));
+          glow.position.set(0, 0.15, 0.15); g.add(glow);
+        } else if (p.kind === 'lantern') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 10), mat(0xd42a2a, { emissive: 0xff4422, emissiveIntensity: 0.6 }));
+          body.scale.set(1, 0.85, 1); body.position.y = 1.9; g.add(body);
+          for (const dy of [0.13, -0.13]) { const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 10), mat(0xe8b931)); cap.position.y = 1.9 + dy; g.add(cap); }
+          const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.4, 4), mat(0x7a5233));
+          cord.position.y = 2.2; g.add(cord);
+        }
+        g.position.set(p.x, 0, p.y);
+        g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+        this.room.add(g);
+        break;
+      }
       case 'pingpong': {
         const { x, y } = p;
         for (const [lx, ly] of [[0.1, 0.1], [2.4, 0.1], [0.1, 1.2], [2.4, 1.2]]) this.boxMesh(x + lx, y + ly, 0, 0.08, 0.08, 0.7, 0x333333);
@@ -1429,8 +1538,9 @@ export class Office3D extends window.Office {
     lapLid.position.set(0, 0.1, -0.1); lapLid.rotation.x = -0.25;
     laptop.add(lapBase, lapLid);
     laptop.visible = false;
-    this.scene.add(obj, prop, laptop);
-    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, armL, prop, cup, book, phone, pad, laptop, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
+    const blob = this.blobShadow();
+    this.scene.add(obj, prop, laptop, blob);
+    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, armL, prop, cup, book, phone, pad, laptop, blob, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
     // A box (or the lunch bag) held out front.
     if (rest.bodyBox) {
       a.box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.22), new THREE.MeshStandardMaterial({ color: 0xc8a06a }));
@@ -1571,6 +1681,9 @@ export class Office3D extends window.Office {
       facepalm: { r: [-2.2, 0, -0.8], head: 0.35 },
       nap: { head: 0.55 },
       pin: { r: [-2.5, 0, 0] },
+      wave: { r: [-2.7 + 0.3 * wave(10), 0, -0.35] },
+      dazed: { head: 0.2 * wave(14) },
+      cheer: st.pose === 'sit' ? { r: [-2.8, 0, -0.3], l: [-2.8, 0, 0.3] } : null,
       whiteboard: { r: [-2.0 + 0.25 * wave(3), 0, 0] },
     }[st.act];
     const e = new THREE.Euler();
@@ -1591,7 +1704,7 @@ export class Office3D extends window.Office {
 
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop, a.laptop); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop, a.laptop, a.blob); this.actors.delete(k); }
     }
     for (const p of this.bodies()) {
       const a = this.actorFor(p);
@@ -1605,7 +1718,7 @@ export class Office3D extends window.Office {
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
         cheer: 'emote-yes', facepalm: 'emote-no', yawn: 'idle', deliver: 'pick-up', unpack: 'interact-right',
         fix: 'interact-left', refill: 'interact-right', waterplant: 'holding-right', pin: 'interact-right', peek: 'idle',
-      }[st.pose === 'walk' ? (st.act === 'run' ? 'run' : 'walk') : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
+      }[st.pose === 'walk' ? (st.act === 'run' ? 'run' : 'walk') : st.pose === 'sit' ? 'sit' : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
       let chosen = anim;
       if (st.act === 'station') chosen = p.s.status === 'thinking' ? 'idle' : (p.desk.anim || 'interact-right');
       else if (st.pose !== 'walk' && p.poi && p.poi.anim) chosen = p.poi.anim;
@@ -1640,6 +1753,10 @@ export class Office3D extends window.Office {
         a.yaw += dt * 0.35;
       }
       a.obj.position.set(p.x + Math.sin(a.yaw) * fwd, seatY + lift, p.y + Math.cos(a.yaw) * fwd);
+      // The blob shadow stays on the floor (or the seat), fainter when lifted.
+      a.blob.position.set(a.obj.position.x, (st.pose === 'sit' ? seatY : this.plan.terrain ? seatY : 0) + 0.012, a.obj.position.z);
+      a.blob.material.opacity = 1;
+      a.blob.scale.setScalar(p.held ? 0.6 : st.pose === 'sit' ? 0.85 : 1);
       this.pose(a, st, p);
       this.dress(a, (p.s && p.s.level) || 1);
       if (a.sign) a.sign.visible = st.act === 'sign';
@@ -1763,9 +1880,12 @@ export class Office3D extends window.Office {
       }
     }
     for (const b of this.blinkers) {
-      const on = Math.sin(this.t / (180 + b.r * 37 + b.k * 53) + b.r * b.k) > 0.2 && (b.r * 4 + b.k) < Math.max(4, this.deskOf.size * 3);
+      const alarm = this.alarmUntil > Date.now();
+      const on = alarm ? Math.sin(this.t / 120) > 0 : Math.sin(this.t / (180 + b.r * 37 + b.k * 53) + b.r * b.k) > 0.2 && (b.r * 4 + b.k) < Math.max(4, this.deskOf.size * 3);
       b.m.material.emissiveIntensity = on ? 1.2 : 0.05;
+      b.m.material.emissive.set(alarm ? 0xff3b30 : b.k % 3 === 0 ? 0xffb347 : 0x5cf08a);
     }
+    if (this.alarmLight) this.alarmLight.intensity = this.alarmUntil > Date.now() ? 4 + 4 * Math.sin(this.t / 150) : 0;
     if (this.arcadeScreen) this.arcadeScreen.material.emissive.setHSL((t * 0.05) % 1, 0.7, 0.5);
     if (this.liftDoors) {
       const since = Date.now() - (this.liftOpen || 0);
@@ -1816,6 +1936,10 @@ export class Office3D extends window.Office {
       this.deptPlaque((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, d.name, d.color);
     }
     for (const [p, at] of heads) this.bubble(p, at);
+    if (this.confetti && Date.now() - this.confetti.at < 4500) {
+      const cp = this.people.get(this.confetti.key);
+      if (cp) { v.set(cp.x, 1.2, cp.y).project(this.camera); this.drawConfetti((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, Date.now() - this.confetti.at); }
+    }
     if (this.offDuty > 0) {
       c.font = '600 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
       c.textAlign = 'left';

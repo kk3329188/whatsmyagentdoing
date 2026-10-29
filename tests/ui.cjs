@@ -187,6 +187,20 @@ async function drawnLogos(target) {
    }
   }
   check('settings close with Escape/outside click, restore focus, and fit narrow and wide screens in both themes');
+  // Live mode: full window, no titles or folders on screen, a ticker; Esc leaves.
+  await page.setViewportSize({width:1200,height:800});
+  await page.evaluate(()=>Hub.setLive && document.querySelector('[data-tool=live]')?.click());
+  await page.waitForFunction(()=>document.body.classList.contains('live'));
+  const shown=await page.evaluate(()=>({header:getComputedStyle(document.querySelector('header')).display, label:Hub.label(state.data.sessions[0]), doing:Hub.doing({status:'tool',task:'test'}), ticker:!!document.getElementById('liveTicker').textContent}));
+  assert.equal(shown.header,'none');
+  assert.match(shown.label,/^EMP-\d{4}$/);
+  assert.equal(shown.doing,'跑測試');
+  assert.ok(shown.ticker);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>!document.body.classList.contains('live'));
+  assert.doesNotMatch(await page.evaluate(()=>Hub.label(state.data.sessions[0])),/^EMP-/);
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.getElementById('liveTop')).display),'none','no LIVE badge off air');
+  check('live mode hides names behind employee numbers, fills the window, Esc leaves');
   assert.deepEqual(errors,[]);check('no uncaught browser errors');
   console.log('TOTAL',checks.length);
  } finally {

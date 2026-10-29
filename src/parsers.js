@@ -151,10 +151,12 @@ function describeClaudeTool(name, input = {}) {
 
 // What kind of work a tool call is, so the office can act it out: a test
 // run, a push, reading up on something, writing a document, planning.
-const NOTABLE = new Set(['test', 'build', 'push', 'commit']);
+const NOTABLE = new Set(['test', 'build', 'push', 'commit', 'merge', 'ci']);
 function taskOf(name, input = {}) {
   if (name === 'Bash') {
     const cmd = String(input.command || '');
+    if (/\bgh\s+pr\s+merge\b|\bglab\s+mr\s+merge\b/.test(cmd)) return 'merge';
+    if (/\bgh\s+(run|workflow)\b|\bgh\s+pr\s+checks\b|jenkins|\/job\/\S+\/(build|buildWithParameters)\b/i.test(cmd)) return 'ci';
     if (/\bgit\s+push\b/.test(cmd)) return 'push';
     if (/\bgit\s+commit\b/.test(cmd)) return 'commit';
     if (/node\s+--test|\b(npm|pnpm|yarn)\s+(run\s+)?test\b|\b(jest|vitest|pytest|mocha|karate)\b|\bgo\s+test\b|\b(mvn|mvnw|gradle|gradlew)\b[^|;&]*\b(test|verify)\b|\bcargo\s+test\b/.test(cmd)) return 'test';

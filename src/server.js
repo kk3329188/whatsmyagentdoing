@@ -167,6 +167,7 @@ function snapshot(watcher, opts) {
   if (!opts.demo) progress.update(raw, now);
   // Archived desktop sessions are closed work: keep them out of the office.
   const sessions = latestSegments(raw, (s) => !!desktop.get(s.id)).map((s) => view(s, now, opts)).filter((s) => !s.archived);
+  if (!opts.demo) progress.track(sessions, now);
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
   return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions };
 }

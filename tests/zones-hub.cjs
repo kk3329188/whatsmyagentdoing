@@ -875,7 +875,9 @@ test('sitting down: everyone at a table, on the sofa or a beanbag faces the tabl
       const look = { x: Math.sin(q.yaw), y: Math.cos(q.yaw) };
       const to = { x: c.x - q.x, y: c.y - q.y };
       const cos = (look.x * to.x + look.y * to.y) / Math.hypot(to.x, to.y);
-      assert.ok(cos > 0.9, `floor ${floor} ${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} faces the table (cos ${cos.toFixed(2)})`);
+      // Chairs and sofas: square on, toward the table's side; stools: straight at it.
+      if (/^(couch|meeting|read)$/.test(q.act)) assert.ok(Math.abs(Math.sin(q.yaw)) < 1e-9 && cos > 0, `floor ${floor} ${q.act} sits square, facing the table side`);
+      else assert.ok(cos > 0.9, `floor ${floor} ${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} faces the table (cos ${cos.toFixed(2)})`);
     }
   }
 });
@@ -890,4 +892,102 @@ test('sitting off duty they do things, and change what they do', () => {
   assert.ok(seen.size >= 4, `several things on the sofa: ${[...seen].join(',')}`);
   assert.ok(![...seen].includes('couch'), 'never just "couch"');
   for (const act of seen) assert.ok(/^(scroll|read|laptop|laugh|watch|sip|game|nap|chat)$/.test(act), act);
+});
+
+test('a failed CI run sets the server room flashing; a merged PR throws confetti; a poke gets a reaction', () => {
+  const o = load(true);
+  const s = at('tool');
+  const p = settle(o, [s])('claude:tool');
+  o.first = false;
+  o.update([{ ...s, outcome: { at: Date.now(), task: 'ci', ok: false } }]);
+  assert.ok(o.alarmUntil > Date.now() + 20_000, 'alarm on');
+  assert.match(p.event.text, /CI/);
+  o.update([{ ...s, outcome: { at: Date.now() + 5, task: 'merge', ok: true } }]);
+  assert.equal(o.confetti.key, p.key);
+  // Poke: a reaction for a moment, and a line; poked too often, they complain.
+  seat(p);
+  o.poke(p);
+  assert.ok(p.poke.until > Date.now());
+  assert.ok(p.event.text.length > 0);
+  assert.match(o.stateOf(p).act, /^(dazed|wave|cheer)$/);
+  o.poke(p); o.poke(p); o.poke(p);
+  assert.match(p.event.text, /別再戳/);
+  p.poke.until = 0; p.react = null; // (the merge cheer is over too)
+  assert.doesNotMatch(o.stateOf(p).act, /^(dazed|wave|cheer|facepalm)$/, 'back to work');
+});
+
+test('two people walking toward each other step aside instead of walking through each other', () => {
+  const o = load(true);
+  const a = at('idle', { n: 'a', ago: 60 * MIN }), b = at('idle', { n: 'b', ago: 60 * MIN });
+  settle(o, [a, b]);
+  o.first = false;
+  const pa = o.people.get(a.key), pb = o.people.get(b.key);
+  // An open stretch of floor along x.
+  let lane = null;
+  for (let y = 1.5; y < o.plan.D - 1.5 && !lane; y += 0.25) {
+    for (let x0 = 1; x0 < o.plan.W - 5; x0 += 0.25) {
+      let ok = true;
+      for (let x = x0; x <= x0 + 4 && ok; x += 0.1) for (const dy of [-0.5, 0, 0.5]) if (o.plan.grid.blocked(x, y + dy)) ok = false;
+      if (ok) { lane = { x0, y }; break; }
+    }
+  }
+  assert.ok(lane, 'found an open stretch');
+  for (const [p, from, to] of [[pa, lane.x0, lane.x0 + 4], [pb, lane.x0 + 4, lane.x0]]) {
+    o.release(p); p.mode = 'wander'; p.zone = 'idle'; p.chores = null;
+    p.x = from; p.y = lane.y; p.path = [{ x: to, y: lane.y }];
+    p.poi = { x: to, y: lane.y, act: 'stretch', face: 'front' }; p.until = Infinity; p.stay = 60_000;
+  }
+  let closest = Infinity;
+  for (let i = 0; i < 200 && (pa.path.length || pb.path.length); i++) {
+    o.step(0.03);
+    closest = Math.min(closest, Math.hypot(pa.x - pb.x, pa.y - pb.y));
+  }
+  assert.ok(closest > 0.3, `kept apart (closest ${closest.toFixed(2)})`);
+  assert.equal(pa.path.length + pb.path.length, 0, 'both got where they were going');
+});
+
+test('holidays: pumpkins in late October, a tree in December, lanterns round Lunar New Year; none in the way', () => {
+  const o = load(true);
+  const season = (y, m, d) => {
+    const ctx = { window: {}, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), ctx);
+    return ctx.window.OfficeSeason(new Date(y, m - 1, d));
+  };
+  assert.equal(season(2026, 10, 29), 'halloween');
+  assert.equal(season(2026, 12, 20), 'xmas');
+  assert.equal(season(2027, 2, 10), 'lny');
+  assert.equal(season(2026, 2, 8), 'lny', 'nine days before');
+  assert.equal(season(2026, 2, 5), null, 'not yet twelve days before');
+  assert.equal(season(2026, 6, 1), null);
+  for (const [kind, want] of [['halloween', 'pumpkin'], ['xmas', 'tree'], ['lny', 'lantern'], [null, null]]) {
+    o.seasonOverride = kind;
+    o.plan = o.buildPlan(0);
+    const decos = o.plan.props.filter((q) => q.t === 'deco');
+    if (!want) { assert.equal(decos.length, 0); continue; }
+    assert.ok(decos.length >= 1 && decos.every((d) => d.kind === want), `${kind}: ${decos.map((d) => d.kind)}`);
+    // Every seat and spot still reachable from the door without crossing furniture.
+    for (const q of o.plan.pois) {
+      const way = o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y);
+      assert.ok(way.length > 0, `${kind}: way to ${q.act}`);
+    }
+  }
+});
+
+test('replay: who was where at a given time of day', () => {
+  const ctx = { window: {}, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), ctx);
+  const at2 = ctx.window.OfficeReplay.at;
+  const spans = {
+    'claude:a': { title: '報告', s: [[1000, 'w'], [5000, 'q'], [9000, 'd']] },
+    'claude:b': { title: '修 bug', s: [[6000, 'w']] },
+  };
+  const now = 100_000;
+  const zone = (T) => at2(spans, T, now).map((s) => `${s.key.slice(-1)}:${s.status}`).join(',');
+  assert.equal(zone(500), '', 'nobody yet');
+  assert.equal(zone(2000), 'a:tool');
+  assert.equal(zone(7000), 'a:waiting,b:tool');
+  assert.equal(zone(9500), 'a:done,b:tool');
+  const done = at2(spans, 9500, now).find((s) => s.key === 'claude:a');
+  assert.equal(done.lastEventAt, now - 500, 'just finished, in replayed time');
+  assert.equal(done.title, '報告');
 });

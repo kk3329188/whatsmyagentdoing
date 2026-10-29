@@ -156,3 +156,16 @@ test('each session counts its tool calls by kind of work', () => {
   applyClaude(s, tool(3, 'Skill', { skill: 'x' }));
   assert.equal(JSON.stringify(s.kinds), JSON.stringify({ lookup: 2, test: 1, other: 1 }));
 });
+
+test('a PR merge and a CI run are recognised, with their results', () => {
+  const { taskOf } = require('../src/parsers');
+  assert.equal(taskOf('Bash', { command: 'gh pr merge 12 --squash' }), 'merge');
+  assert.equal(taskOf('Bash', { command: 'gh run watch 123 --exit-status' }), 'ci');
+  assert.equal(taskOf('Bash', { command: 'gh pr checks 12' }), 'ci');
+  assert.equal(taskOf('Bash', { command: 'curl -X POST https://ci.example/job/web-app/buildWithParameters' }), 'ci');
+  const s = newSession('claude', 'x', 'f');
+  applyClaude(s, { type: 'assistant', timestamp: at(0), message: { content: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'gh run watch 1 --exit-status' } }] } });
+  applyClaude(s, { type: 'user', timestamp: at(1), message: { content: [{ type: 'tool_result', tool_use_id: 'c1', is_error: true }] } });
+  assert.equal(s.outcome.task, 'ci');
+  assert.equal(s.outcome.ok, false);
+});

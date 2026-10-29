@@ -24,6 +24,9 @@ const midnight = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return 
 // Waiting on you: a question, or a finished turn that left you a decision.
 const waiting = (s) => s.status === 'waiting' || (s.status === 'done' && !!s.ask);
 const WAITS_MAX = 200;
+const TRACK_ZONE = (s) => (['thinking', 'tool', 'typing'].includes(s.status) ? 'w'
+  : s.status === 'waiting' || (s.status === 'done' && (s.ask || s.needs)) ? 'q'
+    : s.status === 'error' ? 'e' : s.status === 'done' || s.status === 'interrupted' ? 'd' : 'i');
 
 function levelOf(xp) {
   let lv = 1;
@@ -88,6 +91,29 @@ class Progress {
 
   level(key) { return levelOf(xpOf(this.data.sessions[key])); }
 
+  // Today's story for the replay: for each session, when it changed between
+  // working (w), waiting on you (q), error (e), done (d) and idle (i).
+  // `views` are the sessions as the page sees them.
+  track(views, now = Date.now()) {
+    const d = this.data;
+    if (!d.today || d.today.date !== dayOf(now)) return;
+    const spans = d.today.spans || (d.today.spans = {});
+    for (const s of views) {
+      if (s.subagent || s.archived) continue;
+      const z = TRACK_ZONE(s);
+      const rec = spans[s.key] || (spans[s.key] = { title: null, s: [] });
+      if (s.title && rec.title !== s.title) { rec.title = String(s.title).slice(0, 80); this.dirty = true; }
+      const last = rec.s[rec.s.length - 1];
+      if (last && last[1] === z) continue;
+      // First sight of one that started today: it has been working since then.
+      if (!last && s.startedAt && s.startedAt >= midnight(now) && s.startedAt < now - 60_000) rec.s.push([s.startedAt, 'w']);
+      if (rec.s.length && rec.s[rec.s.length - 1][1] === z) continue;
+      rec.s.push([now, z]);
+      if (rec.s.length > 400) rec.s.splice(0, rec.s.length - 400);
+      this.dirty = true;
+    }
+  }
+
   // What the page shows: lifetime totals and a summary of today.
   office() {
     const t = this.data.today || { date: null, sessions: {}, waits: [] };
@@ -104,6 +130,7 @@ class Progress {
         answered: waits.length,
         avgWaitMs: waits.length ? Math.round(waits.reduce((a, w) => a + w.ms, 0) / waits.length) : 0,
         longest: [...waits].sort((a, b) => b.ms - a.ms).slice(0, 3),
+        spans: t.spans || {},
       },
     };
   }

@@ -94,7 +94,11 @@
     build: [['facepalm', '編譯失敗…'], ['cheer', '建好了！']],
     push: [['facepalm', '推不上去…'], ['cheer', '推上去了 🚀']],
     commit: [['facepalm', 'commit 失敗'], [null, 'commit ✓']],
+    merge: [['facepalm', '合併失敗…'], ['cheer', '合併了！🎉']],
+    ci: [['facepalm', 'CI 掛了！🚨'], ['cheer', 'CI 綠燈 ✓']],
   };
+  const ALARM_MS = 30_000;   // a failed CI run: the server room flashes red this long
+  const CONFETTI_MS = 4500;  // a merged PR: confetti over them
   const REACT_MS = 4500;
   // Starting work or finishing: the camera closes in on them for a moment.
   const SPOT_MS = 5500;
@@ -202,6 +206,15 @@
       const j0 = clamp(Math.floor((y - pad) * R), 0, this.ch - 1);
       const j1 = clamp(Math.ceil((y + d + pad) * R) - 1, 0, this.ch - 1);
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) this.cost[j * this.cw + i] = 1;
+    }
+    // Solid cells here become seats: walkable for the one sitting down.
+    soften(x, y, w, d) {
+      const R = this.res;
+      for (let j = Math.max(0, Math.floor(y * R)); j <= Math.min(this.ch - 1, Math.ceil((y + d) * R) - 1); j++) {
+        for (let i = Math.max(0, Math.floor(x * R)); i <= Math.min(this.cw - 1, Math.ceil((x + w) * R) - 1); i++) {
+          if (this.cost[j * this.cw + i] === 1) this.cost[j * this.cw + i] = 2;
+        }
+      }
     }
     blocked(x, y) {
       const i = Math.floor(x * this.res), j = Math.floor(y * this.res);
@@ -344,6 +357,13 @@
       this.canvas.addEventListener('pointercancel', (e) => this.drop(e));
       this.canvas.addEventListener('click', (e) => { if (this.dropped) { this.dropped = false; return; } this.pointer(e, true); });
       this.canvas.addEventListener('mouseleave', () => { if (this.held) return; this.hoverKey = null; this.onHover(null); });
+      this.canvas.addEventListener('dblclick', (e) => {
+        const r = this.canvas.getBoundingClientRect();
+        const mx = e.clientX - r.left, my = e.clientY - r.top;
+        const h = [...this.hit].reverse().find((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1);
+        const p = h && this.people.get(h.key);
+        if (p) this.poke(p);
+      });
       this.resize();
       this.last = performance.now();
       // Resolves true once a few frames have been drawn with data in place,
@@ -576,7 +596,8 @@
       prop('beanbag', { x: lx + 0.4, y: ly + 3.6, color: '#c96442' });
       prop('beanbag', { x: lx + 2.6, y: ly + 3.6, color: '#7d93c4' });
       solid(lx, ly + 0.6, 2.8, 0.8);
-      for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle' });
+      // Sit well back on the cushions, with a way out to the front.
+      for (let k = 0; k < 3; k++) { grid.soften(lx + 0.38 + k * 0.9, ly + 1.0, 0.24, 0.85); } for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.0, 'couch', 'front', { sit: 0.36, zone: 'idle' });
       add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
       solid(lx + 0.6, ly + 2.0, 1.6, 0.7, 0.02); // leave a way out in front of the sofa
       add(lx + 0.4 + ly + 3.6, () => this.beanbag(lx + 0.4, ly + 3.6, '#c96442'));
@@ -593,6 +614,8 @@
       poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
+
+      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: { x: 0.4, y: D - 1.2 }, lift });
 
       // ---- unlocked by the office's experience (setProgress)
       const un = this.unlocks || new Set();
@@ -801,7 +824,8 @@
       add(lx + ly + 0.6, () => this.couch(lx, ly + 0.6));
       prop('couch', { x: lx, y: ly + 0.6, w: 2.8, d: 0.8 });
       solid(lx, ly + 0.6, 2.8, 0.8);
-      for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle', sleepy: true });
+      // Sit well back on the cushions, with a way out to the front.
+      for (let k = 0; k < 3; k++) { grid.soften(lx + 0.38 + k * 0.9, ly + 1.0, 0.24, 0.85); } for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.0, 'couch', 'front', { sit: 0.36, zone: 'idle', sleepy: true });
       add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
       prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
       solid(lx + 0.6, ly + 2.0, 1.6, 0.7, 0.02); // leave a way out in front of the sofa
@@ -834,6 +858,7 @@
         { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
         { id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' },
       ];
+      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: lift, lift });
       orientSeats(pois, props);
       return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
@@ -1046,6 +1071,10 @@
         const o = s.outcome;
         if (o && o.at > (p.outcomeAt || 0)) {
           p.outcomeAt = o.at;
+          if (Date.now() - o.at < 90_000) {
+            if (o.task === 'ci' && !o.ok) this.alarmUntil = Date.now() + ALARM_MS;
+            if (o.task === 'merge' && o.ok) this.confetti = { key: p.key, at: Date.now() };
+          }
           const r = REACT[o.task] && REACT[o.task][o.ok ? 1 : 0];
           if (r && isWorker && Date.now() - o.at < 90_000) {
             p.react = r[0] ? { act: r[0], until: Date.now() + REACT_MS } : null;
@@ -1551,6 +1580,71 @@
       return act;
     }
 
+    // Someone in the way just ahead: coming toward you, both keep right;
+    // standing there, step round them; going the same way, slow down behind
+    // them. Stuck more than a second and a half: carry on anyway. Returns
+    // how far to move along the path this frame (and may nudge sideways).
+    makeWay(p, ux, uy, v, dt) {
+      let block = null, bd = 0.6;
+      for (const o of this.bodies()) {
+        if (o === p || o.held || o.leaving) continue;
+        if (o.pose === 'sit' || (o.me && o.seated)) continue;
+        const ox = o.x - p.x, oy = o.y - p.y, dist = Math.hypot(ox, oy);
+        if (dist > bd || dist < 1e-3) continue;
+        const along = ox * ux + oy * uy, side = Math.abs(ox * uy - oy * ux);
+        if (along < 0.05 || side > 0.38) continue;
+        block = o; bd = dist;
+      }
+      if (!block) { p.stuck = 0; return v; }
+      p.stuck = (p.stuck || 0) + dt;
+      if (p.stuck > 1.5) return v;
+      const moving = !!(block.path && block.path.length) || block.moving;
+      let headOn = false;
+      if (moving && block.path && block.path.length) {
+        const n = block.path[0], bx = n.x - block.x, by = n.y - block.y, bl = Math.hypot(bx, by) || 1;
+        headOn = (bx * ux + by * uy) / bl < -0.3;
+      }
+      if (moving && !headOn) return v * 0.25; // follow behind
+      // Step to the right of where you are going (round them).
+      const rx = -uy, ry = ux, step = SPEED * dt * 0.9;
+      const grid = this.plan.grid;
+      for (const sgn of [1, -1]) {
+        const nx = p.x + rx * step * sgn, ny = p.y + ry * step * sgn;
+        if (!grid.hard(nx, ny)) { p.x = nx; p.y = ny; break; }
+      }
+      return v * 0.5;
+    }
+
+    // Double-clicked: they jump, wave or say what they are up to.
+    poke(p) {
+      const now = Date.now();
+      if (now - (p.pokedAt || 0) > 8000) p.pokes = 0; // forgiven after a while
+      p.pokedAt = now;
+      const n = (p.pokes = (p.pokes || 0) + 1);
+      const doing = this.doing && p.s && p.mode === 'work' ? this.doing(p.s) : '';
+      const lines = ['嚇我一跳！', '嗨～', doing ? `在${doing}啦` : '在休息啦', '幹嘛～', '別戳了啦'];
+      const text = n >= 4 ? '別再戳了 😤' : lines[(p.h + n) % lines.length];
+      p.poke = { act: n >= 4 ? 'facepalm' : ['dazed', 'wave', 'cheer'][(p.h + n) % 3], until: now + 2200 };
+      p.event = { text, at: now, zone: 'held' };
+    }
+
+    // A merged PR: confetti bursting over them, in screen pixels at (cx, cy).
+    drawConfetti(cx, cy, age) {
+      const c = this.ctx, colors = ['#e0344b', '#ffd23f', '#3b8ee0', '#22a874', '#8b6be6', '#ff8c42'];
+      const e = age / 1000;
+      c.save();
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      c.globalAlpha = Math.max(0, Math.min(1, (CONFETTI_MS - age) / 800));
+      for (let i = 0; i < 90; i++) {
+        const a = (i * 2.399) % (Math.PI * 2), sp = 90 + (i * 37) % 140;
+        const x = cx + Math.cos(a) * sp * e * 0.9 + Math.sin(e * 6 + i) * 6;
+        const y = cy - 30 + (-Math.abs(Math.sin(a)) * sp * 1.2 * e + 160 * e * e);
+        c.fillStyle = colors[i % colors.length];
+        c.save(); c.translate(x, y); c.rotate(e * 8 + i); c.fillRect(-2.5, -1.2, 5, 2.4); c.restore();
+      }
+      c.restore();
+    }
+
     // ------------------------------------------------------------ stand-up
     //
     // Everyone (but the secretary, who keeps the minutes at their desk) walks
@@ -1783,11 +1877,11 @@
     // Someone starts working or finishes: the camera zooms in on them and
     // follows them for a few seconds, then goes back. One at a time; the
     // newest few wait their turn. `follow` turns it off.
-    spotlight(key) {
-      if (this.follow === false || this.compact || !this.visible) return;
+    spotlight(key, force = false) {
+      if ((!force && this.follow === false) || this.compact || !this.visible) return;
       const now = Date.now();
       this.spotSeen = this.spotSeen || new Map();
-      if (now - (this.spotSeen.get(key) || 0) < SPOT_AGAIN_MS) return;
+      if (!force && now - (this.spotSeen.get(key) || 0) < SPOT_AGAIN_MS) return;
       this.spotSeen.set(key, now);
       this.spotQ = (this.spotQ || []).filter((k) => k !== key).concat(key).slice(-3);
     }
@@ -1845,7 +1939,9 @@
       const out = [];
       count.forEach((m, i) => {
         if (!m.size) return;
-        const name = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        const real = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        // On air the repository names stay private: 部門 A, B, …
+        const name = this.deptLabel ? this.deptLabel(real, i) : real;
         out.push({ x: spots[i].x + 1.4, y: spots[i].y + 0.86, z: 1.45, name, color: spots[i].color });
       });
       return out;
@@ -2093,9 +2189,24 @@
 
     box(x, y, z, w, d, h, top, left, right) {
       const P = (a, b, cc) => this.iso(a, b, cc);
+      const c = this.ctx;
+      // Standing on the floor: a soft shadow spilling out in front.
+      if (z === 0 && h > 0.15) {
+        c.save(); c.globalAlpha = this.pal.dark ? 0.35 : 0.13; c.fillStyle = '#000';
+        const e = Math.min(0.18, h * 0.12);
+        c.beginPath(); for (const q of [P(x, y, 0), P(x + w + e, y, 0), P(x + w + e, y + d + e, 0), P(x, y + d + e, 0)]) c.lineTo(q.x, q.y); c.fill();
+        c.restore();
+      }
       this.poly([P(x, y + d, z), P(x + w, y + d, z), P(x + w, y + d, z + h), P(x, y + d, z + h)], left);
       this.poly([P(x + w, y, z), P(x + w, y + d, z), P(x + w, y + d, z + h), P(x + w, y, z + h)], right);
       this.poly([P(x, y, z + h), P(x + w, y, z + h), P(x + w, y + d, z + h), P(x, y + d, z + h)], top);
+      // Light catching the front edges of the top.
+      if (h > 0.04 && w > 0.12 && d > 0.12) {
+        c.save(); c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 0.8;
+        const a = P(x, y + d, z + h), b = P(x + w, y + d, z + h), cc = P(x + w, y, z + h);
+        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.lineTo(cc.x, cc.y); c.stroke();
+        c.restore();
+      }
     }
 
     shade(color, amt) {
@@ -2146,13 +2257,41 @@
         }
       }
       for (let y = 0.5; y < D; y += 0.5) this.poly([P(0, y), P(OW, y), P(OW, y + 0.012), P(0, y + 0.012)], pal.woodLine);
+      // Plank ends and wood grain.
+      {
+        const c = this.ctx;
+        c.save(); c.strokeStyle = pal.woodLine; c.globalAlpha = 0.55; c.lineWidth = 0.7;
+        for (let y = 0; y < D; y += 0.5) {
+          for (let x = ((y * 2.7) % 1.3); x < OW; x += 1.6) { const a = P(x, y), b = P(x, Math.min(D, y + 0.5)); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
+        }
+        c.globalAlpha = 0.18; c.lineWidth = 0.6;
+        for (let y = 0.17; y < D; y += 0.25) {
+          const a = P(0, y), b = P(OW, y);
+          c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+        }
+        c.restore();
+      }
       this.poly([P(OW, 0), P(W, 0), P(W, MR), P(OW, MR)], pal.carpet);
       for (let x = OW + 0.5; x < W; x += 0.5) this.poly([P(x, 0), P(x + 0.015, 0), P(x + 0.015, MR), P(x, MR)], pal.carpetLine);
+      {
+        // Carpet weave: a scatter of light and dark flecks.
+        const c = this.ctx;
+        c.save();
+        for (let i = 0; i < 420; i++) {
+          const fx = OW + ((i * 0.618) % 1) * (W - OW), fy = ((i * 0.377 + (i % 7) * 0.13) % 1) * MR, q = P(fx, fy);
+          c.fillStyle = i % 2 ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.07)';
+          c.fillRect(q.x, q.y, 1.2, 1.2);
+        }
+        c.restore();
+      }
       for (let i = 0; i < Math.ceil((W - OW) * 2); i++) {
         for (let j = 0; j < Math.ceil((PY - MR) * 2); j++) {
           const x = OW + i / 2, y = MR + j / 2;
           const x1 = Math.min(W, x + 0.5), y1 = Math.min(PY, y + 0.5);
           this.poly([P(x, y), P(x1, y), P(x1, y1), P(x, y1)], (i + j) % 2 ? pal.tileA : pal.tileB);
+          // grout
+          this.poly([P(x, y), P(x1, y), P(x1, y + 0.02), P(x, y + 0.02)], 'rgba(120,120,110,.25)');
+          this.poly([P(x, y), P(x + 0.02, y), P(x + 0.02, y1), P(x, y1)], 'rgba(120,120,110,.25)');
         }
       }
       for (let x = Math.floor(OW); x < W; x++) {
@@ -2176,6 +2315,15 @@
       const sky = skyColor();
       for (const x of this.plan.windows) {
         this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 2.0), P(x, 0, 2.0)], sky.sky);
+        if (this.season === 'xmas') {
+          this.onWall('y0', x, 1.0, (c) => {
+            c.fillStyle = 'rgba(255,255,255,.85)';
+            for (let i = 0; i < 9; i++) {
+              const fx = ((i * 17 + t * 6 * (1 + (i % 3) * 0.3)) % 46) + 1, fy = -((i * 11 + t * 12) % 36);
+              c.fillRect(fx, fy, 1.6, 1.6);
+            }
+          });
+        }
         if (sky.night) {
           this.onWall('y0', x + 0.3, 1.75, (c) => { c.fillStyle = '#f4f1d0'; c.beginPath(); c.arc(0, 0, 3, 0, Math.PI * 2); c.fill(); });
           this.onWall('y0', x + 1.1, 1.55, (c) => { c.fillStyle = 'rgba(255,255,255,.7)'; c.fillRect(0, 0, 1.5, 1.5); });
@@ -2286,11 +2434,18 @@
       this.box(x, y, 0, 0.7, 0.6, 1.9, '#3a3d44', '#24262b', '#1b1d21');
       const c = this.ctx;
       const busy = this.deskOf.size;
+      // CI failed: a red glow on the floor round the rack, pulsing.
+      if (this.alarmUntil > Date.now()) {
+        const g = this.iso(x + 0.35, y + 0.9, 0), k = 0.5 + 0.5 * Math.sin(this.t / 150);
+        c.save(); c.globalAlpha = 0.25 + 0.3 * k; c.fillStyle = '#ff3b30';
+        c.beginPath(); c.ellipse(g.x, g.y, 60, 30, 0, 0, Math.PI * 2); c.fill(); c.restore();
+      }
       for (let r = 0; r < 7; r++) {
         for (let k = 0; k < 4; k++) {
-          const on = Math.sin(this.t / (180 + r * 37 + k * 53) + r * k) > 0.2 && (r * 4 + k) < Math.max(4, busy * 3);
+          const alarm = this.alarmUntil > Date.now();
+          const on = alarm ? Math.sin(this.t / 120) > 0 : Math.sin(this.t / (180 + r * 37 + k * 53) + r * k) > 0.2 && (r * 4 + k) < Math.max(4, busy * 3);
           const p = this.iso(x + 0.12 + k * 0.13, y + 0.6, 1.7 - r * 0.22);
-          c.fillStyle = on ? (k % 3 === 0 ? '#ffb347' : '#5cf08a') : '#2f3a33';
+          c.fillStyle = on ? (alarm ? '#ff3b30' : k % 3 === 0 ? '#ffb347' : '#5cf08a') : '#2f3a33';
           c.fillRect(p.x - 1, p.y - 1, 2.5, 2);
         }
       }
@@ -2507,6 +2662,99 @@
         c.fillStyle = 'rgba(255,217,138,.7)';
         c.fillText(this.plan.floor === 2 ? '2F  LOUNGE' : '1F  OFFICE', 0, size * 0.62 + 3);
       });
+    }
+
+    // Holiday decorations on free floor near the way in: a Christmas tree
+    // with presents, pumpkins, or red lanterns hanging overhead.
+    decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry, lift }) {
+      const season = this.seasonOverride !== undefined ? this.seasonOverride : seasonOf();
+      this.season = season;
+      if (!season) return;
+      const clear = (x, y, r) => [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]].every(([a, b]) => !grid.blocked(x + a, y + b))
+        && pois.every((q) => Math.hypot(q.x - x, q.y - y) > 0.75)
+        && Math.hypot(entry.x - x, entry.y - y) > 1.1 && Math.hypot(lift.x - x, lift.y - y) > 1.1;
+      const spots = [[1.3, D - 2.3], [1.2, D - 0.6], [OW - 0.8, D - 1.7], [OW - 3.2, D - 0.6], [2.4, D - 0.6], [W - 0.9, PY - 0.5],
+        [OW / 2, D - 0.6], [1.2, 2.2], [OW - 0.9, 3.4], [W - 0.8, D - 1.8]];
+      const pick = (n, r) => {
+        const out = [];
+        for (const [x, y] of spots) if (out.length < n && clear(x, y, r) && out.every((o) => Math.hypot(o.x - x, o.y - y) > 1.2)) out.push({ x, y });
+        return out;
+      };
+      if (season === 'xmas') {
+        for (const at of pick(1, 0.45)) {
+          prop('deco', { kind: 'tree', ...at });
+          solid(at.x - 0.35, at.y - 0.35, 0.7, 0.7, 0.05);
+          add(at.x + at.y + 0.3, () => this.xmasTree(at.x, at.y));
+        }
+      } else if (season === 'halloween') {
+        for (const at of pick(3, 0.25)) {
+          prop('deco', { kind: 'pumpkin', ...at });
+          solid(at.x - 0.2, at.y - 0.2, 0.4, 0.4, 0.04);
+          add(at.x + at.y, () => this.pumpkin(at.x, at.y));
+        }
+      } else if (season === 'lny') {
+        // Lanterns hang over the floor: nothing to walk round.
+        for (const at of pick(3, 0.2)) {
+          prop('deco', { kind: 'lantern', ...at });
+          add(at.x + at.y + 2, () => this.lantern(at.x, at.y));
+        }
+      }
+    }
+
+    xmasTree(x, y) {
+      const c = this.ctx, t = this.t / 1000;
+      this.box(x - 0.08, y - 0.08, 0, 0.16, 0.16, 0.25, '#7a5233', '#5e3f27', '#4c331f');
+      const layers = [[0.25, 0.5, 0.95], [0.75, 0.38, 0.75], [1.15, 0.26, 0.55]];
+      for (const [z, r, h] of layers) {
+        const b = this.iso(x, y, z), top = this.iso(x, y, z + h);
+        const rx = r * 32;
+        c.fillStyle = '#2f7d46';
+        c.beginPath(); c.moveTo(top.x, top.y); c.lineTo(b.x - rx, b.y); c.quadraticCurveTo(b.x, b.y + rx * 0.45, b.x + rx, b.y); c.closePath(); c.fill();
+        c.fillStyle = '#3e9a57';
+        c.beginPath(); c.moveTo(top.x, top.y); c.lineTo(b.x - rx * 0.15, b.y + rx * 0.2); c.lineTo(b.x + rx, b.y); c.closePath(); c.fill();
+        for (let i = 0; i < 5; i++) {
+          const k = (i + 0.5) / 5, ox = (k - 0.5) * rx * 1.6, oy = -Math.abs(k - 0.5) * 6;
+          c.fillStyle = ['#e0344b', '#ffd23f', '#3b8ee0', '#ffffff', '#ff8c42'][(i + Math.floor(t * 2)) % 5];
+          c.beginPath(); c.arc(b.x + ox, b.y - 4 + oy, 1.8, 0, Math.PI * 2); c.fill();
+        }
+      }
+      const star = this.iso(x, y, 1.75);
+      c.fillStyle = '#ffd23f';
+      c.beginPath();
+      for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 2.5 : 6; c.lineTo(star.x + Math.cos(a) * r, star.y + Math.sin(a) * r); }
+      c.closePath(); c.fill();
+      // presents
+      this.box(x + 0.25, y + 0.15, 0, 0.22, 0.22, 0.18, '#e0344b', '#c22a3e', '#a82234');
+      this.box(x - 0.1, y + 0.32, 0, 0.18, 0.18, 0.14, '#3b8ee0', '#2f74bb', '#2862a0');
+    }
+
+    pumpkin(x, y) {
+      const c = this.ctx, b = this.iso(x, y, 0.16);
+      c.fillStyle = '#e8781e';
+      for (const dx of [-5, 5, 0]) { c.beginPath(); c.ellipse(b.x + dx, b.y, 7, 6, 0, 0, Math.PI * 2); c.fill(); }
+      c.fillStyle = '#c95f12';
+      c.fillRect(b.x - 0.6, b.y - 6, 1.2, 12);
+      c.fillStyle = '#4c7a2a'; c.fillRect(b.x - 1, b.y - 9, 2, 4);
+      // A face that glows after dark.
+      c.fillStyle = night() ? '#ffd23f' : '#5a2a10';
+      c.beginPath(); c.moveTo(b.x - 5, b.y - 1); c.lineTo(b.x - 2.5, b.y - 3.5); c.lineTo(b.x - 1, b.y - 1); c.fill();
+      c.beginPath(); c.moveTo(b.x + 1, b.y - 1); c.lineTo(b.x + 2.5, b.y - 3.5); c.lineTo(b.x + 5, b.y - 1); c.fill();
+      c.beginPath(); c.moveTo(b.x - 4, b.y + 1.5); c.lineTo(b.x + 4, b.y + 1.5); c.lineTo(b.x, b.y + 4); c.fill();
+    }
+
+    lantern(x, y) {
+      const c = this.ctx, t = this.t / 1000;
+      const top = this.iso(x, y, WALL_H), b = this.iso(x, y, 1.75);
+      const sway = Math.sin(t * 1.3 + x) * 1.5;
+      c.strokeStyle = '#7a5233'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(top.x, top.y); c.lineTo(b.x + sway, b.y - 8); c.stroke();
+      c.fillStyle = '#d42a2a';
+      c.beginPath(); c.ellipse(b.x + sway, b.y, 8, 7, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(255,220,120,.35)';
+      c.beginPath(); c.ellipse(b.x + sway - 2, b.y - 1, 3, 5, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#e8b931';
+      c.fillRect(b.x + sway - 4, b.y - 8, 8, 2); c.fillRect(b.x + sway - 4, b.y + 6, 8, 2);
+      c.fillStyle = '#d42a2a'; c.fillRect(b.x + sway - 0.5, b.y + 8, 1, 6);
     }
 
     // Left wall (downstairs): the notice board.
@@ -2804,7 +3052,14 @@
 
     // ------------------------------------------------------------ people
 
+    // Poked (double-clicked): a moment of reaction on top of whatever they do.
     stateOf(p) {
+      const st = this.stateNow(p);
+      if (p.poke && Date.now() < p.poke.until && !p.held && st.pose !== 'walk') return { ...st, act: st.pose === 'sit' && p.poke.act === 'dazed' ? 'wave' : p.poke.act };
+      return st;
+    }
+
+    stateNow(p) {
       const s = p.s || {};
       if (p.me) {
         if (p.moving) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
@@ -2955,7 +3210,14 @@
         c.fillRect(1, -1 - leg, 4, 2);
       }
       const hip = seated ? -4 : -10;
-      this.roundRect(-7, hip - 13, 14, 14, 3, p.shirt);
+      // Shirt with light from the upper left, and a soft outline.
+      {
+        const g = c.createLinearGradient(-7, hip - 13, 7, hip + 1);
+        g.addColorStop(0, this.shade(p.shirt, 18)); g.addColorStop(1, this.shade(p.shirt, -14));
+        this.roundRect(-7, hip - 13, 14, 14, 3, g);
+        c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 0.8; c.stroke();
+        c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(-7, hip - 1.5, 14, 1.5);
+      }
       // What their level lets them wear: a lanyard, then a tie.
       const lv = s.level || 1;
       if (front && lv >= 4) {
@@ -3308,6 +3570,7 @@
         + (st.act === 'laugh' ? -Math.abs(Math.sin(t * 7 + p.phase)) * 1.4 : 0);
       c.fillStyle = p.skin;
       c.beginPath(); c.arc(0, hy, 7, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = 'rgba(0,0,0,.25)'; c.lineWidth = 0.8; c.stroke();
       c.fillStyle = p.hair;
       if (front && !napping) {
         c.beginPath(); c.arc(0, hy - 1.5, 7.3, Math.PI * 1.05, Math.PI * 1.95); c.fill();
@@ -3318,8 +3581,23 @@
         const blink = Math.sin(t * 0.7 + p.phase * 3) > 0.985;
         // Looking around: eyes glance left and right.
         const look = st.act === 'lookaround' || st.act === 'dazed' ? Math.round(Math.sin(t * 2.2 + p.phase) * 1.5) : 0;
-        c.fillRect(-3 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
-        c.fillRect(1.6 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
+        if (blink || sleepy) {
+          c.fillRect(-3 + look, hy - 0.5, 1.6, 0.7);
+          c.fillRect(1.6 + look, hy - 0.5, 1.6, 0.7);
+        } else {
+          // Eyes with a white and a glint.
+          c.fillStyle = '#fff';
+          c.beginPath(); c.ellipse(-2.2, hy + 0.4, 1.5, 1.7, 0, 0, Math.PI * 2); c.ellipse(2.4, hy + 0.4, 1.5, 1.7, 0, 0, Math.PI * 2); c.fill();
+          c.fillStyle = '#2a2018';
+          c.beginPath(); c.arc(-2.2 + look * 0.6, hy + 0.6, 1, 0, Math.PI * 2); c.arc(2.4 + look * 0.6, hy + 0.6, 1, 0, Math.PI * 2); c.fill();
+          c.fillStyle = '#fff'; c.fillRect(-2.0 + look * 0.6, hy - 0.1, 0.5, 0.5); c.fillRect(2.6 + look * 0.6, hy - 0.1, 0.5, 0.5);
+        }
+        // Rosy cheeks, and a shine on the hair.
+        c.fillStyle = 'rgba(240,120,110,.28)';
+        c.beginPath(); c.arc(-4.2, hy + 2.6, 1.3, 0, Math.PI * 2); c.arc(4.4, hy + 2.6, 1.3, 0, Math.PI * 2); c.fill();
+        c.fillStyle = 'rgba(255,255,255,.18)';
+        c.beginPath(); c.ellipse(-2.5, hy - 5.6, 2.6, 1, -0.3, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#2a2018';
         c.strokeStyle = '#2a2018'; c.lineWidth = 1;
         if (st.act === 'laugh') {
           // Eyes squeezed shut (^ ^), mouth wide open.
@@ -3737,8 +4015,10 @@
         }
         if (p.path.length) {
           const n = p.path[0];
-          const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy), v = SPEED * dt * (p.rush > wall ? 2.3 : 1);
+          const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy);
+          let v = SPEED * dt * (p.rush > wall ? 2.3 : 1);
           if (d > 0.001) p.walkFace = dx + dy >= 0 ? 'front' : 'back';
+          if (d > 0.001) v = this.makeWay(p, dx / d, dy / d, v, dt);
           if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
           else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
         } else if (p.leaving) {
@@ -3809,6 +4089,10 @@
         for (const [p, at] of heads) this.bubble(p, at);
       }
 
+      if (this.confetti && Date.now() - this.confetti.at < CONFETTI_MS) {
+        const p = this.people.get(this.confetti.key);
+        if (p) { const at = this.iso(p.x, p.y, 1); this.drawConfetti(at.x * this.cam.zoom + this.cam.ox, at.y * this.cam.zoom + this.cam.oy, Date.now() - this.confetti.at); }
+      }
       if (this.offDuty > 0) {
         const d = this.iso(0.2, this.plan.door.y + 0.9, 0);
         c.font = '600 10px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
@@ -3834,6 +4118,22 @@
   // already working upstairs stays there until they stop, so nobody bounces
   // between floors. `prev`: key -> { floor, zone } from the last call.
   // Returns { floors: Map key -> { floor, zone }, moved: Set of keys that changed floor }.
+  // Holidays the office dresses up for, by date: Halloween (late October),
+  // Christmas (December), Lunar New Year (from ten days before to fifteen
+  // after; the date moves, so a short table).
+  const LNY = { 2026: [1, 17], 2027: [1, 6], 2028: [0, 26], 2029: [1, 13], 2030: [1, 3], 2031: [0, 23], 2032: [1, 11] };
+  function seasonOf(d = new Date()) {
+    const m = d.getMonth(), day = d.getDate();
+    const ny = LNY[d.getFullYear()];
+    if (ny) {
+      const at = new Date(d.getFullYear(), ny[0], ny[1]).getTime(), DAY = 86_400_000;
+      if (d.getTime() >= at - 10 * DAY && d.getTime() <= at + 15 * DAY) return 'lny';
+    }
+    if (m === 9 && day >= 20) return 'halloween';
+    if (m === 11) return 'xmas';
+    return null;
+  }
+
   // Sitting down somewhere: face the table, coffee table or TV it belongs
   // to (a yaw for 3D, front/back for the 2D drawing).
   function orientSeats(pois, props) {
@@ -3844,8 +4144,11 @@
       let best = null, bd = 2.4;
       for (const c of centres) { const d = Math.hypot(c.x - q.x, c.y - q.y); if (d < bd) { bd = d; best = c; } }
       if (!best) continue;
-      q.yaw = Math.atan2(best.x - q.x, best.y - q.y);
-      q.face = best.x - q.x + best.y - q.y >= 0 ? 'front' : 'back';
+      // Sofas and chairs point one way: sit square on them, toward the
+      // table's side. Round stools and beanbags turn to face it.
+      if (q.act === 'couch' || q.act === 'meeting' || q.act === 'read') q.yaw = best.y >= q.y ? 0 : Math.PI;
+      else q.yaw = Math.atan2(best.x - q.x, best.y - q.y);
+      q.face = Math.cos(q.yaw) >= 0 ? 'front' : 'back';
     }
   }
 
@@ -3883,6 +4186,29 @@
 
   window.Office = Office;
   window.OfficeFloors = { split: splitFloors, zoneOf };
+  window.OfficeSeason = seasonOf;
+
+  // The replay: who was where at time T, from today's story (src/progress.js
+  // track()), as sessions the office can show. `now` is the real clock (a
+  // finished turn counts as just finished for 30 minutes of replayed time).
+  function replayAt(spans, T, now = Date.now(), live = []) {
+    const byKey = new Map(live.map((s) => [s.key, s]));
+    const STATUS = { w: 'tool', q: 'waiting', e: 'error', d: 'done', i: 'idle' };
+    const out = [];
+    for (const [key, rec] of Object.entries(spans || {})) {
+      let cur = null;
+      for (const e of rec.s) { if (e[0] <= T) cur = e; else break; }
+      if (!cur) continue;
+      const base = byKey.get(key) || { key, agent: key.split(':')[0], id: key.slice(key.indexOf(':') + 1) };
+      out.push({
+        ...base, title: rec.title || base.title, status: STATUS[cur[1]], activity: cur[1] === 'w' ? '工作中' : null,
+        task: null, outcome: null, ask: null, needs: null, question: null, talk: [], subagent: false,
+        lastEventAt: now - (T - cur[0]), turnStartedAt: now - (T - cur[0]), startedAt: rec.s[0][0],
+      });
+    }
+    return out;
+  }
+  window.OfficeReplay = { at: replayAt };
   window.OFFICE_UNLOCKS = UNLOCKS;
   window.OFFICE_LEVEL_TITLE = LEVEL_TITLE;
   window.OFFICE_AGENT_BADGES = AGENT_BADGES;

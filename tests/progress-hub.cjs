@@ -117,3 +117,23 @@ test('today counts only today\'s work and how long you took to answer', () => {
   assert.equal(pr.office().today.turns, 0);
   assert.equal(pr.office().today.answered, 0);
 });
+
+test('today\'s story: each change between working, waiting, error, done and idle is kept for the replay', () => {
+  const { Progress } = require('../src/progress');
+  const p = new Progress(path.join(os.tmpdir(), `wmad-track-${process.pid}-${Date.now()}.json`));
+  const t0 = new Date(); t0.setHours(10, 0, 0, 0);
+  const T = t0.getTime();
+  p.update([], T);
+  const v = (status, extra = {}) => ({ key: 'claude:a', agent: 'claude', id: 'a', title: '做報告', status, startedAt: T - 3600_000, ...extra });
+  p.track([v('tool')], T);
+  p.track([v('tool')], T + 1000);
+  p.track([v('waiting')], T + 2000);
+  p.track([v('done', { ask: '要推嗎？' })], T + 3000);
+  p.track([v('done')], T + 4000);
+  p.track([{ ...v('tool'), key: 'claude:sub', subagent: true }], T + 5000);
+  const sp = p.office().today.spans;
+  assert.equal(sp['claude:a'].title, '做報告');
+  assert.equal(sp['claude:a'].s.map((x) => x[1]).join(''), 'wqd', 'working since it started, then waiting (question, then decision), then done');
+  assert.equal(sp['claude:a'].s[0][0], T - 3600_000);
+  assert.equal(sp['claude:sub'], undefined, 'helpers are not tracked');
+});

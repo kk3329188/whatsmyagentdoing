@@ -258,6 +258,31 @@
   .hub-skill { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 6px; font-size: 12px; }
   .hub-skill small { color: var(--muted); text-align: right; }
   .hub-best { background: #ffd76a; color: #5a4300; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+  #officeWrap { position: relative; }
+  /* On air: just the office, full window, with a LIVE badge and a ticker. */
+  body.live header, body.live .legend, body.live .hub-tools, body.live .hub-pins, body.live .hub-needs, body.live .hub-panel,
+  body.live .floor-tabs, body.live main, body.live .view-pad, body.live .hub-toast, body.live .conn { display: none !important; }
+  body.live { overflow: hidden; }
+  body.live .office { position: fixed; inset: 0; height: 100vh !important; border: 0; border-radius: 0; z-index: 10; }
+  .live-ui { display: none; }
+  body.live .live-ui { display: block; position: fixed; z-index: 20; pointer-events: none; }
+  body.live .live-top { display: flex; }
+  .live-top { top: 14px; left: 16px; align-items: center; gap: 10px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); font-weight: 800; }
+  .live-dot { background: #e0344b; color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 13px; letter-spacing: .05em; animation: livepulse 1.6s ease-in-out infinite; }
+  @keyframes livepulse { 50% { opacity: .55; } }
+  .live-name { font-size: 18px; }
+  .live-clock { font-size: 14px; font-variant-numeric: tabular-nums; opacity: .9; }
+  .live-ticker { left: 0; right: 0; bottom: 0; height: 34px; background: rgba(12,14,24,.78); color: #fff; overflow: hidden; white-space: nowrap; font-size: 14px; line-height: 34px; }
+  .live-ticker span { display: inline-block; padding-left: 100%; animation: ticker 40s linear infinite; }
+  @keyframes ticker { to { transform: translateX(-100%); } }
+  .live-exit { top: 12px; right: 14px; pointer-events: auto !important; border: 0; background: rgba(0,0,0,.45); color: #fff; border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer; }
+  .replay-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 10px;
+    background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px 5px 14px; box-shadow: 0 4px 14px rgba(0,0,0,.2); font-variant-numeric: tabular-nums; }
+  .replay-bar[hidden] { display: none; }
+  #replayClock { font-weight: 800; font-size: 15px; min-width: 92px; }
+  .replay-track { width: 160px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .replay-track i { display: block; height: 100%; width: 0; background: var(--tool); }
+  #replayStop { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 2px 10px; font: inherit; cursor: pointer; }
   .hub-tools button.on { background: var(--waiting); border-color: var(--waiting); color: #fff; font-weight: 700; }
   .hub-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 10px; font-size: 12px; }
   .hub-pins[hidden] { display: none; }
@@ -384,6 +409,10 @@
   </div>
   <div id="officeWrap">
     <div class="office loading" id="office"><div class="office-loader"><div class="spin"></div><span id="loaderText"></span></div></div>
+    <div class="live-ui live-top" id="liveTop"><span class="live-dot">● LIVE</span><span class="live-name" id="liveName"></span><span class="live-clock" id="liveClock"></span></div>
+    <button type="button" class="live-ui live-exit" id="liveExit">離開直播（Esc）</button>
+    <div class="live-ui live-ticker"><span id="liveTicker"></span></div>
+    <div class="replay-bar" id="replayBar" hidden><span id="replayClock"></span><span class="replay-track"><i id="replayFill"></i></span><button type="button" id="replayStop">結束回放</button></div>
     <div class="legend" id="legend"></div>
     <div class="legend" id="agentLegend"></div>
   </div>
@@ -584,14 +613,15 @@ function render() {
   document.getElementById('officeWrap').style.display = officeMode ? '' : 'none';
   // The office decides who sits at a desk and who wanders around; the ones
   // you dropped at the door stay away until they do something new.
-  const officeList = PIP ? all : all.filter((s) => !Hub.isHidden(s));
+  let officeList = PIP ? all : all.filter((s) => !Hub.isHidden(s));
+  if (replay) officeList = replayList();
   const poppedOut = !!popout?.win;
   // Wait for the first snapshot so people start at their places instead of
   // all walking in through the door.
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
-    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = store.get('follow', true) !== false; o.setBoss(!PIP && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
+    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
       const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary, allDown: !!(office && office.standup) });
@@ -787,6 +817,7 @@ const officeOpts = {
   onCommand: (kind, s) => { if (!PIP) Hub.command(kind, s); },
   isSecretary: (s) => Hub.isSecretary(s),
   onHover(s, at, click) {
+    if (Hub.live) return; // on air: no tooltips, no panels
     // The secretary came over with news: clicking them shows it again.
     if (click && s && office && office.secKey === s.key && office.people.get(s.key)?.errand) { Hub.showAway(); return; }
     if (click) {
@@ -848,6 +879,80 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keyup', (e) => { if (office && office.meKey) office.meKey(e.key, false); });
 window.addEventListener('blur', () => { if (office && office.meKeys) office.meKeys.clear(); });
+// Live mode (for streaming the office): full window, names and work hidden
+// behind employee numbers, departments lettered, a LIVE badge with the
+// company and the time, a ticker of what just happened, and a camera that
+// goes round on its own: whoever just changed, else someone at work.
+let liveTimer = 0;
+function setLive(on) {
+  on = !!on && !PIP;
+  if (on === Hub.live) return;
+  Hub.setLive(on);
+  document.body.classList.toggle('live', on);
+  Hub.close && Hub.close();
+  hideTip();
+  for (const o of [office, office2]) if (o) o.deptLabel = on ? (name, i) => `部門 ${'ABCDEFGHJK'[i % 10]}` : null;
+  clearInterval(liveTimer);
+  if (on) {
+    const tick = () => {
+      const d = new Date();
+      document.getElementById('liveName').textContent = Hub.company() || 'OFFICE';
+      document.getElementById('liveClock').textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const lines = Hub.tickerLines();
+      document.getElementById('liveTicker').textContent = (lines.length ? lines : ['大家都在認真上班中…']).join('　　｜　　');
+    };
+    let n = 0;
+    liveTimer = setInterval(() => {
+      tick();
+      if (++n % 9) return; // about every 9 seconds, the next shot
+      const o = state.floor === 2 && office2 ? office2 : office;
+      const ppl = [...o.people.values()].filter((p) => !p.leaving && p.s && !p.s.subagent);
+      const fresh = ppl.filter((p) => p.event && Date.now() - p.event.at < 9000);
+      const busy = ppl.filter((p) => p.mode === 'work');
+      const pool = fresh.length ? fresh : busy.length ? busy : ppl;
+      const p = pool[Math.floor(Math.random() * pool.length)];
+      if (p) o.spotlight(p.key, true);
+    }, 1000);
+    tick();
+  }
+  window.dispatchEvent(new Event('resize'));
+  render();
+}
+document.getElementById('liveExit').addEventListener('click', () => setLive(false));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && Hub.live) setLive(false); });
+if (new URLSearchParams(location.search).get('live') === '1') setTimeout(() => setLive(true), 1500);
+
+// Today in 30 seconds: the office as it was, minute by minute, from the
+// first thing that happened today until now.
+let replay = null;
+const REPLAY_MS = 30_000;
+function replayList() {
+  const r = replay, k = Math.min(1, (Date.now() - r.t0) / REPLAY_MS);
+  const T = r.from + (r.to - r.from) * k;
+  const d = new Date(T);
+  document.getElementById('replayClock').textContent = `⏪ ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  document.getElementById('replayFill').style.width = `${Math.round(k * 100)}%`;
+  if (k >= 1) setTimeout(stopReplay, 1500);
+  return OfficeReplay.at(r.spans, T, Date.now(), state.data.sessions).filter((s) => !Hub.isHidden(s));
+}
+function startReplay() {
+  const spans = state.data && state.data.office && state.data.office.today && state.data.office.today.spans;
+  const firsts = Object.values(spans || {}).map((r) => r.s[0] && r.s[0][0]).filter(Boolean);
+  if (!firsts.length || PIP) { Hub.toast('今天還沒有可以回放的紀錄'); return; }
+  replay = { spans, from: Math.min(...firsts), to: Date.now(), t0: Date.now(), timer: setInterval(render, 250), follow: [office, office2].map((o) => o && o.follow) };
+  for (const o of [office, office2]) if (o) { o.spotCancel && o.spotCancel(); }
+  document.getElementById('replayBar').hidden = false;
+  render();
+}
+function stopReplay() {
+  if (!replay) return;
+  clearInterval(replay.timer);
+  replay = null;
+  document.getElementById('replayBar').hidden = true;
+  render();
+}
+document.getElementById('replayStop').addEventListener('click', stopReplay);
+
 // The stand-up: everyone downstairs (upstairs comes down by the lift), one
 // after another says where they are; the minutes pop up at the end.
 function startStandup() {
@@ -1046,6 +1151,8 @@ Hub.mount({
   onAwayDone() { if (office && office.endErrand) office.endErrand(); },
   onChange() { render(); },
   onStandup() { startStandup(); },
+  onReplay() { if (replay) stopReplay(); else startReplay(); },
+  onLive(v) { setLive(v); },
 });
 applyLang(chooseLang(null));
 syncControls();
