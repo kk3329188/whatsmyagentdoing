@@ -76,6 +76,23 @@
     meeting: ['laptop', 'write', 'scroll', 'think'],
     tv: ['watch', 'laugh', 'watch'],
   };
+  // Everyone has a personality or two (fixed by who they are): it decides
+  // where they like to spend a break and what they do sitting down.
+  const TRAITS = [
+    { id: 'coffee', name: '咖啡控', emoji: '☕', likes: { coffee: 4, water: 1.5, vending: 1.5 }, seat: ['sip', 'sip'] },
+    { id: 'sporty', name: '運動咖', emoji: '🏃', likes: { run: 5, yoga: 4, pingpong: 3, foosball: 2.5 }, seat: ['scroll'], stretch: 3 },
+    { id: 'owl', name: '夜貓子', emoji: '🦉', likes: { arcade: 2, tv: 2, couch: 1.5 }, seat: ['watch', 'game'], owl: true },
+    { id: 'chatty', name: '話匣子', emoji: '💬', likes: { stool: 1.5 }, seat: ['chat', 'laugh'], chat: 3 },
+    { id: 'bookworm', name: '書蟲', emoji: '📚', likes: { read: 5, window: 1.5 }, seat: ['read', 'read'] },
+    { id: 'gamer', name: '遊戲宅', emoji: '🎮', likes: { arcade: 5, beanbag: 3, foosball: 2 }, seat: ['game', 'game'] },
+    { id: 'foodie', name: '美食家', emoji: '🍙', likes: { fridge: 4, vending: 4, stool: 2 }, seat: ['eat', 'eat'] },
+    { id: 'tidy', name: '整潔控', emoji: '🧹', likes: { plant: 3, printer: 2 }, seat: ['write'], tidy: true },
+  ];
+  function traitsOf(key) {
+    const h = hash(String(key || ''));
+    const a = TRAITS[h % TRAITS.length], b = TRAITS[(h >>> 7) % TRAITS.length];
+    return b !== a && (h >>> 13) % 3 === 0 ? [a, b] : [a];
+  }
   const STANDUP_TURN_MS = 5000;  // each one talks this long
   const STANDUP_GATHER_MS = 6500; // time to walk over before the first one talks
   const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
@@ -262,7 +279,7 @@
       // not impossible, so a path always exists
       // (someone standing right against furniture can still step away).
       // 2 = a seat: fine to walk onto when it is yours, avoided otherwise.
-      const stepCost = (n) => (this.cost[n] === 1 ? 400 : this.cost[n] === 2 ? 40 : 1);
+      const stepCost = (n) => (this.cost[n] === 1 ? 400 : this.cost[n] === 2 ? 150 : 1);
       const start = sj * cw + si, goal = gj * cw + gi;
       g[start] = 0;
       push(hfn(si, sj), start);
@@ -615,8 +632,6 @@
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
 
-      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: { x: 0.4, y: D - 1.2 }, lift });
-
       // ---- unlocked by the office's experience (setProgress)
       const un = this.unlocks || new Set();
       // Only on floor nothing else stands on, so no path is cut off.
@@ -682,6 +697,8 @@
           if (qx < 0.8) break;
         }
       }
+      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: { x: 0.4, y: D - 1.2 }, lift, seats: [...desks.map((d) => d.seat), boss && boss.seat, sec && sec.seat, ...queue].filter(Boolean) });
+
       // Drop someone on these to do something with their session.
       const targets = [
         { id: 'printer', x: OW - 1.95, y: 1.15, hint: '印成報告（複製）' },
@@ -858,7 +875,7 @@
         { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
         { id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' },
       ];
-      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: lift, lift });
+      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: lift, lift, seats: desks.map((d) => d.seat) });
       orientSeats(pois, props);
       return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
@@ -1318,6 +1335,7 @@
         if (p.zone === 'idle' && night() && (q.act === 'couch' || q.act === 'beanbag')) w *= 3;
         if ((lunch() || this.cakeUntil > now) && q.act === 'stool') w *= 3;
         if (morning() && /^(coffee|water)$/.test(q.act)) w *= 3;
+        for (const tr of this.traits(p)) w *= tr.likes[q.act] || 1;
         options.push([q, w]);
       }
       // Someone standing about who isn't busy talking: go and chat.
@@ -1325,7 +1343,7 @@
         if (o === p || o.mode !== 'wander' || o.held || o.path.length || !o.poi || o.poi.sit || o.chatWith || o.poi.partner || o.poi.act === 'knock' || o.until === Infinity) continue;
         const side = Math.random() < 0.5 ? 0.75 : -0.75;
         const spot = [[o.x + side, o.y], [o.x - side, o.y], [o.x, o.y + 0.75]].find(([x, y]) => !plan.grid.blocked(x, y));
-        if (spot) options.push([{ x: spot[0], y: spot[1], act: 'chat', face: 'front', partner: o.key }, 2.5]);
+        if (spot) options.push([{ x: spot[0], y: spot[1], act: 'chat', face: 'front', partner: o.key }, 2.5 * this.traits(p).reduce((k, tr) => k * (tr.chat || 1), 1)]);
       }
       const cat = this.cat;
       if (!this.noCat && !cat.path.length && !this.catFan && !plan.grid.blocked(cat.x + 0.6, cat.y)) {
@@ -1333,7 +1351,7 @@
       }
       for (let k = 0; k < 6 && options.length < 40; k++) {
         const x = rand(0.8, plan.W - 0.8), y = rand(1.2, plan.D - 0.8);
-        if (!plan.grid.blocked(x, y)) { options.push([{ x, y, act: 'stretch', face: Math.random() < 0.5 ? 'front' : 'back' }, 0.8]); break; }
+        if (!plan.grid.blocked(x, y)) { options.push([{ x, y, act: 'stretch', face: Math.random() < 0.5 ? 'front' : 'back' }, 0.8 * this.traits(p).reduce((k, tr) => k * (tr.stretch || 1), 1)]); break; }
       }
       if (!options.length) return;
       let r = Math.random() * options.reduce((a, [, w]) => a + w, 0);
@@ -1521,7 +1539,9 @@
       const free = [...this.people.values()].filter((p) => p.mode === 'wander' && !p.leaving && !p.held && !p.visit && !(p.chores && p.chores.length)
         && p.queue == null && (p.zone === 'idle' || p.zone === 'done') && p.key !== this.secKey);
       if (!free.length) return false;
-      const p = free[Math.floor(Math.random() * free.length)];
+      const tidy = free.filter((o) => this.traits(o).some((tr) => tr.tidy));
+      const pool = tidy.length && Math.random() < 0.75 ? tidy : free;
+      const p = pool[Math.floor(Math.random() * pool.length)];
       const poiOf = (act) => plan.pois.find((q) => q.act === act);
       const near = (x, y) => [[0.7, 0.7], [-0.7, 0.7], [0.75, 0], [0, 0.75], [-0.75, 0], [0, -0.75]]
         .map(([dx, dy]) => ({ x: x + dx, y: y + dy })).find((o) => !plan.grid.blocked(o.x, o.y) && o.x > 0.3 && o.y > 0.3 && o.x < plan.W - 0.3 && o.y < plan.D - 0.3);
@@ -1565,6 +1585,8 @@
       if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
     }
 
+    traits(p) { return p.traits || (p.traits = traitsOf(p.key)); }
+
     // What someone sitting off duty is doing right now. Someone else sitting
     // close by makes a chat (or a laugh) likelier; a long-idle one dozes off
     // on the sofa now and then.
@@ -1573,6 +1595,9 @@
       const t = (this.t || 0) / 1000 + p.phase * 13;
       const span = 7 + (p.h % 4);
       let act = list[Math.floor(t / span + p.h) % list.length];
+      // Every other turn, something they like doing.
+      const own = this.traits(p).flatMap((tr) => tr.seat);
+      if (own.length && Math.floor(t / span) % 2 === 1) act = own[Math.floor(t / span / 2) % own.length];
       const company = [...this.people.values()].some((o) => o !== p && o.poi && o.poi.sit && !o.path.length && Math.hypot(o.x - p.x, o.y - p.y) < 2.2);
       if (act === 'chat' && !company) act = 'scroll';
       if (company && act === 'scroll' && (Math.floor(t / span) % 3) === 0) act = 'chat';
@@ -1767,7 +1792,82 @@
     }
 
     // Everyone drawn: the sessions, and you.
-    bodies() { return this.me ? [...this.people.values(), this.me] : [...this.people.values()]; }
+    bodies() {
+      const out = [...this.people.values()];
+      if (this.me) out.push(this.me);
+      if (this.visitors) out.push(...this.visitors.values());
+      return out;
+    }
+
+    // ------------------------------------------------------------ visitors
+    //
+    // Someone from outside (src/visitors.js) walks in at the door, goes to
+    // the secretary's desk (or yours), says what they came about, gets an
+    // answer and leaves. `list` is the snapshot's recent visits; each shows
+    // once, and only if it is fresh. Returns how many walked in.
+    visitorsIn(list) {
+      this.visitors = this.visitors || new Map();
+      this.visitorSeen = this.visitorSeen || new Set();
+      let n = 0;
+      for (const v of list || []) {
+        if (this.visitorSeen.has(v.id)) continue;
+        this.visitorSeen.add(v.id);
+        if (this.first || !this.plan.zones || this.compact || !this.plan.boss) continue;
+        if (Date.now() - v.at > 3 * 60_000 || this.visitors.size >= 4) continue;
+        this.spawnVisitor(v);
+        n++;
+      }
+      return n;
+    }
+
+    spawnVisitor(v) {
+      const plan = this.plan, door = plan.door;
+      const sec = this.secKey && this.people.get(this.secKey);
+      const desk = sec ? plan.sec : plan.boss;
+      // In front of the desk, on the far side from the one sitting there.
+      const cands = [[desk.x + 0.7, desk.y + 1.35], [desk.x + 0.7, desk.y - 0.6], [desk.x - 0.4, desk.y + 0.4], [desk.x + 1.8, desk.y + 0.4]];
+      const at = cands.map(([x, y]) => ({ x, y })).find((q) => !plan.grid.blocked(q.x, q.y) && !plan.grid.hard(q.x, q.y)) || (plan.queue && plan.queue[0]) || door;
+      const h = hash(v.id);
+      const key = `visitor:${v.id}`;
+      const masked = !!this.masked;
+      const body = {
+        visitor: true, key, h, x: door.x, y: door.y, path: plan.grid.path(door.x, door.y, at.x, at.y), walkFace: 'front',
+        phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: h % 4,
+        stage: 'in', until: 0, spot: at, desk, text: masked ? '有事來找' : v.text || '有事來找',
+        s: { key, agent: 'claude', status: 'idle', title: masked ? '訪客' : `訪客・${v.from}`, level: 2, visitor: true },
+      };
+      body.event = { text: masked ? '你好～' : `你好，我是${v.from}`.slice(0, 18), at: Date.now(), zone: 'held' };
+      this.visitors.set(key, body);
+    }
+
+    stepVisitors(dt) {
+      if (!this.visitors || !this.visitors.size) return;
+      const now = Date.now(), door = this.plan.door;
+      for (const [k, p] of this.visitors) {
+        if (p.path.length) {
+          const n = p.path[0], dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy);
+          let v = SPEED * dt;
+          if (d > 0.001) { p.walkFace = dx + dy >= 0 ? 'front' : 'back'; v = this.makeWay(p, dx / d, dy / d, v, dt); }
+          if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); } else { p.x += dx / d * v; p.y += dy / d * v; }
+          continue;
+        }
+        if (p.stage === 'in') {
+          p.stage = 'talk';
+          p.until = now + 9000;
+          p.event = { text: `「${p.text.length > 22 ? p.text.slice(0, 21) + '…' : p.text}」`, at: now, zone: 'work', ttl: 6 };
+          p.replyAt = now + 2500;
+        } else if (p.stage === 'talk') {
+          if (p.replyAt && now > p.replyAt) {
+            p.replyAt = 0;
+            const host = this.secKey && this.people.get(this.secKey);
+            if (host && !host.leaving) host.event = { text: '收到，我來處理 👍', at: now, zone: 'done' };
+          }
+          if (now > p.until) { p.stage = 'out'; p.event = { text: '謝啦～', at: now, zone: 'held' }; p.path = this.plan.grid.path(p.x, p.y, door.x, door.y); }
+        } else if (p.stage === 'out') {
+          this.visitors.delete(k);
+        }
+      }
+    }
 
     // Screen directions on the floor (unit vectors in floor x/y): right and up.
     screenAxes() { const k = Math.SQRT1_2; return { right: { x: k, y: -k }, up: { x: -k, y: -k } }; }
@@ -2666,12 +2766,13 @@
 
     // Holiday decorations on free floor near the way in: a Christmas tree
     // with presents, pumpkins, or red lanterns hanging overhead.
-    decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry, lift }) {
+    decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry, lift, seats = [] }) {
       const season = this.seasonOverride !== undefined ? this.seasonOverride : seasonOf();
       this.season = season;
       if (!season) return;
       const clear = (x, y, r) => [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]].every(([a, b]) => !grid.blocked(x + a, y + b))
         && pois.every((q) => Math.hypot(q.x - x, q.y - y) > 0.75)
+        && seats.every((q) => Math.hypot(q.x - x, q.y - y) > 1.0)
         && Math.hypot(entry.x - x, entry.y - y) > 1.1 && Math.hypot(lift.x - x, lift.y - y) > 1.1;
       const spots = [[1.3, D - 2.3], [1.2, D - 0.6], [OW - 0.8, D - 1.7], [OW - 3.2, D - 0.6], [2.4, D - 0.6], [W - 0.9, PY - 0.5],
         [OW / 2, D - 0.6], [1.2, 2.2], [OW - 0.9, 3.4], [W - 0.8, D - 1.8]];
@@ -3061,6 +3162,10 @@
 
     stateNow(p) {
       const s = p.s || {};
+      if (p.visitor) {
+        if (p.path.length) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
+        return { pose: 'stand', face: 'back', act: p.stage === 'talk' ? 'chat' : 'lookaround', sitZ: 0 };
+      }
       if (p.me) {
         if (p.moving) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
         if (p.seated) return { pose: 'sit', face: 'back', act: 'type', sitZ: 0.34 };
@@ -3103,7 +3208,8 @@
         if (guest && guest.visit && guest.visit.mate === p.key && !guest.path.length) return { pose: 'sit', face, act: 'chat', sitZ: 0.34 };
         // Nobody works without a break: a stretch, a sip, a neck roll now and then.
         const cyc = (t + p.phase * 5) % 26;
-        const breaks = lunch() ? ['eat', 'eat', 'sip'] : night() ? ['yawn', 'stretch', 'sip'] : ['stretch', 'sip', 'neck'];
+        const owl = this.traits(p).some((tr) => tr.owl);
+        const breaks = lunch() ? ['eat', 'eat', 'sip'] : (night() && !owl) || (owl && hour() < 11) ? ['yawn', 'stretch', 'sip'] : ['stretch', 'sip', 'neck'];
         if (cyc < (lunch() ? 6 : 2.4) && kind !== 'reply') act = breaks[Math.floor((t + p.phase * 5) / 26) % 3];
         return { pose: 'sit', face, act, sitZ: 0.34 };
       }
@@ -3663,7 +3769,7 @@
 
       // Bubbles go above the sign when one is held up.
       const headTop = y + (st.act === 'sign' ? hip - 46 : hy - 8) * sc;
-      if (!p.me) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
+      if (!p.me && !p.visitor) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
     }
 
@@ -4031,6 +4137,7 @@
       this.life(wall);
       this.stepStandup(wall);
       this.stepMe(dt);
+      this.stepVisitors(dt);
     }
 
     draw() {
@@ -4152,7 +4259,10 @@
     }
   }
 
-  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false } = {}) {
+  // A few idle ones stay downstairs and find something to do there (so the
+  // office never feels empty); the rest go up to the lounge.
+  const IDLE_DOWNSTAIRS = 4;
+  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false, idleDown = IDLE_DOWNSTAIRS } = {}) {
     const floors = new Map();
     const workers = [];
     // Only the newest matching session is the secretary (as in update()).
@@ -4170,6 +4280,12 @@
       .sort((a, b) => (+!!(was(b) && was(b).floor === 1)) - (+!!(was(a) && was(a).floor === 1)) || (a.startedAt || 0) - (b.startedAt || 0));
     rest.forEach((s, i) => floors.set(s.key, { floor: i < cap ? 1 : 2, zone: 'work' }));
     for (const s of stayUp) floors.set(s.key, { floor: 2, zone: 'work' });
+    // Idle ones that stay downstairs: the ones already down here first (no
+    // trips up and down), then the most recently active.
+    const idle = sessions.filter((s) => !s.subagent && s !== sec && zoneOf(s) === 'idle');
+    const down = (s) => was(s) && was(s).floor === 1;
+    idle.sort((a, b) => (+down(b)) - (+down(a)) || (b.lastEventAt || 0) - (a.lastEventAt || 0))
+      .slice(0, idleDown).forEach((s) => floors.set(s.key, { floor: 1, zone: 'idle' }));
     // Helpers go wherever the session that sent them is.
     const byId = new Map(sessions.map((s) => [s.id, s]));
     for (const s of sessions) {
@@ -4187,6 +4303,7 @@
   window.Office = Office;
   window.OfficeFloors = { split: splitFloors, zoneOf };
   window.OfficeSeason = seasonOf;
+  window.OfficeTraits = (key) => traitsOf(key).map((tr) => ({ id: tr.id, name: tr.name, emoji: tr.emoji }));
 
   // The replay: who was where at time T, from today's story (src/progress.js
   // track()), as sessions the office can show. `now` is the real clock (a

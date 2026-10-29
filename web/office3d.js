@@ -26,6 +26,7 @@ const CHAR_HEIGHT = 0.92; // world units (≈ tiles)
 const HELD_LIFT = 0.45;   // how high a picked-up person dangles
 const WALL_H = 2.4;
 const SIT_FORWARD = 0.16;
+const DESK_H = 0.6;
 
 // Turn a scene manifest into the floor plan the shared simulation uses:
 // stations play the part of desks, pois are where off-duty agents hang out.
@@ -86,7 +87,7 @@ export class Office3D extends window.Office {
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.15;
+    this.gl.toneMappingExposure = 1.06;
     this.gl.domElement.className = 'office-gl';
     root.insertBefore(this.gl.domElement, this.canvas);
 
@@ -96,7 +97,7 @@ export class Office3D extends window.Office {
     try {
       const pm = new THREE.PMREMGenerator(this.gl);
       this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-      this.scene.environmentIntensity = 0.35;
+      this.scene.environmentIntensity = 0.28;
       pm.dispose();
     } catch { /* fine without */ }
     this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 200);
@@ -171,8 +172,21 @@ export class Office3D extends window.Office {
       Object.assign(this.models, Object.fromEntries(got));
       for (const [, m] of got) m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     }
-    for (const m of Object.values(this.models)) {
-      m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    // The furniture kit is candy-bright: calm it down (less saturated, the
+    // palest colours a little darker), once per material.
+    const calmed = new Set(), hsl = {};
+    for (const [name, m] of Object.entries(this.models)) {
+      m.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = true; o.receiveShadow = true;
+        if (name.startsWith('scene:')) return;
+        for (const mat of [].concat(o.material)) {
+          if (!mat || !mat.color || calmed.has(mat)) continue;
+          calmed.add(mat);
+          mat.color.getHSL(hsl);
+          mat.color.setHSL(hsl.h, hsl.s * 0.68, hsl.l > 0.55 ? 0.55 + (hsl.l - 0.55) * 0.55 : hsl.l * 0.96);
+        }
+      });
     }
     this.loaded = true;
   }
@@ -203,6 +217,12 @@ export class Office3D extends window.Office {
   }
 
   boxMesh(x, y, z, w, d, h, color, opts = {}) {
+    // Plain coloured boxes get the same calmer palette as the furniture kit.
+    if (!opts.mat && !opts.emissive && color != null) {
+      const c = new THREE.Color(color), hsl = {};
+      c.getHSL(hsl);
+      color = c.setHSL(hsl.h, hsl.s * 0.75, hsl.l > 0.6 ? 0.6 + (hsl.l - 0.6) * 0.6 : hsl.l);
+    }
     const mat = opts.mat || new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.8, metalness: opts.metal ?? 0, ...(opts.emissive ? { emissive: opts.emissive, emissiveIntensity: opts.ei ?? 1 } : {}) });
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     m.position.set(x + w / 2, z + h / 2, y + d / 2);
@@ -446,8 +466,10 @@ export class Office3D extends window.Office {
 
   buildDesk(dk) {
     const { x, y } = dk;
-    this.place('desk', x, y, 1.4, 0.8, { h: 0.75, rot: dk.side === 's' ? 0 : Math.PI });
-    const top = 0.75;
+    // Desk height to suit the people (they are small): seated, their hands
+    // reach the keyboard.
+    this.place('desk', x, y, 1.4, 0.8, { h: DESK_H, rot: dk.side === 's' ? 0 : Math.PI });
+    const top = DESK_H;
     const back = dk.side === 's' ? y + 0.12 : y + 0.48;
     const rot = dk.side === 's' ? 0 : Math.PI;
     const mon = this.place('computerScreen', x + 0.4, back, 0.6, 0.2, { y0: top, h: 0.5, rot });
@@ -1407,8 +1429,10 @@ export class Office3D extends window.Office {
     const added = new Set();
     for (const f of this.footprints()) {
       if (f.skip) continue;
-      const i0 = Math.max(0, Math.floor((f.x0 + 0.04) * R)), i1 = Math.min(cw - 1, Math.floor((f.x1 - 0.04) * R));
-      const j0 = Math.max(0, Math.floor((f.y0 + 0.04) * R)), j1 = Math.min(ch - 1, Math.floor((f.y1 - 0.04) * R));
+      // Grown by half a person's width, so nobody's shoulder goes through it.
+      const pad = 0.1;
+      const i0 = Math.max(0, Math.floor((f.x0 - pad) * R)), i1 = Math.min(cw - 1, Math.floor((f.x1 + pad) * R));
+      const j0 = Math.max(0, Math.floor((f.y0 - pad) * R)), j1 = Math.min(ch - 1, Math.floor((f.y1 + pad) * R));
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const n = j * cw + i, x = (i + 0.5) / R, y = (j + 0.5) / R;
         if (g.cost[n] || near(stands, x, y)) continue;
@@ -1633,6 +1657,8 @@ export class Office3D extends window.Office {
   facing(p, st) {
     if (st.pose === 'walk') return null;
     if (p.me) return p.seated ? Math.PI : null;
+    // A visitor talks to whoever sits at the desk they came to.
+    if (p.visitor) return p.path.length ? null : Math.atan2(p.desk.seat.x - p.x, p.desk.seat.y - p.y);
     if (p.held || p.landed) return 0;
     // Knocking: on your side of the screen.
     if (st.act === 'knock') return Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.y);
@@ -1664,26 +1690,39 @@ export class Office3D extends window.Office {
     const t = this.t / 1000 + p.phase;
     const wave = (f, k = 0) => Math.sin(t * f + k);
     const up = (f) => Math.max(0, Math.sin(t * f));
-    const P = {
-      scroll: { r: [-0.95, 0, -0.35], l: [-0.85, 0, 0.35], head: 0.38 },
-      phone: { r: [-2.3, 0, -0.6], head: 0.1 },
-      laptop: { r: [-0.6 + 0.07 * wave(16), 0, -0.25], l: [-0.6 + 0.07 * wave(16, Math.PI), 0, 0.25], head: 0.32 },
-      read: { r: [-1.0, 0, -0.3], l: [-1.0, 0, 0.3], head: 0.32 },
-      game: { r: [-0.9 + 0.05 * wave(12), 0, -0.4], l: [-0.9 + 0.05 * wave(12, 2), 0, 0.4], head: 0.3 },
-      laugh: { r: [-0.45, 0, -0.15], l: [-0.45, 0, 0.15], head: -0.3 - 0.12 * Math.abs(wave(8)), torso: -0.1 * Math.abs(wave(8)) },
-      chat: { r: [-0.55 - 0.4 * up(4), 0, -0.25 + 0.15 * wave(3)], head: 0.06 * wave(5) },
+    // (poseTweak: set from the console to try out a pose.)
+    const P = (this.poseTweak && this.poseTweak[st.act]) || {
+      // At the computer: hands on the keyboard (fingers going), on the mouse,
+      // writing, chin in hand, arms folded waiting for a long command.
+      type: { r: [-1.3 + 0.06 * wave(17), 0, 0.18], l: [-1.3 + 0.06 * wave(17, Math.PI), 0, -0.18], head: 0.12 + 0.03 * wave(0.7) },
+      typefast: { r: [-1.32 + 0.09 * wave(26), 0, 0.18], l: [-1.32 + 0.09 * wave(26, Math.PI), 0, -0.18], head: 0.16 },
+      deskread: { r: [-1.28 + 0.04 * wave(2.2), 0, -0.02 + 0.04 * wave(1.3)], l: [-1.2, 0, -0.12], head: 0.08 },
+      chin: { r: [-1.75, 0, 0.55], l: [-0.9, 0, -0.35], head: 0.1 },
+      scratch: { r: [-2.6 + 0.1 * wave(9), 0, 0.7], head: 0.05 },
+      lookup: { r: [-0.6, 0, 0.2], l: [-0.6, 0, -0.2], head: -0.28 },
+      leanback: { r: [-0.75, 0, 0.55], l: [-0.75, 0, -0.55], head: -0.08, torso: -0.12 },
+      point: { r: [-0.4, 0, -1.3], head: 0.05 },
+      stretch: { r: [-2.95, 0, 0.25], l: [-2.95, 0, -0.25], head: -0.2 },
+      neck: { r: [-2.3, 0, 0.9], head: 0.25 * wave(1.5) },
+      scroll: { r: [-0.95, 0, 0.35], l: [-0.85, 0, -0.35], head: 0.38 },
+      phone: { r: [-2.3, 0, 0.6], head: 0.1 },
+      laptop: { r: [-0.6 + 0.07 * wave(16), 0, 0.25], l: [-0.6 + 0.07 * wave(16, Math.PI), 0, -0.25], head: 0.32 },
+      read: { r: [-1.0, 0, 0.3], l: [-1.0, 0, -0.3], head: 0.32 },
+      game: { r: [-0.9 + 0.05 * wave(12), 0, 0.4], l: [-0.9 + 0.05 * wave(12, 2), 0, -0.4], head: 0.3 },
+      laugh: { r: [-0.45, 0, 0.15], l: [-0.45, 0, -0.15], head: -0.3 - 0.12 * Math.abs(wave(8)), torso: -0.1 * Math.abs(wave(8)) },
+      chat: { r: [-0.55 - 0.4 * up(4), 0, 0.25 + 0.15 * wave(3)], head: 0.06 * wave(5) },
       watch: { head: -0.12, torso: -0.14 },
-      think: { r: [-1.75, 0, -0.55], head: 0.15 },
-      write: { r: [-0.65 + 0.05 * wave(10), 0, -0.2], head: 0.32 },
-      eat: { r: [-0.7 - 0.9 * up(3), 0, -0.2], head: 0.12 },
-      sip: wave(0.9) > 0.6 ? { r: [-1.9, 0, -0.35], head: -0.15 } : { r: [-0.6, 0, -0.2] },
-      yawn: { r: [-2.0, 0, -0.6], head: -0.25 },
-      facepalm: { r: [-2.2, 0, -0.8], head: 0.35 },
+      think: { r: [-1.75, 0, 0.55], head: 0.15 },
+      write: { r: [-0.65 + 0.05 * wave(10), 0, 0.2], head: 0.32 },
+      eat: { r: [-0.7 - 0.9 * up(3), 0, 0.2], head: 0.12 },
+      sip: wave(0.9) > 0.6 ? { r: [-1.9, 0, 0.35], head: -0.15 } : { r: [-0.6, 0, 0.2] },
+      yawn: { r: [-2.0, 0, 0.6], head: -0.25 },
+      facepalm: { r: [-2.2, 0, 0.8], head: 0.35 },
       nap: { head: 0.55 },
       pin: { r: [-2.5, 0, 0] },
-      wave: { r: [-2.7 + 0.3 * wave(10), 0, -0.35] },
+      wave: { r: [-2.7 + 0.3 * wave(10), 0, 0.35] },
       dazed: { head: 0.2 * wave(14) },
-      cheer: st.pose === 'sit' ? { r: [-2.8, 0, -0.3], l: [-2.8, 0, 0.3] } : null,
+      cheer: st.pose === 'sit' ? { r: [-2.8, 0, 0.3], l: [-2.8, 0, -0.3] } : null,
       whiteboard: { r: [-2.0 + 0.25 * wave(3), 0, 0] },
     }[st.act];
     const e = new THREE.Euler();
@@ -1704,7 +1743,7 @@ export class Office3D extends window.Office {
 
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop, a.laptop, a.blob); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me) && !(this.visitors && this.visitors.has(k))) { this.scene.remove(a.obj, a.prop, a.laptop, a.blob); this.actors.delete(k); }
     }
     for (const p of this.bodies()) {
       const a = this.actorFor(p);
@@ -1923,7 +1962,7 @@ export class Office3D extends window.Office {
       const foot = new THREE.Vector3(p.x, 0, p.y).project(this.camera);
       const fy = (1 - foot.y) / 2 * this.ch;
       heads.push([p, { x: sx, y: sy, act: st.act }, v.z]);
-      if (!p.me) this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
+      if (!p.me && !p.visitor) this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
     }
     heads.sort((a, b) => b[2] - a[2]);
     if (this.plan.boss) {

@@ -444,18 +444,18 @@ test('two floors: work and anything that needs you downstairs, idle ones upstair
     { key: 'claude:kid', id: 'kid', subagent: true, parentId: 'p', status: 'tool' },
   ];
   ss.push({ ...at('idle', { n: 'p', ago: 60 * MIN }), id: 'p' });
-  const { floors, moved } = Floors.split(ss, new Map(), { cap: 3, isSecretary: sec });
+  const { floors, moved } = Floors.split(ss, new Map(), { cap: 3, isSecretary: sec, idleDown: 0 });
   const f = (k) => floors.get(k).floor;
   for (const k of ['claude:waiting', 'claude:error', 'claude:donefresh', 'claude:idledesk', 'claude:tool0', 'claude:tool1', 'claude:tool2']) assert.equal(f(k), 1, k);
   for (const k of ['claude:idle', 'claude:doneold', 'claude:tool3', 'claude:idlep']) assert.equal(f(k), 2, k);
   assert.equal(f('claude:kid'), 2, 'a helper goes where its session is');
   assert.equal(moved.size, 0, 'nobody moved on the first look');
   // A desk frees up downstairs: the one working upstairs keeps working there.
-  const next = Floors.split(ss.filter((s) => s.key !== 'claude:tool0'), floors, { cap: 3, isSecretary: sec });
+  const next = Floors.split(ss.filter((s) => s.key !== 'claude:tool0'), floors, { cap: 3, isSecretary: sec, idleDown: 0 });
   assert.equal(next.floors.get('claude:tool3').floor, 2);
   // The idle one starts working: comes downstairs (moved).
   const woke = ss.map((s) => (s.key === 'claude:idle' ? { ...s, status: 'tool', lastEventAt: Date.now() } : s)).filter((s) => s.key !== 'claude:tool0');
-  const third = Floors.split(woke, next.floors, { cap: 3, isSecretary: sec });
+  const third = Floors.split(woke, next.floors, { cap: 3, isSecretary: sec, idleDown: 0 });
   assert.equal(third.floors.get('claude:idle').floor, 1);
   assert.ok(third.moved.has('claude:idle'));
 });
@@ -965,6 +965,8 @@ test('holidays: pumpkins in late October, a tree in December, lanterns round Lun
     const decos = o.plan.props.filter((q) => q.t === 'deco');
     if (!want) { assert.equal(decos.length, 0); continue; }
     assert.ok(decos.length >= 1 && decos.every((d) => d.kind === want), `${kind}: ${decos.map((d) => d.kind)}`);
+    const seats = [...o.plan.desks.map((d) => d.seat), o.plan.boss && o.plan.boss.seat, o.plan.sec && o.plan.sec.seat, ...(o.plan.queue || [])].filter(Boolean);
+    for (const d of decos) assert.ok(seats.every((q) => Math.hypot(q.x - d.x, q.y - d.y) > 1.0), `${kind}: ${d.kind} clear of every seat and the queue`);
     // Every seat and spot still reachable from the door without crossing furniture.
     for (const q of o.plan.pois) {
       const way = o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y);
@@ -990,4 +992,76 @@ test('replay: who was where at a given time of day', () => {
   const done = at2(spans, 9500, now).find((s) => s.key === 'claude:a');
   assert.equal(done.lastEventAt, now - 500, 'just finished, in replayed time');
   assert.equal(done.title, '報告');
+});
+
+test('personalities: fixed per person; a coffee lover goes for coffee, a bookworm for the shelf, the tidy one does the chores', () => {
+  const ctx = { window: {}, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), ctx);
+  const T = ctx.window.OfficeTraits;
+  assert.equal(JSON.stringify(T('claude:x1')), JSON.stringify(T('claude:x1')), 'the same every time');
+  const find = (id) => { for (let i = 0; i < 2000; i++) { const k = `claude:t${i}`; const t = T(k); if (t.length === 1 && t[0].id === id) return k; } };
+  const coffee = find('coffee'), book = find('bookworm'), tidy = find('tidy');
+  assert.ok(coffee && book && tidy);
+  const share = (key, acts) => {
+    const o = load(true);
+    const p = settle(o, [{ ...at('done', { ago: 2 * MIN }), key }])(key);
+    let hit = 0;
+    for (let i = 0; i < 300; i++) { o.release(p); p.lastPoi = null; o.roamTo(p); if (acts.test(p.poi.act)) hit++; }
+    return hit / 300;
+  };
+  assert.ok(share(coffee, /^(coffee|water|vending)$/) > share(book, /^(coffee|water|vending)$/) * 1.5, 'coffee lovers go for coffee');
+  assert.ok(share(book, /^read$/) > share(coffee, /^read$/) * 1.5, 'bookworms go for the books');
+  // Chores: the tidy one is picked far more often.
+  let byTidy = 0;
+  for (let i = 0; i < 60; i++) {
+    const o = load(true);
+    settle(o, [{ ...at('idle', { ago: 60 * MIN }), key: tidy }, { ...at('idle', { ago: 60 * MIN }), key: coffee }]);
+    o.first = false;
+    o.chore('plants');
+    if (o.people.get(tidy).chores) byTidy++;
+  }
+  assert.ok(byTidy > 36, `tidy does most chores (${byTidy}/60)`);
+});
+
+test('a visitor walks in, says what they came about at the secretary\'s desk, gets an answer and leaves', () => {
+  const o = load(true);
+  o.isSecretary = (s) => s.key === 'claude:sec';
+  const sec = { ...at('idle', { ago: 60 * MIN }), key: 'claude:sec', title: '秘書' };
+  settle(o, [sec]);
+  o.first = false;
+  assert.equal(o.visitorsIn([{ id: 'old', from: '舊的', text: 'x', at: Date.now() - 10 * MIN }]), 0, 'stale visits are skipped');
+  assert.equal(o.visitorsIn([{ id: 'v1', from: '小明（前端）', text: '登入頁壞了可以幫看嗎', at: Date.now() }]), 1);
+  assert.equal(o.visitorsIn([{ id: 'v1', from: '小明（前端）', text: '登入頁壞了可以幫看嗎', at: Date.now() }]), 0, 'only once');
+  const v = o.visitors.get('visitor:v1');
+  assert.equal(v.s.title, '訪客・小明（前端）');
+  assert.ok(v.path.length, 'walking in from the door');
+  assert.equal(o.bodies().includes(v), true);
+  for (let i = 0; i < 600 && v.stage === 'in'; i++) o.stepVisitors(0.05);
+  assert.equal(v.stage, 'talk');
+  assert.match(v.event.text, /登入頁/);
+  assert.equal(o.stateOf(v).act, 'chat');
+  const host = o.people.get('claude:sec');
+  v.replyAt = Date.now() - 1; o.stepVisitors(0.05);
+  assert.match(host.event.text, /收到/);
+  v.until = 0; o.stepVisitors(0.05);
+  assert.equal(v.stage, 'out');
+  for (let i = 0; i < 600 && o.visitors.has('visitor:v1'); i++) o.stepVisitors(0.05);
+  assert.equal(o.visitors.has('visitor:v1'), false, 'gone again');
+  // On air the message stays private.
+  o.masked = true;
+  o.visitorsIn([{ id: 'v2', from: '小明', text: '秘密', at: Date.now() }]);
+  assert.equal(o.visitors.get('visitor:v2').s.title, '訪客');
+  assert.doesNotMatch(o.visitors.get('visitor:v2').text, /秘密/);
+});
+
+test('a few idle ones stay downstairs to keep the office lively; the same ones, not a new set each time', () => {
+  const idle = Array.from({ length: 10 }, (_, i) => at('idle', { n: i, ago: (60 + i) * MIN }));
+  const first = Floors.split(idle, new Map());
+  const down = idle.filter((s) => first.floors.get(s.key).floor === 1).map((s) => s.key);
+  assert.equal(down.length, 4);
+  assert.deepEqual(down, ['claude:idle0', 'claude:idle1', 'claude:idle2', 'claude:idle3'], 'the most recently active');
+  // Someone else becomes "more recent" but is still idle: nobody swaps floors.
+  const later = idle.map((s) => (s.key === 'claude:idle9' ? { ...s, lastEventAt: Date.now() } : s));
+  const second = Floors.split(later, first.floors);
+  assert.equal(second.moved.size, 0);
 });

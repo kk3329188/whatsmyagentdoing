@@ -89,7 +89,7 @@
   }
 
   function label(s) {
-    if (LIVE) return s.key === 'me' ? '你' : empId(s);
+    if (LIVE) return s.key === 'me' ? '你' : s.visitor ? '訪客' : empId(s);
     const p = steps(s);
     const busy = ACTIVE.has(s.status) || s.status === 'waiting';
     return cut(name(s), 16) + (p && busy && p.done < p.total ? ` · ${p.done}/${p.total}` : '');
@@ -324,7 +324,9 @@
     const bars = kinds.slice(0, 4).map(([k, n]) => `<div class="hub-skill"><span>${esc(KIND_TEXT[k] || k)}</span><span class="hub-bar"><i style="width:${Math.round(n / total * 100)}%"></i></span><small>${Math.round(n / total * 100)}%</small></div>`).join('');
     const o = s.outcome;
     const last = o ? `${{ test: '測試', build: '編譯', push: '推送', commit: 'commit' }[o.task] || o.task}${o.ok ? '成功' : '失敗'}` : null;
+    const traits = window.OfficeTraits ? window.OfficeTraits(s.key) : [];
     return `<div class="hub-sec hub-card-emp"><h4>🪪 員工資料${bestKey() === s.key ? '　<span class="hub-best">🏆 今日最佳員工</span>' : ''}</h4>
+      ${traits.length ? `<div class="hub-traits">${traits.map((t) => `<span class="hub-chip">${t.emoji} ${esc(t.name)}</span>`).join('')}</div>` : ''}
       <div class="hub-emp"><span>工號 <b>${id}</b></span><span>部門 <b>${esc(cut(deptOf(s), 20))}</b></span><span>到職 <b>${esc(since)}</b></span>
       <span>今天 <b>${td ? `${td.turns} 輪・${td.tools} 個動作` : '還沒做完一輪'}</b></span>${last ? `<span>最近 <b>${esc(last)}</b></span>` : ''}</div>
       ${total ? `<div class="hub-skills">${bars}</div>` : ''}</div>`;
@@ -877,6 +879,7 @@
       + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
       + '<button type="button" data-tool="standup">🗣️ 開晨會</button>'
       + '<button type="button" data-tool="replay">⏪ 今日回放</button>'
+      + '<button type="button" data-tool="record">🎥 回放錄成影片</button>'
       + '<button type="button" data-tool="live">🎬 直播模式</button>'
       + `<button type="button" data-tool="boss" class="${bossIn() ? 'on' : ''}" title="B 鍵也能切換">${bossIn() ? '🚶 老闆走了' : '👔 老闆回來了'}</button>`
       + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
@@ -890,6 +893,7 @@
     if (b.dataset.tool === 'boss') toggleBoss();
     if (b.dataset.tool === 'standup' && opts.onStandup) opts.onStandup();
     if (b.dataset.tool === 'replay' && opts.onReplay) opts.onReplay();
+    if (b.dataset.tool === 'record' && opts.onRecord) opts.onRecord();
     if (b.dataset.tool === 'live' && opts.onLive) opts.onLive(true);
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
   });
@@ -902,6 +906,7 @@
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
     standupLine, showMinutes, bestKey,
     setLive(v) { LIVE = !!v; },
+    ding(kind) { Sound.play(kind); },
     get live() { return LIVE; },
     // The ticker on air: recent things, with employee numbers only.
     tickerLines() {

@@ -21,8 +21,10 @@ const scenes = require('./scenes');
 const updater = require('./update');
 const hub = require('./hub');
 const { Progress } = require('./progress');
+const { Visitors } = require('./visitors');
 const desktop = new hub.DesktopMeta();
 const progress = new Progress();
+const visitors = new Visitors();
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -168,8 +170,10 @@ function snapshot(watcher, opts) {
   // Archived desktop sessions are closed work: keep them out of the office.
   const sessions = latestSegments(raw, (s) => !!desktop.get(s.id)).map((s) => view(s, now, opts)).filter((s) => !s.archived);
   if (!opts.demo) progress.track(sessions, now);
+  if (!opts.demo) visitors.scan(now);
+  const visits = opts.demo ? [] : visitors.recent(now).map((v) => (opts.privacy ? { ...v, text: null, from: '訪客' } : v));
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions, visitors: visits };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
@@ -263,6 +267,18 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
         },
         (e) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String(e.message || e) })); },
       );
+    } else if (url.pathname === '/api/visit' && req.method === 'POST') {
+      // Someone knocking from outside (a chat bot, a script): display only.
+      if (req.headers['x-whatsmyagentdoing'] !== 'visit') { res.writeHead(403).end(); return; }
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 16 * 1024) req.destroy(); });
+      req.on('end', () => {
+        let ok = false;
+        try { ok = visitors.add(JSON.parse(body || '{}')); } catch {}
+        res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok }));
+        if (ok) push(true);
+      });
     } else if (url.pathname === '/api/hub/verify' && req.method === 'POST') {
       // The myoffice-remote plugin asks whether a queued command really came from
       // a Touch ID approval here (see src/hub.js).

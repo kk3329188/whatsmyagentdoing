@@ -257,6 +257,7 @@
   .hub-skills { margin-top: 6px; display: grid; gap: 3px; }
   .hub-skill { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 6px; font-size: 12px; }
   .hub-skill small { color: var(--muted); text-align: right; }
+  .hub-traits { display: flex; gap: 6px; margin: 2px 0 6px; flex-wrap: wrap; }
   .hub-best { background: #ffd76a; color: #5a4300; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
   #officeWrap { position: relative; }
   /* On air: just the office, full window, with a LIVE badge and a ticker. */
@@ -621,6 +622,8 @@ function render() {
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
+    // Someone from outside walks in downstairs (src/visitors.js).
+    if (!PIP && !replay && office.visitorsIn) { office.masked = Hub.live; if (office.visitorsIn(state.data.visitors) > 0) Hub.ding('wait'); }
     for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
@@ -805,7 +808,7 @@ function refreshTip() {
 function hideTip() { tipKey = null; tipPinned = false; tip.style.display = 'none'; tip.classList.remove('pinned'); }
 const officeOpts = {
   compact: PIP,
-  onFrame: (renderer) => popout?.drawPreview(renderer),
+  onFrame: (renderer) => { popout?.drawPreview(renderer); if (recorder) recordFrame(renderer); },
   label: (s) => Hub.label(s),
   doing: (s) => Hub.doing(s),
   helpers: (s) => state.data.sessions.filter((k) => k.subagent && k.parentId === s.id && ACTIVE.has(k.status)),
@@ -949,7 +952,67 @@ function stopReplay() {
   clearInterval(replay.timer);
   replay = null;
   document.getElementById('replayBar').hidden = true;
+  stopRecording();
   render();
+}
+
+// Today's replay saved as a video: each drawn frame of the floor you are
+// looking at (the 3D picture and the labels on top) is copied onto a
+// recording canvas with a caption, and the browser's recorder turns that
+// into an .mp4 (or .webm) file, saved when the replay ends.
+let recorder = null;
+function recordFrame(o) {
+  const r = recorder;
+  if (!r || o !== (state.floor === 2 && office2 ? office2 : office) || !o.canvas.width) return;
+  const c = r.ctx, W = r.cv.width, H = r.cv.height;
+  c.fillStyle = o.pal.dark ? '#1e1e1c' : '#f6f6f3';
+  c.fillRect(0, 0, W, H);
+  const k = Math.min(W / o.canvas.width, H / o.canvas.height), dw = o.canvas.width * k, dh = o.canvas.height * k;
+  const x = (W - dw) / 2, y = (H - dh) / 2;
+  if (o.gl) c.drawImage(o.gl.domElement, x, y, dw, dh);
+  c.drawImage(o.canvas, x, y, dw, dh);
+  // Caption: the company, the replayed time, a progress bar.
+  const clock = document.getElementById('replayClock').textContent.replace('⏪ ', '');
+  c.fillStyle = 'rgba(15,17,26,.72)';
+  c.fillRect(24, 22, 360, 64);
+  c.fillStyle = '#ffd98a'; c.font = '800 26px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+  c.fillText(`${Hub.company() || 'OFFICE'}・今日回放`, 40, 55);
+  c.fillStyle = '#fff'; c.font = '700 20px ui-sans-serif, system-ui, sans-serif';
+  c.fillText(clock, 40, 79);
+  if (replay) { c.fillStyle = '#3b8ee0'; c.fillRect(0, H - 6, W * Math.min(1, (Date.now() - replay.t0) / REPLAY_MS), 6); }
+}
+function startRecording() {
+  if (recorder) return;
+  if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) { Hub.toast('這個瀏覽器不能錄影'); return; }
+  const type = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+  if (!type) { Hub.toast('這個瀏覽器不能錄影'); return; }
+  startReplay();
+  if (!replay) return;
+  const cv = document.createElement('canvas');
+  cv.width = 1920; cv.height = 1080;
+  const rec = new MediaRecorder(cv.captureStream(30), { mimeType: type, videoBitsPerSecond: 8_000_000 });
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    const ext = type.startsWith('video/mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, { type: type.split(';')[0] });
+    const a = document.createElement('a');
+    const d = new Date();
+    a.href = URL.createObjectURL(blob);
+    a.download = `office-replay-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+    Hub.toast(`🎥 影片已存成 ${a.download}（${(blob.size / 1048576).toFixed(1)} MB）`);
+  };
+  recorder = { rec, cv, ctx: cv.getContext('2d') };
+  rec.start(500);
+  Hub.toast('🎥 錄影中：回放播完會自動存檔（分頁要留在前面）');
+}
+function stopRecording() {
+  if (!recorder) return;
+  const r = recorder;
+  recorder = null;
+  if (r.rec.state !== 'inactive') r.rec.stop();
 }
 document.getElementById('replayStop').addEventListener('click', stopReplay);
 
@@ -1152,6 +1215,7 @@ Hub.mount({
   onChange() { render(); },
   onStandup() { startStandup(); },
   onReplay() { if (replay) stopReplay(); else startReplay(); },
+  onRecord() { if (recorder) stopReplay(); else startRecording(); },
   onLive(v) { setLive(v); },
 });
 applyLang(chooseLang(null));
