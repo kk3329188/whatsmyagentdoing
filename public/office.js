@@ -491,13 +491,14 @@
       }
       // ---- Downstairs (the 2026 refit). Back left: the meeting room behind
       // glass; back right, under the windows: the work area; left middle: the
-      // play corner; across the front, one long "street": your desk by the
-      // front door, the lounge, then the cafe.
+      // play corner; across the front, one long "street": the lounge by the
+      // front door (visitors wait there), your desk and the secretary's in
+      // the middle, then the cafe.
       const WX = 6.6;                 // the work area starts here
       const PX0 = WX + 1.0;           // first pod
       const FY = D - 6.4;             // where the front street starts
       const MW = 6.0, MD = 5.0;       // meeting room
-      const LX0 = WX + 0.2, LX1 = W - 5.8; // lounge
+      const LX1 = W - 5.8;            // your desk's area runs from WX to here
       const CX0 = LX1 + 0.2;          // cafe
       cubicles(pods, PX0);
       const aisles = aislesFrom(PX0);
@@ -589,8 +590,13 @@
       solid(fx, fby, 1.6, 0.8, 0.05);
       poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
       poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+      const ax = MW - 0.75, ay = MD + 2.6;
+      add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
+      prop('arcade', { x: ax, y: ay });
+      solid(ax, ay, 0.7, 0.7);
+      poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
 
-      // ---- the front street, left: the phone booth by the front door
+      // ---- the front street, left: the phone booth
       const bx = WX - 1.6, by = FY + 0.3;
       this.booth(add, bx, by);
       prop('booth', { x: bx, y: by });
@@ -635,8 +641,8 @@
       prop('plant', { x: W - 0.5, y: D - 0.5 });
       solid(W - 0.7, D - 0.7, 0.4, 0.4);
 
-      // ---- the lounge, front middle: a bookcase screens it from the desks
-      const shelfX = LX0 + 0.3, shelfW = Math.min(3.6, LX1 - LX0 - 1.6), PYs = FY - 0.15;
+      // ---- behind your desk, a bookcase screens the front from the desks
+      const shelfX = WX + 0.5, shelfW = Math.min(3.6, LX1 - WX - 1.6), PYs = FY - 0.15;
       longBox(shelfX, PYs - 0.25, 0, shelfW, 0.45, 1.45, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR, {
         extra: (x0, x1) => this.books(x0, x1, PYs + 0.2),
       });
@@ -644,7 +650,9 @@
       prop('shelf', { x: shelfX, y: PYs - 0.25, w: shelfW, d: 0.45 });
       poi(shelfX + 1.0, PYs + 0.75, 'read', 'back', { zone: 'idle' });
       poi(shelfX + 2.4, PYs + 0.75, 'read', 'back', { zone: 'idle' });
-      const lx = LX0 + 0.6, ly = FY + 0.8;
+
+      // ---- the lounge, front left by the front door
+      const lx = 1.4, ly = FY + 0.8;
       add(lx + ly + 0.6, () => this.couch(lx, ly + 0.6));
       prop('couch', { x: lx, y: ly + 0.6, w: 2.8, d: 0.8 });
       prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
@@ -659,13 +667,8 @@
       add(lx + 2.6 + ly + 3.6, () => this.beanbag(lx + 2.6, ly + 3.6, '#7d93c4'));
       poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
       poi(lx + 2.6, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
-      const ax = LX1 - 0.9, ay = FY + 0.4;
-      add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
-      prop('arcade', { x: ax, y: ay });
-      solid(ax, ay, 0.7, 0.7);
-      poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
-      prop('lamp', { x: lx - 0.3, y: D - 0.6 });
-      add(lx - 0.3 + D - 0.6, () => this.floorLamp(lx - 0.3, D - 0.6));
+      prop('lamp', { x: WX - 0.6, y: D - 0.5 });
+      add(WX - 0.6 + D - 0.5, () => this.floorLamp(WX - 0.6, D - 0.5));
       floors.push({ kind: 'rug', x: lx - 0.3, y: ly + 0.2, w: 4.0, d: D - ly - 0.6 });
 
       // ---- unlocked by the office's experience (setProgress)
@@ -673,7 +676,7 @@
       // Only on floor nothing else stands on, so no path is cut off.
       const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
       if (un.has('plants')) {
-        for (const [x, y] of [[MW - 0.45, MD + 0.5], [WX + 0.45, 2.0], [LX1 - 0.4, D - 0.5]]) {
+        for (const [x, y] of [[MW - 0.45, MD + 0.5], [WX + 0.45, 2.0], [LX1 - 0.4, D - 0.5], [WX + 0.4, D - 0.5]]) {
           if (!fits(x - 0.2, y - 0.2, 0.4, 0.4)) continue;
           add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4);
         }
@@ -696,12 +699,13 @@
       const neon = un.has('neon') ? { x: logo && logo.x + logo.w + 2.6 < W - 2.6 ? logo.x + logo.w + 0.3 : WX + 0.4, text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
       // A coat rack by the front door, an armchair by the lounge lamp.
-      if (fits(0.2, D - 0.75, 0.5, 0.5)) { prop('coatRack', { x: 0.45, y: D - 0.5 }); add(0.45 + D - 0.5, () => this.coatRack(0.45, D - 0.5)); solid(0.25, D - 0.7, 0.4, 0.4); }
-      if (fits(lx - 1.2, D - 1.6, 0.8, 0.8)) {
-        prop('armchair', { x: lx - 1.2, y: D - 1.6 });
-        add(lx - 0.8 + D - 1.2, () => this.armchair(lx - 1.2, D - 1.6));
-        solid(lx - 1.2, D - 1.6, 0.8, 0.8);
-        poi(lx - 0.8, D - 1.2, 'couch', 'front', { sit: 0.34, zone: 'idle' });
+      if (fits(0.2, D - 0.6, 0.5, 0.5)) { prop('coatRack', { x: 0.45, y: D - 0.35 }); add(0.45 + D - 0.35, () => this.coatRack(0.45, D - 0.35)); solid(0.25, D - 0.55, 0.4, 0.4); }
+      const acx = WX - 1.75, acy = D - 1.55;
+      if (fits(acx, acy, 0.8, 0.8)) {
+        prop('armchair', { x: acx, y: acy });
+        add(acx + 0.4 + acy + 0.4, () => this.armchair(acx, acy));
+        solid(acx, acy, 0.8, 0.8);
+        poi(acx + 0.4, acy + 0.4, 'couch', 'front', { sit: 0.34, zone: 'idle' });
       }
 
       // ---- the notice board on the left wall: whoever finishes pins a note
@@ -720,7 +724,8 @@
       // waiting on you.
       let boss = null, sec = null;
       const bdy = D - 1.45;
-      for (const bdx of [3.9, 4.4, 3.4, 2.6]) {
+      const mid = (WX + LX1) / 2;
+      for (const bdx of [mid + 0.1, mid + 0.6, mid - 0.4]) {
         const sx = bdx - 1.7;
         if (sx < 0.9 || !fits(bdx, bdy, 1.4, 0.8) || !fits(sx, bdy, 1.4, 0.8)) continue;
         if (grid.blocked(bdx + 0.7, bdy + 1.25) || grid.blocked(sx + 0.7, bdy - 0.45)) continue;
@@ -732,6 +737,7 @@
       if (boss) {
         for (const dk of [boss, sec]) solid(dk.x, dk.y, 1.4, 0.8, 0.08);
         prop('bossDesk', { x: boss.x, y: boss.y });
+        floors.push({ kind: 'rug', x: sec.x - 0.5, y: sec.seat.y - 0.6, w: boss.x + 1.9 - sec.x, d: D - sec.seat.y + 0.5 });
         // Line up in front of your desk, then along the floor if the way up is taken.
         let qx = boss.x + 0.7, qy = boss.y - 0.55;
         const minY = FY + 0.2;
@@ -742,8 +748,8 @@
           if (qx < 0.8) break;
         }
       }
-      const spots = [[1.3, D - 2.3], [1.2, D - 0.6], [WX - 0.6, FY + 2.4], [LX1 - 0.6, D - 0.6], [2.4, D - 0.6], [W - 0.9, FY + 1.6],
-        [WX + 0.6, D - 0.6], [0.8, MD + 0.6], [WX + 0.5, 3.4], [W - 0.8, D - 1.8]];
+      const spots = [[WX - 0.6, FY + 2.4], [LX1 - 0.6, D - 0.6], [W - 0.9, FY + 1.6], [WX + 0.6, D - 0.6], [0.8, MD + 0.6], [WX + 0.5, 3.4],
+        [W - 0.8, D - 1.8], [LX1 - 0.6, FY + 1.0], [4.6, D - 0.6]];
       this.decorate({ W, D, OW: W, PY: FY, grid, pois, prop, solid, add, spots, entry: { x: 0.4, y: D - 1.2 }, lift, seats: [...desks.map((d) => d.seat), boss && boss.seat, sec && sec.seat, ...queue].filter(Boolean) });
 
       // Drop someone on these to do something with their session.
