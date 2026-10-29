@@ -67,6 +67,7 @@ async function drawnLogos(target) {
   await context.addInitScript(sessions=>{
    window.EventSource=class {constructor(){window.__events=this;setTimeout(()=>{if(!this.closed)this.onmessage?.({data:JSON.stringify({now:Date.now(),sessions})})},0)}close(){this.closed=true}};
    window.__notifications=[];
+   Date.prototype.getHours=function(){return 15}; // daytime, whatever the real clock says (after hours sends idle people home)
    window.Notification=class {static permission='granted';constructor(title,options){window.__notifications.push({title,options})}};
   },sessions);
   context.on('page',p=>p.on('pageerror',e=>errors.push(String(e))));

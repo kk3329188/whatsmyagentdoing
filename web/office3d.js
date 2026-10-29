@@ -6,12 +6,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
+import { makeChibi, animateChibi, dressChibi } from './chibi.js';
 
-const CHARACTERS = ['male-a', 'male-b', 'male-c', 'male-d', 'male-e', 'male-f',
-  'female-a', 'female-b', 'female-c', 'female-d', 'female-e', 'female-f'];
 const FURNITURE = ['desk', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse', 'laptop',
   'pottedPlant', 'plantSmall1', 'plantSmall2', 'plantSmall3', 'kitchenCabinet', 'kitchenCoffeeMachine',
   'kitchenSink', 'kitchenFridgeLarge', 'kitchenMicrowave', 'stoolBar', 'tableRound', 'table',
@@ -25,7 +23,7 @@ const STATUS_COLOR = {
 const CHAR_HEIGHT = 0.92; // world units (≈ tiles)
 const HELD_LIFT = 0.45;   // how high a picked-up person dangles
 const WALL_H = 2.4;
-const SIT_FORWARD = 0.16;
+const SIT_FORWARD = 0.06;
 const DESK_H = 0.6;
 
 // Turn a scene manifest into the floor plan the shared simulation uses:
@@ -156,11 +154,8 @@ export class Office3D extends window.Office {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
     const get = (url) => new Promise((ok, fail) => loader.load(url, ok, undefined, fail));
-    const [chars, furn] = await Promise.all([
-      Promise.all(CHARACTERS.map((c) => get(`/assets/kenney/characters/character-${c}.glb`))),
-      Promise.all(FURNITURE.map((f) => get(`/assets/kenney/furniture/${f}.glb`).then((g) => [f, g.scene]))),
-    ]);
-    this.chars = chars;
+    // People are made in code (chibi.js); only furniture models load here.
+    const furn = await Promise.all(FURNITURE.map((f) => get(`/assets/kenney/furniture/${f}.glb`).then((g) => [f, g.scene])));
     this.models = Object.fromEntries(furn);
     if (this.sceneDef) {
       const extra = [...new Set(this.sceneDef.props.filter((p) => p.f && !this.models[p.f]).map((p) => p.f))];
@@ -1567,36 +1562,11 @@ export class Office3D extends window.Office {
   actorFor(p) {
     let a = this.actors.get(p.key);
     if (a) return a;
-    const gltf = this.chars[p.h % this.chars.length];
-    const obj = cloneSkinned(gltf.scene);
-    obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-    const box = new THREE.Box3().setFromObject(obj);
-    const s = CHAR_HEIGHT * (p.s && p.s.subagent ? 0.8 : 1) / (box.max.y - box.min.y);
-    obj.scale.setScalar(s);
-    const mixer = new THREE.AnimationMixer(obj);
-    const actions = {};
-    for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
-    let head = null, armR = null, armL = null, torso = null, headMesh = null, bodyMesh = null;
-    obj.traverse((o) => {
-      if (o.name === 'head') head = o; if (o.name === 'arm-right') armR = o; if (o.name === 'arm-left') armL = o; if (o.name === 'torso') torso = o;
-      if (o.name === 'head-mesh') headMesh = o; if (o.name === 'body-mesh') bodyMesh = o;
-    });
-    // Measured in the rest pose (at the origin, facing +z) so clothes can be
-    // hung on the bones later, whatever pose they are in.
-    obj.updateMatrixWorld(true);
-    const restOf = (n) => n && { inv: n.matrixWorld.clone().invert(), q: n.getWorldQuaternion(new THREE.Quaternion()).invert(), s: n.getWorldScale(new THREE.Vector3()) };
-    const rest = {
-      head: restOf(head), torso: restOf(torso), root: restOf(obj),
-      headBox: headMesh ? new THREE.Box3().setFromObject(headMesh) : null,
-      bodyBox: bodyMesh ? new THREE.Box3().setFromObject(bodyMesh) : null,
-    };
-    const prop = new THREE.Group();
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 10), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-    const book = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.04), new THREE.MeshStandardMaterial({ color: 0xc96442 }));
-    // A phone and a game console in the hand, a laptop on the lap.
-    const phone = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.11, 0.012), new THREE.MeshStandardMaterial({ color: 0x1d1f24, emissive: 0x2a4f88, emissiveIntensity: 0.4 }));
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.03), new THREE.MeshStandardMaterial({ color: 0x2c3e50 }));
-    prop.add(cup, book, phone, pad);
+    // A chibi of their own: skin, hair and clothes from who they are.
+    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.h % 5 });
+    const obj = rig.root;
+    if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
+    rig.sign.add(this.signBoard());
     const laptop = new THREE.Group();
     const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));
     const lapLid = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.012), new THREE.MeshStandardMaterial({ color: 0x3c4048, emissive: 0x4a90d0, emissiveIntensity: 0.35 }));
@@ -1604,33 +1574,10 @@ export class Office3D extends window.Office {
     laptop.add(lapBase, lapLid);
     laptop.visible = false;
     const blob = this.blobShadow();
-    this.scene.add(obj, prop, laptop, blob);
-    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, armL, prop, cup, book, phone, pad, laptop, blob, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
-    // A box (or the lunch bag) held out front.
-    if (rest.bodyBox) {
-      a.box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.22), new THREE.MeshStandardMaterial({ color: 0xc8a06a }));
-      const b = rest.bodyBox;
-      this.wear(a, obj, rest.root, a.box, new THREE.Vector3(0, (b.min.y + b.max.y) / 2, b.max.z + 0.12));
-      a.box.visible = false;
-    }
-    // Held up over their head after waiting on you a while.
-    if (rest.headBox) {
-      a.sign = this.signBoard();
-      this.wear(a, obj, rest.root, a.sign, new THREE.Vector3(0, rest.headBox.max.y + 0.16, 0));
-      a.sign.visible = false;
-    }
+    this.scene.add(obj, laptop, blob);
+    a = { obj, rig, laptop, blob, yaw: 0, last: { x: p.x, y: p.y }, speed: 0 };
     this.actors.set(p.key, a);
     return a;
-  }
-
-  // Hang a mesh (sized in world units) on a bone at a point measured in the rest pose.
-  wear(a, node, rest, mesh, at) {
-    if (!node || !rest) return;
-    mesh.position.copy(at.clone().applyMatrix4(rest.inv));
-    mesh.quaternion.copy(rest.q);
-    mesh.scale.set(1 / rest.s.x, 1 / rest.s.y, 1 / rest.s.z);
-    mesh.castShadow = true;
-    node.add(mesh);
   }
 
   signBoard() {
@@ -1646,53 +1593,6 @@ export class Office3D extends window.Office {
     const plain = new THREE.MeshStandardMaterial({ color: 0xfffdf4 });
     const face = new THREE.MeshStandardMaterial({ map: tex });
     return new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.02), [plain, plain, plain, plain, face, face]);
-  }
-
-  // What their level lets them wear: a lanyard, headphones, a tie, a crown.
-  dress(a, level) {
-    if (a.level === level) return;
-    a.level = level;
-    for (const m of a.outfit) if (m.parent) m.parent.remove(m);
-    a.outfit = [];
-    const { headBox: hb, bodyBox: bb } = a.rest;
-    if (!hb || !bb) return;
-    const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...extra });
-    const put = (node, rest, mesh, at) => { this.wear(a, node, rest, mesh, at); a.outfit.push(mesh); };
-    const hw = (hb.max.x - hb.min.x) / 2, hc = hb.getCenter(new THREE.Vector3());
-    const bh = bb.max.y - bb.min.y, bw = bb.max.x - bb.min.x;
-    if (level >= 4) {
-      const tie = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.14, bh * 0.62, 0.012), mat(0xb03a2e));
-      put(a.torso, a.rest.torso, tie, new THREE.Vector3(0, bb.max.y - bh * 0.36, bb.max.z + 0.004));
-    } else if (level >= 2) {
-      const card = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.2, bh * 0.26, 0.01), mat(0xfafafa));
-      put(a.torso, a.rest.torso, card, new THREE.Vector3(0, bb.max.y - bh * 0.5, bb.max.z + 0.004));
-      const strap = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.2, bh * 0.06, 0.012), mat(0x3b8ee0));
-      put(a.torso, a.rest.torso, strap, new THREE.Vector3(0, bb.max.y - bh * 0.38, bb.max.z + 0.005));
-    }
-    if (level === 3 || level === 4) {
-      const band = new THREE.Mesh(new THREE.TorusGeometry(hw * 1.04, 0.012, 6, 20, Math.PI), mat(0xe2e2e6, { metalness: 0.4 }));
-      put(a.head, a.rest.head, band, new THREE.Vector3(hc.x, hc.y, hc.z));
-      for (const sx of [-1, 1]) {
-        const cup = new THREE.Mesh(new THREE.CylinderGeometry(hw * 0.32, hw * 0.32, 0.05, 14), mat(0x3a3a44));
-        cup.rotation.z = Math.PI / 2;
-        const g = new THREE.Group();
-        g.add(cup);
-        put(a.head, a.rest.head, g, new THREE.Vector3(hc.x + sx * hw * 1.04, hc.y, hc.z));
-      }
-    }
-    if (level >= 5) {
-      const crown = new THREE.Mesh(new THREE.CylinderGeometry(hw * 0.5, hw * 0.42, hw * 0.4, 8, 1, true), mat(0xf2c230, { metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide, emissive: 0x332200 }));
-      put(a.head, a.rest.head, crown, new THREE.Vector3(hc.x, hb.max.y + hw * 0.18, hc.z));
-    }
-  }
-
-  play(a, name) {
-    if (a.current === name) return;
-    const next = a.actions[name] || a.actions.idle;
-    if (!next) return;
-    next.reset().setEffectiveWeight(1).fadeIn(0.25).play();
-    if (a.current && a.actions[a.current]) a.actions[a.current].fadeOut(0.25);
-    a.current = name;
   }
 
   facing(p, st) {
@@ -1724,88 +1624,19 @@ export class Office3D extends window.Office {
     return st.face === 'back' ? Math.PI : 0;
   }
 
-  // Arms, head and body bent on top of whatever clip plays (the clips only
-  // know sitting, typing and so on): holding a phone to look at, typing on
-  // a laptop, laughing, reaching for a cup. Each bone is bent from the pose
-  // the clip gave it this frame (or, for bones the clip leaves alone, from
-  // where it was before we bent it).
-  pose(a, st, p) {
-    const t = this.t / 1000 + p.phase;
-    const wave = (f, k = 0) => Math.sin(t * f + k);
-    const up = (f) => Math.max(0, Math.sin(t * f));
-    // (poseTweak: set from the console to try out a pose.)
-    const P = (this.poseTweak && this.poseTweak[st.act]) || {
-      // At the computer: hands on the keyboard (fingers going), on the mouse,
-      // writing, chin in hand, arms folded waiting for a long command.
-      type: { r: [-1.3 + 0.06 * wave(17), 0, 0.18], l: [-1.3 + 0.06 * wave(17, Math.PI), 0, -0.18], head: 0.12 + 0.03 * wave(0.7) },
-      typefast: { r: [-1.32 + 0.09 * wave(26), 0, 0.18], l: [-1.32 + 0.09 * wave(26, Math.PI), 0, -0.18], head: 0.16 },
-      deskread: { r: [-1.28 + 0.04 * wave(2.2), 0, -0.02 + 0.04 * wave(1.3)], l: [-1.2, 0, -0.12], head: 0.08 },
-      chin: { r: [-1.75, 0, 0.55], l: [-0.9, 0, -0.35], head: 0.1 },
-      scratch: { r: [-2.6 + 0.1 * wave(9), 0, 0.7], head: 0.05 },
-      lookup: { r: [-0.6, 0, 0.2], l: [-0.6, 0, -0.2], head: -0.28 },
-      leanback: { r: [-0.75, 0, 0.55], l: [-0.75, 0, -0.55], head: -0.08, torso: -0.12 },
-      point: { r: [-0.4, 0, -1.3], head: 0.05 },
-      stretch: { r: [-2.95, 0, 0.25], l: [-2.95, 0, -0.25], head: -0.2 },
-      neck: { r: [-2.3, 0, 0.9], head: 0.25 * wave(1.5) },
-      scroll: { r: [-0.95, 0, 0.35], l: [-0.85, 0, -0.35], head: 0.38 },
-      phone: { r: [-2.3, 0, 0.6], head: 0.1 },
-      laptop: { r: [-0.6 + 0.07 * wave(16), 0, 0.25], l: [-0.6 + 0.07 * wave(16, Math.PI), 0, -0.25], head: 0.32 },
-      read: { r: [-1.0, 0, 0.3], l: [-1.0, 0, -0.3], head: 0.32 },
-      game: { r: [-0.9 + 0.05 * wave(12), 0, 0.4], l: [-0.9 + 0.05 * wave(12, 2), 0, -0.4], head: 0.3 },
-      laugh: { r: [-0.45, 0, 0.15], l: [-0.45, 0, -0.15], head: -0.3 - 0.12 * Math.abs(wave(8)), torso: -0.1 * Math.abs(wave(8)) },
-      chat: { r: [-0.55 - 0.4 * up(4), 0, 0.25 + 0.15 * wave(3)], head: 0.06 * wave(5) },
-      watch: { head: -0.12, torso: -0.14 },
-      think: { r: [-1.75, 0, 0.55], head: 0.15 },
-      write: { r: [-0.65 + 0.05 * wave(10), 0, 0.2], head: 0.32 },
-      eat: { r: [-0.7 - 0.9 * up(3), 0, 0.2], head: 0.12 },
-      sip: wave(0.9) > 0.6 ? { r: [-1.9, 0, 0.35], head: -0.15 } : { r: [-0.6, 0, 0.2] },
-      yawn: { r: [-2.0, 0, 0.6], head: -0.25 },
-      facepalm: { r: [-2.2, 0, 0.8], head: 0.35 },
-      nap: { head: 0.55 },
-      pin: { r: [-2.5, 0, 0] },
-      wave: { r: [-2.7 + 0.3 * wave(10), 0, 0.35] },
-      dazed: { head: 0.2 * wave(14) },
-      cheer: st.pose === 'sit' ? { r: [-2.8, 0, 0.3], l: [-2.8, 0, -0.3] } : null,
-      whiteboard: { r: [-2.0 + 0.25 * wave(3), 0, 0] },
-    }[st.act];
-    const e = new THREE.Euler();
-    const q = new THREE.Quaternion();
-    const bend = (bone, key, rot) => {
-      if (!bone) return;
-      const rec = a[key] || (a[key] = { base: bone.quaternion.clone(), wrote: null });
-      if (!rec.wrote || !bone.quaternion.equals(rec.wrote)) rec.base.copy(bone.quaternion);
-      bone.quaternion.copy(rec.base);
-      if (rot) bone.quaternion.multiply(q.setFromEuler(e.set(rot[0], rot[1], rot[2])));
-      rec.wrote = bone.quaternion.clone();
-    };
-    bend(a.armR, 'poseR', P && P.r);
-    bend(a.armL, 'poseL', P && P.l);
-    bend(a.head, 'poseH', P && P.head ? [P.head, 0, 0] : null);
-    bend(a.torso, 'poseT', P && P.torso ? [P.torso, 0, 0] : null);
-  }
-
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k) && !(k === 'me' && this.me) && !(this.visitors && this.visitors.has(k))) { this.scene.remove(a.obj, a.prop, a.laptop, a.blob); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me) && !(this.visitors && this.visitors.has(k))) { this.scene.remove(a.obj, a.laptop, a.blob); this.actors.delete(k); }
     }
     for (const p of this.bodies()) {
       const a = this.actorFor(p);
       const st = this.stateOf(p);
       p.pose = st.pose;
-      const anim = {
-        held: 'fall', dazed: 'emote-no', chat: 'interact-right', stretch: 'emote-yes', sip: 'holding-right', eat: 'holding-right',
-        printer: 'pick-up', neck: 'idle', lookaround: 'idle', clipboard: 'holding-both', run: 'sprint', yoga: 'emote-yes', sign: 'holding-both', knock: 'interact-right', tv: 'idle', trophy: 'idle',
-        walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
-        phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
-        pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
-        cheer: 'emote-yes', facepalm: 'emote-no', yawn: 'idle', deliver: 'pick-up', unpack: 'interact-right',
-        fix: 'interact-left', refill: 'interact-right', waterplant: 'holding-right', pin: 'interact-right', peek: 'idle',
-      }[st.pose === 'walk' ? (st.act === 'run' ? 'run' : 'walk') : st.pose === 'sit' ? 'sit' : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
-      let chosen = anim;
-      if (st.act === 'station') chosen = p.s.status === 'thinking' ? 'idle' : (p.desk.anim || 'interact-right');
-      else if (st.pose !== 'walk' && p.poi && p.poi.anim) chosen = p.poi.anim;
-      this.play(a, chosen);
-      a.mixer.update(dt);
+      // How fast they cross the floor (for the stride), then the pose.
+      const moved = Math.hypot(p.x - a.last.x, p.y - a.last.y);
+      a.speed = a.speed + ((dt > 0 ? moved / dt : 0) - a.speed) * Math.min(1, dt * 8);
+      animateChibi(a.rig, st, this.t / 1000 + p.phase, dt, a.speed);
+      dressChibi(a.rig, (p.s && p.s.level) || 1);
 
       // position + facing
       const dx = p.x - a.last.x, dy = p.y - a.last.y;
@@ -1820,8 +1651,7 @@ export class Office3D extends window.Office {
       a.obj.rotation.y = a.yaw;
       const seatY = st.pose === 'sit' ? this.seatHeight(p.x, p.y, st.sitZ)
         : this.plan.terrain ? this.groundHeight(p.x, p.y) : 0;
-      // The sit pose's torso leans back past its origin; slide the body
-      // forward so the back rests against the backrest instead of in it.
+      // Sitting: a little forward of the seat point, back against the backrest.
       const fwd = st.pose === 'sit' ? SIT_FORWARD : 0;
       let lift = 0;
       // Picked up: dangle and sway under the pointer.
@@ -1839,27 +1669,12 @@ export class Office3D extends window.Office {
       a.blob.position.set(a.obj.position.x, (st.pose === 'sit' ? seatY : this.plan.terrain ? seatY : 0) + 0.012, a.obj.position.z);
       a.blob.material.opacity = 1;
       a.blob.scale.setScalar(p.held ? 0.6 : st.pose === 'sit' ? 0.85 : 1);
-      this.pose(a, st, p);
-      this.dress(a, (p.s && p.s.level) || 1);
-      if (a.sign) a.sign.visible = st.act === 'sign';
-      // hand-held props
-      a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || st.act === 'waterplant' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
-      if (a.box) a.box.visible = st.act === 'carry' || st.act === 'deliver' || st.act === 'unpack';
-      a.book.visible = st.act === 'read' || st.act === 'clipboard';
-      a.phone.visible = st.act === 'scroll' || st.act === 'phone';
-      a.pad.visible = st.act === 'game';
+      a.cup = a.rig.held.cup;
+      if (a.rig.held.cup.visible) a.rig.held.cup.material.color.set(st.act === 'water' ? 0x9fd3ff : 0xffffff);
       a.laptop.visible = st.act === 'laptop' && st.pose === 'sit';
       if (a.laptop.visible) {
-        a.laptop.position.set(p.x + Math.sin(a.yaw) * 0.3, seatY + 0.3, p.y + Math.cos(a.yaw) * 0.3);
+        a.laptop.position.set(p.x + Math.sin(a.yaw) * 0.3, seatY + 0.26, p.y + Math.cos(a.yaw) * 0.3);
         a.laptop.rotation.y = a.yaw + Math.PI;
-      }
-      if (a.armR && (a.cup.visible || a.book.visible || a.phone.visible || a.pad.visible)) {
-        a.obj.updateMatrixWorld(true);
-        const hand = new THREE.Vector3(0, -0.4, 0.15);
-        a.armR.localToWorld(hand);
-        a.prop.position.copy(hand);
-        a.prop.rotation.y = a.yaw;
-        a.cup.material.color.set(st.act === 'water' ? 0x9fd3ff : st.act === 'waterplant' ? 0x4f9ad8 : 0xffffff);
       }
     }
   }
@@ -1927,7 +1742,7 @@ export class Office3D extends window.Office {
       this.room.updateMatrixWorld(true);
       this.seats = new Map();
       this.ground = new Map();
-      for (const a of this.actors.values()) this.scene.remove(a.obj, a.prop);
+      for (const a of this.actors.values()) this.scene.remove(a.obj, a.laptop, a.blob);
       this.actors.clear();
     }
     const dt = Math.min(0.05, this.clock.getDelta());
