@@ -183,6 +183,7 @@
       deskTop: '#8a6a4c', deskL: '#6e533b', deskR: '#5c4431',
       monitor: '#18181a', screenOff: '#26282c', chair: '#a8664a', panel: '#8e8a82',
       rug: '#47544f', rugEdge: '#3a4541', couch: '#5b6b8c', couchD: '#4a587a',
+      workA: '#3a3d42', workB: '#36393e', runner: '#7a4f3e', runnerEdge: '#a8745c',
       counter: '#d9d4c9', counterL: '#a9a397', counterR: '#958f84', metal: '#8d939a',
       glass: 'rgba(160,200,230,.10)', glassEdge: 'rgba(190,220,240,.35)', mat: '#2f4a3a',
       text: '#ecebe6', tagBg: 'rgba(20,20,19,.78)', bubble: '#f4f3ee', bubbleInk: '#1c1c1a',
@@ -195,6 +196,7 @@
       deskTop: '#c9a47e', deskL: '#a8825a', deskR: '#946f4b',
       monitor: '#2a2a2e', screenOff: '#3a3d44', chair: '#cd8a68', panel: '#e9e3d7',
       rug: '#c4d4cb', rugEdge: '#a9bcb1', couch: '#7d93c4', couchD: '#6a80b0',
+      workA: '#d9d6cf', workB: '#d2cec6', runner: '#cd8a68', runnerEdge: '#f0d9c8',
       counter: '#fbfaf7', counterL: '#d9d4c9', counterR: '#c9c3b6', metal: '#b5bcc4',
       glass: 'rgba(170,210,235,.16)', glassEdge: 'rgba(120,160,190,.55)', mat: '#bfd8c4',
       text: '#1c1c1a', tagBg: 'rgba(255,255,255,.9)', bubble: '#ffffff', bubbleInk: '#1c1c1a',
@@ -411,7 +413,9 @@
       const pods = Math.max(4, Math.ceil((nWorking + 2) / 4));
       const podCols = pods <= 4 ? 2 : 3;
       const podRows = Math.ceil(pods / podCols);
-      const OW = 1.3 + (podCols - 1) * 4.2 + 3.9; // open office width
+      // Pods 4.6 apart: a proper aisle between them, with a runner down it.
+      const PODX = 4.6;
+      const OW = 1.3 + (podCols - 1) * PODX + 3.9; // open office width
       const OD = podRows * 4.7 + 0.8;             // open office depth (pods)
       // In front of the pods: the games corner, vending machines, the phone
       // booth and your desk all need their room.
@@ -451,7 +455,7 @@
       // ---- cubicle pods: 4 desks back to back with a divider
       const cubicles = (count) => { for (let p = 0; p < count; p++) {
         const c = p % podCols, r = Math.floor(p / podCols);
-        const px = 1.3 + c * 4.2, py = 2.0 + r * 4.7;
+        const px = 1.3 + c * PODX, py = 2.0 + r * 4.7;
         const panel = PANEL[p % PANEL.length];
         podSpots.push({ x: px, y: py, color: panel });
         for (let k = 0; k < 2; k++) {
@@ -466,7 +470,12 @@
         prop('panel', { x: px - 0.18, y: py - 0.05, w: 0.08, d: 1.82, h: 1.15, color: panel });
         add(px - 0.1 + py + 0.86, () => this.box(px - 0.18, py - 0.05, 0, 0.08, 1.82, 1.15, this.shade(panel, 25), panel, this.shade(panel, -15)));
         solid(px - 0.18, py + 0.8, 3.25, 0.12, 0.05);
+        // Pendant lamps over the pod and a planter along the divider (3D).
+        prop('pendant', { x: px + 1.45, y: py + 0.86, span: 1.5 });
+        prop('planter', { x: px + 0.2, y: py + 0.82, w: 2.4 });
       } };
+      const aisles = [];
+      for (let c = 0; c + 1 < Math.min(podCols, pods); c++) aisles.push({ x: 1.3 + c * PODX + 3.12, w: PODX - 3.4 });
       // The lift on the left wall, the same spot on both floors.
       const lift = { x: 0.55, y: D - 3.0 };
       prop('lift', { y: lift.y });
@@ -475,7 +484,7 @@
         // Always a spare desk or two, as downstairs (else every update would
         // lay the floor out again and send everyone walking).
         cubicles(Math.max(1, Math.ceil((nWorking + 2) / 4)));
-        return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots };
+        return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots, aisles };
       }
       cubicles(pods);
 
@@ -557,6 +566,7 @@
       const mtx = mx + 1.6, mty = 1.7;
       add(mtx + 1.5 + mty + 0.7, () => this.meetingTable(mtx, mty));
       prop('meetingTable', { x: mtx, y: mty, w: 3.0, d: 1.4 });
+      prop('pendant', { x: mtx + 1.5, y: mty + 0.7, span: 1.2 });
       solid(mtx, mty, 3.0, 1.4);
       for (let k = 0; k < 3; k++) {
         const cx = mtx + 0.5 + k * 1.0;
@@ -597,6 +607,7 @@
       const rtx = mx + 3.6, rty = MR + 2.9;
       add(rtx + rty, () => this.roundTable(rtx, rty));
       prop('roundTable', { x: rtx, y: rty });
+      prop('pendant', { x: rtx, y: rty, span: 0 });
       solid(rtx - 0.45, rty - 0.45, 0.9, 0.9);
       for (const [sx, sy, face] of [[rtx - 1.0, rty, 'front'], [rtx + 1.0, rty, 'front'], [rtx, rty + 1.0, 'back'], [rtx, rty - 0.95, 'front']]) {
         add(sx + sy - 0.02, () => this.stool(sx, sy, 0.45, '#c9a24c'));
@@ -667,6 +678,10 @@
       const neon = un.has('neon') ? { x: logo ? (logo.x > 2.8 ? 0.5 : logo.x + logo.w + 0.3) : Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
 
+      // A coat rack by the front door, an armchair by the lounge lamp.
+      if (fits(0.2, D - 0.75, 0.5, 0.5)) { prop('coatRack', { x: 0.45, y: D - 0.5 }); solid(0.25, D - 0.7, 0.4, 0.4); }
+      if (fits(lx - 0.1, D - 1.95, 0.8, 0.8)) { prop('armchair', { x: lx - 0.1, y: D - 1.95 }); solid(lx - 0.1, D - 1.95, 0.8, 0.8); poi(lx + 0.3, D - 1.55, 'couch', 'front', { sit: 0.34, zone: 'idle' }); }
+
       // ---- the notice board on the left wall: whoever finishes pins a note
       let board = null;
       for (const by0 of [6.2, 5.6, 7.0]) {
@@ -729,12 +744,12 @@
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
       orientSeats(pois, props);
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, aisles, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
     }
 
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
     // Same footprint as downstairs; you come and go by the lift.
-    upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
+    upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
       const pal = this.pal;
       const mx = OW;
       const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
@@ -743,7 +758,7 @@
       // yoga mats where a pod would be
       if (pods > used) {
         const c = used % podCols, r = Math.floor(used / podCols);
-        const px = 1.3 + c * 4.2, py = 2.0 + r * 4.7;
+        const px = 1.3 + c * PODX, py = 2.0 + r * 4.7;
         ['#c96442', '#7fb08a', '#7d93c4'].forEach((col, i) => {
           const x = px + i * 1.05, y = py + 0.2;
           add(x + y, () => this.yogaMat(x, y, col));
@@ -834,6 +849,7 @@
         const rty = MR + 2.9;
         add(rtx + rty, () => this.roundTable(rtx, rty));
         prop('roundTable', { x: rtx, y: rty });
+      prop('pendant', { x: rtx, y: rty, span: 0 });
         solid(rtx - 0.45, rty - 0.45, 0.9, 0.9);
         for (const [sx, sy, face] of [[rtx - 0.95, rty, 'front'], [rtx + 0.95, rty, 'front'], [rtx, rty + 0.95, 'back']]) {
           if (sx > W - 0.3) continue;
@@ -2549,6 +2565,16 @@
         }
       }
       for (let y = 0.5; y < D; y += 0.5) this.poly([P(0, y), P(OW, y), P(OW, y + 0.012), P(0, y + 0.012)], pal.woodLine);
+      // The work area has carpet tiles; a runner down each aisle.
+      const wy = this.plan.OD + 0.2;
+      for (let x = 0; x < OW - 0.01; x += 0.75) for (let y = 0; y < wy - 0.01; y += 0.75) {
+        const x1 = Math.min(OW, x + 0.75), y1 = Math.min(wy, y + 0.75);
+        this.poly([P(x, y), P(x1, y), P(x1, y1), P(x, y1)], (Math.round(x / 0.75) + Math.round(y / 0.75)) % 2 ? pal.workA : pal.workB);
+      }
+      for (const a of this.plan.aisles || []) {
+        this.poly([P(a.x, 1.2), P(a.x + a.w, 1.2), P(a.x + a.w, wy - 0.3), P(a.x, wy - 0.3)], pal.runner);
+        this.poly([P(a.x + 0.08, 1.28), P(a.x + a.w - 0.08, 1.28), P(a.x + a.w - 0.08, wy - 0.38), P(a.x + 0.08, wy - 0.38)], null, pal.runnerEdge);
+      }
       // Plank ends and wood grain.
       {
         const c = this.ctx;
@@ -2610,7 +2636,7 @@
       // A flash of lightning now and then.
       const flash = wk === 'storm' && (t % 7.3) < 0.12;
       for (const x of this.plan.windows) {
-        this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 2.0), P(x, 0, 2.0)], flash ? '#e8eef8' : grey || sky.sky);
+        this.poly([P(x, 0, 0.45), P(x + 1.5, 0, 0.45), P(x + 1.5, 0, 2.15), P(x, 0, 2.15)], flash ? '#e8eef8' : grey || sky.sky);
         if (wk === 'rain' || wk === 'storm') {
           this.onWall('y0', x, 1.98, (c) => {
             c.strokeStyle = 'rgba(210,225,240,.7)'; c.lineWidth = 0.8;
@@ -2643,7 +2669,7 @@
             c.beginPath(); c.ellipse(0, 0, 7, 3, 0, 0, Math.PI * 2); c.ellipse(5, -2, 5, 3, 0, 0, Math.PI * 2); c.fill();
           });
         }
-        this.poly([P(x + 0.74, 0, 0.85), P(x + 0.76, 0, 0.85), P(x + 0.76, 0, 2.0), P(x + 0.74, 0, 2.0)], pal.trim);
+        this.poly([P(x + 0.74, 0, 0.45), P(x + 0.76, 0, 0.45), P(x + 0.76, 0, 2.15), P(x + 0.74, 0, 2.15)], pal.trim);
         this.poly([P(x, 0, 0.85), P(x + 1.5, 0, 0.85), P(x + 1.5, 0, 0.9), P(x, 0, 0.9)], pal.trim);
         this.poly([P(x, 0.05), P(x + 1.5, 0.05), P(x + 1.95, 1.2), P(x + 0.45, 1.2)], sky.night ? 'rgba(120,140,200,.06)' : 'rgba(255,250,230,.16)');
       }

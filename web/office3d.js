@@ -345,6 +345,28 @@ export class Office3D extends window.Office {
     floor(OW, MR, W - OW, PY - MR, 0xffffff, tiles);
     const planks2 = planks.clone(); planks2.needsUpdate = true; planks2.repeat.set((W - OW) / 3, (D - PY) / 3);
     floor(OW, PY, W - OW, D - PY, 0xffffff, planks2);
+    // The work area: soft carpet tiles, with a runner down each aisle.
+    const workTiles = this.patternTexture((c, s) => {
+      const a = dark ? '#3a3d42' : '#d9d6cf', b = dark ? '#35383d' : '#cfcbc2';
+      c.fillStyle = a; c.fillRect(0, 0, s, s);
+      c.fillStyle = b; c.fillRect(0, 0, s / 2, s / 2); c.fillRect(s / 2, s / 2, s / 2, s / 2);
+      for (let i = 0; i < 900; i++) { c.fillStyle = i % 2 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.05)'; c.fillRect((i * 97) % s, (i * 61 + (i >> 4) * 5) % s, 2, 2); }
+      c.fillStyle = dark ? 'rgba(0,0,0,.3)' : 'rgba(120,110,100,.25)';
+      for (const v of [0, s / 2]) { c.fillRect(v, 0, 1, s); c.fillRect(0, v, s, 1); }
+    }, 256);
+    const WY = plan.OD + 0.2;
+    workTiles.repeat.set(OW / 1.5, WY / 1.5);
+    const work = new THREE.Mesh(new THREE.PlaneGeometry(OW, WY), new THREE.MeshStandardMaterial({ map: workTiles, roughness: 1 }));
+    work.rotation.x = -Math.PI / 2; work.position.set(OW / 2, 0.002, WY / 2); work.receiveShadow = true;
+    this.room.add(work);
+    for (const a of plan.aisles || []) {
+      const len = WY - 1.5;
+      const runner = new THREE.Mesh(new THREE.PlaneGeometry(a.w, len), soft(dark ? 0x7a4f3e : 0xcd8a68));
+      runner.rotation.x = -Math.PI / 2; runner.position.set(a.x + a.w / 2, 0.004, 1.2 + len / 2); runner.receiveShadow = true;
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(a.w - 0.16, len - 0.16), soft(dark ? 0x8d5c48 : 0xe0a585));
+      edge.rotation.x = -Math.PI / 2; edge.position.set(a.x + a.w / 2, 0.005, 1.2 + len / 2); edge.receiveShadow = true;
+      this.room.add(runner, edge);
+    }
     const pp = plan.pp;
     const mat = new THREE.Mesh(new THREE.PlaneGeometry(pp.x1 - pp.x0 + 1.2, 2.7), new THREE.MeshStandardMaterial({ color: dark ? 0x2f4a3a : 0xbfd8c4, roughness: 1 }));
     mat.rotation.x = -Math.PI / 2; mat.position.set((pp.x0 + pp.x1) / 2, 0.005, pp.y - 0.05); mat.receiveShadow = true;
@@ -359,13 +381,18 @@ export class Office3D extends window.Office {
     this.windowMat = new THREE.MeshStandardMaterial({ color: sky.sky, emissive: sky.sky, emissiveIntensity: 0.6 });
     for (const wx of plan.windows) {
       this.boxMesh(cx, -T, 0, wx - cx, T, WALL_H, 0, { mat: wallMat });
-      this.boxMesh(wx, -T, 0, 1.5, T, 0.85, 0, { mat: wallMat });
-      this.boxMesh(wx, -T, 2.0, 1.5, T, WALL_H - 2.0, 0, { mat: wallMat });
-      const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.15), this.windowMat);
-      glass.position.set(wx + 0.75, 1.425, -T / 2);
+      // Tall windows: a low sill, glass up to near the ceiling, black frames.
+      this.boxMesh(wx, -T, 0, 1.5, T, 0.45, 0, { mat: wallMat });
+      this.boxMesh(wx, -T, 2.15, 1.5, T, WALL_H - 2.15, 0, { mat: wallMat });
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.7), this.windowMat);
+      glass.position.set(wx + 0.75, 1.3, -T / 2);
       this.room.add(glass);
-      this.boxMesh(wx + 0.73, -0.02, 0.85, 0.04, 0.04, 1.15, dark ? 0x2b2926 : 0xcfc5b3);
-      this.boxMesh(wx, -0.02, 0.83, 1.5, 0.1, 0.04, dark ? 0x2b2926 : 0xcfc5b3);
+      const frame = dark ? 0x1e2024 : 0x2f3236;
+      this.boxMesh(wx + 0.73, -0.03, 0.45, 0.04, 0.04, 1.7, frame);
+      this.boxMesh(wx, -0.03, 1.28, 1.5, 0.04, 0.035, frame, { shadow: false });
+      for (const fx of [wx, wx + 1.46]) this.boxMesh(fx, -0.03, 0.45, 0.04, 0.04, 1.7, frame);
+      this.boxMesh(wx, -0.03, 2.11, 1.5, 0.04, 0.04, frame);
+      this.boxMesh(wx - 0.02, -0.02, 0.43, 1.54, 0.14, 0.04, dark ? 0x2b2926 : 0xe8e1d4);
       cx = wx + 1.5;
     }
     this.boxMesh(cx, -T, 0, W - cx, T, WALL_H, 0, { mat: wallMat });
@@ -385,6 +412,17 @@ export class Office3D extends window.Office {
       const dy0 = plan.door.y - 0.6, dy1 = plan.door.y + 0.6;
       this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
       this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
+    }
+    // Framed prints in the gaps between the back windows.
+    {
+      let from = 0.3, n = 0;
+      const gaps = [];
+      for (const wx of [...plan.windows, OW - 0.3]) { if (wx - from >= 1.0) gaps.push([from, wx]); from = wx + 1.5; }
+      for (const [a, b] of gaps) {
+        if (plan.logo && a < plan.logo.x + plan.logo.w && b > plan.logo.x) continue;
+        const w = Math.min(0.8, b - a - 0.3), cx = (a + b) / 2;
+        this.room.add(this.artPrint(cx, 1.45, w, w * 1.25, n++));
+      }
     }
     // posters + whiteboard
     for (const ps of plan.posters) {
@@ -461,6 +499,27 @@ export class Office3D extends window.Office {
     m.rotation.x = -Math.PI / 2;
     m.renderOrder = 1;
     return m;
+  }
+
+  // A framed print: soft abstract shapes in the office palette.
+  artPrint(cx, cy, w, h, k) {
+    const cv = document.createElement('canvas');
+    cv.width = 160; cv.height = Math.round(160 * h / w);
+    const c = cv.getContext('2d');
+    const pal = [['#f3ecdf', '#cd8a68', '#7f9dbf', '#d7b260'], ['#e9e3d7', '#8fb08c', '#cd8a68', '#3a3e45'], ['#f2ead8', '#7f9dbf', '#d8a6a2', '#5e9a5b']][k % 3];
+    c.fillStyle = pal[0]; c.fillRect(0, 0, cv.width, cv.height);
+    const W = cv.width, H = cv.height;
+    if (k % 3 === 0) { c.fillStyle = pal[1]; c.beginPath(); c.arc(W * 0.5, H * 0.42, W * 0.28, 0, Math.PI * 2); c.fill(); c.fillStyle = pal[2]; c.fillRect(0, H * 0.62, W, H * 0.38); c.fillStyle = pal[3]; c.fillRect(W * 0.15, H * 0.62, W * 0.7, H * 0.06); }
+    else if (k % 3 === 1) { for (let i = 0; i < 3; i++) { c.fillStyle = pal[1 + i]; c.beginPath(); c.moveTo(W * (0.1 + i * 0.25), H * 0.85); c.lineTo(W * (0.3 + i * 0.25), H * (0.25 + i * 0.1)); c.lineTo(W * (0.5 + i * 0.25), H * 0.85); c.fill(); } }
+    else { for (let i = 0; i < 4; i++) { c.strokeStyle = pal[1 + (i % 3)]; c.lineWidth = 10; c.beginPath(); c.arc(W * 0.5, H, W * (0.2 + i * 0.12), Math.PI, 0); c.stroke(); } }
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+    const g = new THREE.Group();
+    const frame = new THREE.Mesh(roundedBox(w + 0.08, h + 0.08, 0.04, 0.01), soft(this.pal.dark ? 0x2b2420 : 0x3a3e45));
+    const pic = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
+    pic.position.z = 0.021;
+    g.add(frame, pic);
+    g.position.set(cx, cy, 0.03);
+    return g;
   }
 
   whiteboardScribbles(cx) {
@@ -830,6 +889,44 @@ export class Office3D extends window.Office {
       }
       case 'rug':
         this.place('rugRectangle', p.x, p.y, p.w, p.d, { y0: 0.004, h: 0.016, stretch: true });
+        break;
+      // Lamps hanging over a pod or a table (glowing in the evening).
+      case 'pendant': {
+        const xs = p.span ? [p.x - p.span / 2, p.x + p.span / 2] : [p.x];
+        for (const x of xs) {
+          const g = new THREE.Group();
+          const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.55, 4), soft(0x2b2420));
+          cord.position.y = 0.27; g.add(cord);
+          const shade = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.2, 18, 1, true), soft(dark ? 0xc9a24c : 0xd7b260));
+          shade.material.side = THREE.DoubleSide; g.add(shade);
+          outlineOf(shade);
+          const glow = new THREE.Mesh(new THREE.CircleGeometry(0.17, 16), new THREE.MeshBasicMaterial({ color: 0xffe7b0 }));
+          glow.rotation.x = Math.PI / 2; glow.position.y = -0.09; g.add(glow);
+          g.position.set(x, 1.95, p.y);
+          this.room.add(g);
+        }
+        break;
+      }
+      // A long planter box along the top of a pod's divider.
+      case 'planter': {
+        const box = new THREE.Mesh(roundedBox(p.w, 0.14, 0.16, 0.03), soft(dark ? 0x5c4431 : 0xe9e3d7));
+        box.position.set(p.x + p.w / 2, 1.15 + 0.07, p.y + 0.04);
+        box.castShadow = true; outlineOf(box);
+        this.room.add(box);
+        for (let i = 0; i < Math.round(p.w / 0.18); i++) {
+          const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), soft(i % 3 ? 0x5e9a5b : 0x447a46));
+          leaf.scale.set(1, 0.8 + (i % 2) * 0.3, 0.9);
+          leaf.position.set(p.x + 0.1 + i * 0.18, 1.3 + (i % 2) * 0.03, p.y + 0.04 + ((i * 37) % 5 - 2) * 0.012);
+          leaf.castShadow = true;
+          this.room.add(leaf);
+        }
+        break;
+      }
+      case 'coatRack':
+        this.place('coatRackStanding', p.x - 0.22, p.y - 0.22, 0.44, 0.44, { h: 1.75 });
+        break;
+      case 'armchair':
+        this.place('loungeChairRelax', p.x, p.y, 0.8, 0.8, { h: 0.62, rot: 0 });
         break;
     }
   }
