@@ -80,6 +80,8 @@ Touch ID 要用到 Swift：沒有 Command Line Tools 時請使用者自己跑 `x
 兩層樓（內建辦公室、非子母畫面）：index.html 建兩個 Office（`floor: 1|2`，各自一個 `.floor-view` 容器，沒看的那層 setVisible(false) 不畫）；
 誰在哪層由 `OfficeFloors.split`（public/office.js）決定：等你／出錯／剛做完／工作（前 12 個）／秘書在 1F，閒置與超額工作在 2F，2F 的工作者做完前不下樓；換層的 key 傳給 `update(list, { moved })`，走電梯（plan.lift）不走門。
 2F 平面是 `upstairs()`（沒有你的桌與排隊，door＝電梯）；樓層分頁顯示各層人數，按 1／2 切換，選的樓層存 `wmad.floor`。載入時等「看得見那層」畫好才收 loading。
+
+3D 視角（web/office3d.js `viewControls()`，純函式在 web/camera.mjs，測試 tests/camera-hub.cjs）：橫向滾輪（觸控板雙指左右滑、Shift＋滾輪）攔下來改平移，直向滾輪與捏合照舊縮放；方向鍵／右下 `.view-pad` 平移、0 回正、雙擊地板滑過去；每格畫面 `steerView()` 把旋轉中心拉回房間範圍內（邊界外 1 格）。平移走 OrbitControls 的 `_pan()`、回正清 `_panOffset`——升 three 版本要確認這兩個私有成員還在。
 你的桌（plan.boss）在前緣、秘書桌（plan.sec）在旁；zone wait 的人依等待時間排到 plan.queue（最多 6 格），排第一且等 >10 分會敲桌，排不下的照舊亂逛／敲螢幕。
 秘書＝面板「設為秘書」存的標題片段（日期去掉，localStorage `wmad.secretary`）所符合的最新 Claude session，沒設時用 /秘書|總機|secretary/，固定坐秘書桌；離開 ≥10 分鐘回來時 `Hub.welcome` 出摘要卡、`office.deliver` 讓秘書走到你桌前。
 日報：18 點後第一次活動自動出一次（localStorage `wmad.reportDay`），資料來自 progress.js 的 today（今日輪數、回覆時間）；程式碼尾巴按資料夾合併。

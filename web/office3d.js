@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
 
 const CHARACTERS = ['male-a', 'male-b', 'male-c', 'male-d', 'male-e', 'male-f',
   'female-a', 'female-b', 'female-c', 'female-d', 'female-e', 'female-f'];
@@ -98,6 +99,7 @@ export class Office3D extends window.Office {
     this.controls.maxZoom = 4;
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true;
+    this.viewControls();
     this.noCat = true; // the 3D office has no cat to pet
 
     this.hemi = new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.0);
@@ -125,6 +127,8 @@ export class Office3D extends window.Office {
   destroy() {
     super.destroy();
     if (!this.gl) return;
+    window.removeEventListener('keydown', this.onViewKey);
+    if (this.pad) this.pad.remove();
     this.controls.dispose();
     this.gl.dispose();
     this.gl.domElement.remove();
@@ -1003,6 +1007,105 @@ export class Office3D extends window.Office {
 
   // ------------------------------------------------------------ camera
 
+  // Besides turning (drag) and zooming (wheel / pinch), the view slides:
+  // right-drag or Shift + drag, a sideways two-finger swipe, the arrow keys
+  // or the on-screen pad; a double-click on the floor glides there, and the
+  // centre button (or 0) puts the camera back. Turning always pivots on the
+  // point in the middle of the view, so it follows wherever you slid to.
+  viewControls() {
+    this.canvas.addEventListener('wheel', (e) => {
+      if (wheelIntent(e) !== 'pan') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.panView(e.deltaX, 0);
+    }, { capture: true, passive: false });
+    this.onViewKey = (e) => {
+      if (!this.visible || this.compact || !this.loaded) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+      if (e.key === '0') { this.resetView(); return; }
+      const d = keyPan(e.key);
+      if (!d) return;
+      e.preventDefault();
+      this.panView(d[0], d[1]);
+    };
+    window.addEventListener('keydown', this.onViewKey);
+    this.canvas.addEventListener('dblclick', (e) => {
+      const r = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      if (this.hit.some((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1)) return;
+      const at = this.floorAt(e);
+      if (at) this.focusAt(at.x, at.z);
+    });
+    if (this.compact) return;
+    const pad = document.createElement('div');
+    pad.className = 'view-pad';
+    const tip = { l: '往左看（←）', u: '往裡看（↑）', c: '回到原本的視角（0）', d: '往外看（↓）', r: '往右看（→）' };
+    pad.innerHTML = ['l', 'u', 'c', 'd', 'r'].map((k) => `<button type="button" data-pan="${k}" title="${tip[k]}" aria-label="${tip[k]}">${{ l: '◀', u: '▲', c: '⌂', d: '▼', r: '▶' }[k]}</button>`).join('');
+    pad.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-pan]');
+      if (!b) return;
+      const k = b.dataset.pan;
+      if (k === 'c') return this.resetView();
+      const d = keyPan({ l: 'ArrowLeft', u: 'ArrowUp', d: 'ArrowDown', r: 'ArrowRight' }[k]);
+      this.panView(d[0], d[1]);
+    });
+    this.root.appendChild(pad);
+    this.pad = pad;
+  }
+
+  // Slides the view by screen pixels: positive x shows more of the right.
+  panView(dx, dy) {
+    this.fly = null;
+    this.controls._pan(-dx, -dy);
+  }
+
+  resetView() {
+    if (!this.room) return;
+    this.controls._panOffset.set(0, 0, 0); // drop momentum left from earlier slides
+    const from = this.controls.target.clone();
+    this.fitCamera3D(true);
+    // Glide back instead of jumping.
+    const to = this.controls.target.clone();
+    const shift = from.clone().sub(to);
+    this.camera.position.add(shift);
+    this.controls.target.copy(from);
+    this.fly = { from, to, t0: performance.now() };
+  }
+
+  // Where a pointer meets the floor.
+  floorAt(e) {
+    const r = this.canvas.getBoundingClientRect();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.camera);
+    const o = ray.ray.origin, d = ray.ray.direction;
+    if (Math.abs(d.y) < 1e-6) return null;
+    const k = -o.y / d.y;
+    return { x: o.x + d.x * k, z: o.z + d.z * k };
+  }
+
+  focusAt(x, z) {
+    const from = this.controls.target.clone();
+    this.fly = { from, to: new THREE.Vector3(x, from.y, z), t0: performance.now() };
+  }
+
+  // Runs after OrbitControls each frame: glides, then keeps the pivot over the room.
+  steerView() {
+    const t = this.controls.target;
+    const move = new THREE.Vector3();
+    if (this.fly) {
+      const k = glide(this.fly.t0, performance.now());
+      move.lerpVectors(this.fly.from, this.fly.to, k).sub(t);
+      if (k >= 1) this.fly = null;
+    }
+    const { W, D } = this.plan;
+    const c = clampShift({ x: t.x + move.x, y: t.y + move.y, z: t.z + move.z }, W, D);
+    move.add(new THREE.Vector3(c.x, c.y, c.z));
+    if (move.lengthSq() < 1e-10) return;
+    t.add(move);
+    this.camera.position.add(move);
+    this.camera.lookAt(t);
+  }
+
   fitCamera3D(reset) {
     const { W, D } = this.plan;
     const center = new THREE.Vector3(W / 2, 0.6, D / 2);
@@ -1371,6 +1474,7 @@ export class Office3D extends window.Office {
 
     this.syncActors(dt);
     this.controls.update();
+    this.steerView();
     this.gl.render(this.scene, this.camera);
 
     // overlay: bubbles + name tags, reusing the 2D drawing code

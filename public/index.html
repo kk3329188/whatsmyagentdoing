@@ -176,6 +176,13 @@
   .office-gl, .office-overlay { position: absolute; inset: 0; }
   .floor-view { position: absolute; inset: 0; }
   .floor-view[hidden] { display: none; }
+  .view-pad { position: absolute; right: 10px; bottom: 30px; display: grid; grid-template-columns: repeat(3, 26px); grid-template-rows: repeat(3, 26px); gap: 2px; opacity: .7; transition: opacity .15s; z-index: 2; }
+  .view-pad:hover, .view-pad:focus-within { opacity: 1; }
+  .view-pad button { all: unset; display: grid; place-items: center; border-radius: 6px; font-size: 11px; cursor: pointer; color: var(--ink); background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  .view-pad button:hover { background: var(--panel); }
+  .view-pad button:focus-visible { outline: 2px solid var(--tool); }
+  .view-pad [data-pan=u] { grid-area: 1 / 2; } .view-pad [data-pan=l] { grid-area: 2 / 1; } .view-pad [data-pan=c] { grid-area: 2 / 2; }
+  .view-pad [data-pan=r] { grid-area: 2 / 3; } .view-pad [data-pan=d] { grid-area: 3 / 2; }
   .floor-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; }
   .floor-tabs[hidden] { display: none; }
   .floor-tabs button { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 6px 12px; font: inherit; cursor: pointer; }
