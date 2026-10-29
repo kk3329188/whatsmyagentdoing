@@ -738,7 +738,7 @@ test('a full floor is laid out once, not again on every update (the boss coming 
   // Pretending gives way to real work.
   {
     const o = load(true);
-    const idle = Array.from({ length: 9 }, (_, i) => at('idle', { n: i, ago: 60 * MIN }));
+    const idle = Array.from({ length: o.plan.desks.length + 1 }, (_, i) => at('idle', { n: i, ago: 60 * MIN }));
     settle(o, idle);
     o.first = false;
     o.setBoss(true);

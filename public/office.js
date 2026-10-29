@@ -403,12 +403,16 @@
 
     buildPlan(nWorking) {
       const pal = this.pal;
-      const pods = Math.max(2, Math.ceil((nWorking + 2) / 4));
+      // At least four pods (16 desks): it should feel like a company even on
+      // a quiet day (free desks also hold the ones on leave).
+      const pods = Math.max(4, Math.ceil((nWorking + 2) / 4));
       const podCols = pods <= 4 ? 2 : 3;
       const podRows = Math.ceil(pods / podCols);
       const OW = 1.3 + (podCols - 1) * 4.2 + 3.9; // open office width
       const OD = podRows * 4.7 + 0.8;             // open office depth (pods)
-      const D = Math.max(OD + 3.6, 14.5);
+      // In front of the pods: the games corner, vending machines, the phone
+      // booth and your desk all need their room.
+      const D = Math.max(OD + 7.2, 14.5);
       const RW = 7.2;                              // right column width
       const W = OW + RW;
       const MR = 5.2;                              // meeting room depth
@@ -1001,7 +1005,7 @@
       this.nWorking = working.length;
       // Scene packs have a fixed floor plan; the built-in office grows with the team.
       // Grow (or shrink) the office with the team; never twice for the same headcount.
-      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35)) && this.builtFor !== working.length) {
+      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 16 && working.length < cap * 0.35)) && this.builtFor !== working.length) {
         this.builtFor = working.length;
         this.rebuild();
       }
