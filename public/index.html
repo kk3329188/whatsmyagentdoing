@@ -252,6 +252,12 @@
   .hub-toast button { margin-left: 10px; border: 0; border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; background: var(--bg); color: var(--ink); }
   .hub-tools button, .hub-pins button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 2px 10px; font: inherit; cursor: pointer; }
   .hub-tools button:hover, .hub-pins button:hover { border-color: var(--tool); }
+  .hub-emp { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+  .hub-emp b { color: var(--ink); font-weight: 600; }
+  .hub-skills { margin-top: 6px; display: grid; gap: 3px; }
+  .hub-skill { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 6px; font-size: 12px; }
+  .hub-skill small { color: var(--muted); text-align: right; }
+  .hub-best { background: #ffd76a; color: #5a4300; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
   .hub-tools button.on { background: var(--waiting); border-color: var(--waiting); color: #fff; font-weight: 700; }
   .hub-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 10px; font-size: 12px; }
   .hub-pins[hidden] { display: none; }
@@ -351,6 +357,7 @@
               <label class="tog" id="idleToggle"><input type="checkbox" id="showIdle"> <span data-t="showIdle"></span></label>
               <label class="tog" id="agentBadgeToggle"><input type="checkbox" id="showAgent"> <span data-t="showAgent"></span></label>
               <label class="tog"><input type="checkbox" id="followCam"> <span>開工／做完時鏡頭跟拍</span></label>
+              <label class="tog"><input type="checkbox" id="autoStandup"> <span>每天 10:00 自動開晨會</span></label>
             </div>
           </div>
           <div class="setting-group">
@@ -584,10 +591,10 @@ function render() {
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
-    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = store.get('follow', true) !== false; o.setBoss(!PIP && Hub.bossIn()); }
+    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = store.get('follow', true) !== false; o.setBoss(!PIP && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
-      const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary });
+      const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary, allDown: !!(office && office.standup) });
       floorPrev = floors;
       const on = (n) => officeList.filter((s) => (floors.get(s.key) || { floor: 1 }).floor === n);
       office2.showAgent = state.showAgent;
@@ -689,6 +696,9 @@ settingsMenu.addEventListener('toggle', () => { if (settingsMenu.open) hideTip()
 const followCam = document.getElementById('followCam');
 followCam.checked = store.get('follow', true) !== false;
 followCam.addEventListener('change', () => { store.set('follow', followCam.checked); if (!followCam.checked) for (const o of [office, office2]) if (o && o.spotCancel) o.spotCancel(); if (state.data) render(); });
+const autoStandup = document.getElementById('autoStandup');
+autoStandup.checked = store.get('autoStandup', true) !== false;
+autoStandup.addEventListener('change', () => store.set('autoStandup', autoStandup.checked));
 const companyInput = document.getElementById('companyInput');
 companyInput.value = store.get('company', '') || '';
 let companyTimer = 0; // the sign changes the floor plan, so wait until typing stops
@@ -833,7 +843,32 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
   if (e.key === '1' || e.key === '2') setFloor(Number(e.key));
   if ((e.key === 'b' || e.key === 'B') && !PIP) Hub.toggleBoss();
+  // Walking yourself about downstairs: W A S D, Space to talk, R to sit back down.
+  if (!PIP && office && office.meKey && state.view === 'office' && (!office2 || state.floor === 1) && office.meKey(e.key, true)) e.preventDefault();
 });
+document.addEventListener('keyup', (e) => { if (office && office.meKey) office.meKey(e.key, false); });
+window.addEventListener('blur', () => { if (office && office.meKeys) office.meKeys.clear(); });
+// The stand-up: everyone downstairs (upstairs comes down by the lift), one
+// after another says where they are; the minutes pop up at the end.
+function startStandup() {
+  if (!office || !office.startStandup || PIP) return;
+  if (office.standup) { Hub.toast('晨會已經在開了'); return; }
+  setFloor(1);
+  const ok = office.startStandup(Hub.standupLine, (lines) => { render(); Hub.showMinutes(lines); });
+  if (!ok) { Hub.toast('現在沒有人可以開會'); return; }
+  Hub.toast('🗣️ 開晨會：大家到會議室集合，一個一個報告進度');
+  render();
+}
+// Every day at 10:00 (once), if this page is open and you turned it on.
+setInterval(() => {
+  const d = new Date();
+  if (PIP || !state.loaded || document.hidden || store.get('autoStandup', true) === false) return;
+  if (d.getHours() !== 10 || d.getMinutes() > 10) return;
+  const day = d.toDateString();
+  if (store.get('standupDay', null) === day) return;
+  store.set('standupDay', day);
+  startStandup();
+}, 30_000);
 function setLoading(on, text) {
   officeEl.classList.toggle('loading', on);
   if (text) document.getElementById('loaderText').textContent = text;
@@ -874,6 +909,7 @@ async function makeOffice() {
   }
   office = mine;
   office.offDutyLabel = L.wentHome;
+  if (!PIP && office.meOn) office.meOn(); // you, at your desk downstairs
   if (state.data && state.data.office && office.setProgress) { office.setProgress(state.data.office); if (office2) office2.setProgress(state.data.office); }
   render();
   // A hidden floor does not draw, so wait for whichever one is showing.
@@ -1009,6 +1045,7 @@ Hub.mount({
   onAway(text) { return office && office.deliver ? office.deliver(text) : false; },
   onAwayDone() { if (office && office.endErrand) office.endErrand(); },
   onChange() { render(); },
+  onStandup() { startStandup(); },
 });
 applyLang(chooseLang(null));
 syncControls();

@@ -52,6 +52,7 @@ function newSession(agent, id, file) {
     task: null,       // what kind of work the current tool call is (taskOf)
     pendingTasks: {}, // tool_use id -> task, for the ones whose result is worth reacting to
     outcome: null,    // { at, task, ok }: the last test / build / push / commit result
+    kinds: {},        // task -> how many tool calls of that kind (what they are good at)
   };
 }
 
@@ -320,6 +321,8 @@ function applyClaude(s, d) {
           set(s, WAITING_TOOLS.has(b.name) ? 'waiting' : 'tool', what);
           applyPlan(s, b.name, b.input || {});
           s.task = taskOf(b.name, b.input || {});
+          const kind = s.task || 'other';
+          s.kinds[kind] = (s.kinds[kind] || 0) + 1;
           if (NOTABLE.has(s.task) && b.id) {
             s.pendingTasks[b.id] = s.task;
             const ids = Object.keys(s.pendingTasks);

@@ -64,6 +64,10 @@
   const waitedMs = (s) => Date.now() - (s.lastEventAt || Date.now());
   const hour = () => new Date().getHours() + new Date().getMinutes() / 60;
   const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
+  // Closing time: whoever is just resting goes home, the lights go down.
+  const closing = () => { const h = hour(); return h >= 19 || h < 7; };
+  const STANDUP_TURN_MS = 5000;  // each one talks this long
+  const STANDUP_GATHER_MS = 6500; // time to walk over before the first one talks
   const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
   const morning = () => { const h = hour(); return h >= 7 && h < 10; };
   // Which department a session works in: its repository (a worktree counts
@@ -405,7 +409,9 @@
       prop('lift', { y: lift.y });
       if (this.floor === 2) {
         // Upstairs: a few hot desks for overflow work, the rest is for breaks.
-        cubicles(Math.max(1, Math.ceil(nWorking / 4)));
+        // Always a spare desk or two, as downstairs (else every update would
+        // lay the floor out again and send everyone walking).
+        cubicles(Math.max(1, Math.ceil((nWorking + 2) / 4)));
         return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots };
       }
       cubicles(pods);
@@ -887,19 +893,30 @@
       if (sec) sessions = sessions.filter((s) => s !== sec);
       // With zones only the ones actually working get a desk; waiting and
       // errors go to their own rooms. Scene packs keep the old rule.
-      // While the boss is in, everyone not waiting on you sits at a desk.
-      const atDesk = (s) => (this.bossIn && zoned ? zoneOf(s) !== 'wait' : zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
+      // During the stand-up nobody sits at a desk.
+      const atDesk = (s) => (this.standup && zoned ? false : zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
+      // The boss is in: everyone else not waiting on you pretends to work,
+      // at a free desk if there is one, else somewhere that looks busy. The
+      // floor is not laid out again for them.
+      const pretend = this.bossIn && zoned && !this.standup ? sessions.filter((s) => !atDesk(s) && zoneOf(s) !== 'wait') : [];
+      const pretendKeys = new Set(pretend.map((s) => s.key));
+      this.closedNow = zoned && !this.compact && !this.bossIn && !this.standup && closing();
       const working = sessions.filter(atDesk);
       const off = sessions
-        .filter((s) => !atDesk(s))
+        .filter((s) => !atDesk(s) && !pretendKeys.has(s.key))
         .sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
+      // After hours only the ones that need you stay about (and the stand-up).
+      const after = (s) => this.closedNow && (zoneOf(s) === 'idle' || zoneOf(s) === 'done');
       let wanderers;
-      if (zoned && this.roam !== false) {
+      if (zoned && this.standup) {
+        // Stand-up: everyone here, workers included.
+        wanderers = [...off];
+      } else if (zoned && this.roam !== false) {
         // Everyone off duty is about; waiting and errors always show.
         const cap = Math.max(MAX_WANDERERS, Math.min(12, this.plan.pois.length - 6));
         wanderers = [];
         for (const z of ZONE_ORDER) {
-          for (const s of off) if (zoneOf(s) === z && (wanderers.length < cap || z === 'wait' || z === 'error')) wanderers.push(s);
+          for (const s of off) if (zoneOf(s) === z && !after(s) && (wanderers.length < cap || z === 'wait' || z === 'error' || this.standup)) wanderers.push(s);
         }
       } else if (zoned) {
         // Fill each zone up to its seats; everyone else has gone home.
@@ -915,13 +932,18 @@
         wanderers = off.slice(0, MAX_WANDERERS);
       }
       this.offDuty = off.length - wanderers.length;
+      wanderers.push(...pretend);
 
       const cap = this.plan.desks.length;
       this.nWorking = working.length;
       // Scene packs have a fixed floor plan; the built-in office grows with the team.
-      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35))) this.rebuild();
+      // Grow (or shrink) the office with the team; never twice for the same headcount.
+      if (!this.plan.fixed && (working.length > cap - 1 || (cap > 8 && working.length < cap * 0.35)) && this.builtFor !== working.length) {
+        this.builtFor = working.length;
+        this.rebuild();
+      }
 
-      const workKeys = new Set(working.map((s) => s.key));
+      const workKeys = new Set([...working, ...pretend].map((s) => s.key));
       for (const k of [...this.deskOf.keys()]) if (!workKeys.has(k)) this.deskOf.delete(k);
       const used = new Set(this.deskOf.values());
       // Fill the desks that face us first so more faces and screens show.
@@ -929,8 +951,9 @@
       const order = desks.map((d, i) => i).sort((a, b) => (desks[a].side === 's') - (desks[b].side === 's') || a - b);
       // Departments sit together: a newcomer takes a free desk in the pod
       // where their own repository already works, else an empty pod.
-      const byKey = new Map(working.map((s) => [s.key, s]));
-      for (const s of [...working].sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0))) {
+      const byKey = new Map([...working, ...pretend].map((s) => [s.key, s]));
+      const byStart = (a, b) => (a.startedAt || 0) - (b.startedAt || 0);
+      for (const s of [...working.sort(byStart), ...pretend.sort(byStart)]) {
         if (this.deskOf.has(s.key)) continue;
         const mine = deptOf(s);
         const podCount = new Map(); // pod -> [same dept, others]
@@ -948,6 +971,11 @@
           const score = c[0] * 10 - c[1] * 3 - rank * 0.01;
           if (score > bestScore) { best = n; bestScore = score; }
         });
+        // Real work comes first: someone only pretending gives up their desk.
+        if (best == null && !pretendKeys.has(s.key)) {
+          const k = [...this.deskOf.keys()].find((x) => pretendKeys.has(x));
+          if (k != null) { best = this.deskOf.get(k); this.deskOf.delete(k); }
+        }
         if (best == null) continue;
         this.deskOf.set(s.key, best);
         used.add(best);
@@ -1013,9 +1041,12 @@
           if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
           p.mode = 'work';
           p.chores = null;
+          p.pretend = false;
         } else {
           if (p.mode !== 'wander') { this.endRun(p, false); p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
           p.react = null;
+          const fake = pretendKeys.has(s.key);
+          if (!!p.pretend !== fake) { p.pretend = fake; this.release(p); p.poi = null; p.until = 0; p.chores = null; }
           // Changed state: head to the new zone now.
           const zone = zoned ? zoneOf(s) : null;
           if (p.zone !== zone) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; p.chores = null; }
@@ -1025,6 +1056,7 @@
           if (p.napDesk && takenDesks.has(p.napDesk)) { this.release(p); p.path = []; }
         }
       }
+      if (this.standup) for (const k of shown) { const p = this.people.get(k); if (p && !p.leaving) this.standupJoin(p); }
       // Whoever waits on you lines up at your desk, longest wait first.
       const q = this.plan.queue || [];
       const waiting = [...this.people.values()]
@@ -1071,6 +1103,10 @@
     rebuild() {
       this.plan = this.buildPlan(this.nWorking || 0);
       this.deskOf.clear();
+      if (this.me) {
+        if (this.plan.boss) Object.assign(this.me, { x: this.plan.boss.seat.x, y: this.plan.boss.seat.y, seated: true, path: [], moving: false });
+        else this.me = null;
+      }
       for (const p of this.people.values()) {
         p.poi = null; p.napDesk = null; p.desk = null; p.until = 0; p.run = null;
       }
@@ -1135,6 +1171,14 @@
       if (p.poi && now < p.until) return;
       this.release(p);
       const plan = this.plan;
+      // At the stand-up: go to your place and stay.
+      if (p.standupSpot) {
+        p.poi = { ...p.standupSpot };
+        p.until = Infinity;
+        p.stay = Infinity;
+        this.goTo(p, p.poi);
+        return;
+      }
       // In line at your desk.
       if (p.queue != null && plan.queue && plan.queue[p.queue]) {
         const slot = plan.queue[p.queue];
@@ -1154,6 +1198,7 @@
         this.goTo(p, p.poi);
         return;
       }
+      if (p.pretend) return this.pretendAt(p);
       // Waited on you for ages: come to the front and knock on the screen.
       if (plan.zones && p.zone === 'wait' && waitedMs(p.s) > KNOCK_MS) return this.knock(p);
       if (plan.zones && p.zone && this.roam !== false) return this.roamTo(p);
@@ -1409,7 +1454,7 @@
     // around noon, cake comes out at three; and now and then something small
     // happens that whoever is free takes care of.
     life(wall) {
-      if (!this.plan.zones || this.compact || this.first || this.bossIn) return;
+      if (!this.plan.zones || this.compact || this.first || this.bossIn || this.standup || this.closedNow) return;
       if (!this.nextLife) this.nextLife = wall + rand(30_000, 70_000);
       const d = new Date(wall), h = d.getHours() + d.getMinutes() / 60, day = d.toDateString();
       if (this.floor === 1 && h >= 11.75 && h < 12.5 && this.lunchDay !== day && this.chore('delivery')) this.lunchDay = day;
@@ -1468,6 +1513,212 @@
       if (what === 'pin') { this.pinnedAt = wall; p.event = { text: '貼上佈告欄 📌', at: wall, zone: 'done' }; }
       if (what === 'lunch') this.lunchUntil = wall + 75 * 60_000;
       if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
+    }
+
+    // ------------------------------------------------------------ stand-up
+    //
+    // Everyone (but the secretary, who keeps the minutes at their desk) walks
+    // to the meeting room, sits round the table or stands round it, and one
+    // by one says where they are; `lineOf(s)` is what they say. When the
+    // last one has spoken, `done(lines)` gets the minutes and everyone goes
+    // back to what they were doing. Returns false when nobody is here.
+    startStandup(lineOf, done) {
+      if (!this.plan.zones || this.standup) return false;
+      const who = [...this.people.values()].filter((p) => !p.leaving && !p.held && p.s && !p.s.subagent && p.key !== this.secKey);
+      if (!who.length) return false;
+      const plan = this.plan;
+      const table = plan.props.find((o) => o.t === 'meetingTable') || plan.props.find((o) => o.t === 'roundTable');
+      const cx = table ? table.x + (table.w || 0) / 2 : plan.W / 2, cy = table ? table.y + (table.d || 0) / 2 : plan.D / 2;
+      const faceTo = (x, y) => ({ face: y < cy ? 'front' : 'back', yaw: Math.atan2(cx - x, cy - y) });
+      const spots = plan.pois.filter((q) => q.act === 'meeting').map((q) => ({ x: q.x, y: q.y, sit: q.sit, ...faceTo(q.x, q.y) }));
+      for (let r = 2.1; spots.length < 30 && r < 6; r += 0.8) {
+        for (let a = 0; a < 16 && spots.length < 30; a++) {
+          const x = cx + Math.cos(a / 16 * Math.PI * 2) * r * 1.2, y = cy + Math.sin(a / 16 * Math.PI * 2) * r;
+          if (x < 0.4 || y < 0.4 || x > plan.W - 0.4 || y > plan.D - 0.4 || plan.grid.blocked(x, y)) continue;
+          if (spots.some((o) => Math.hypot(o.x - x, o.y - y) < 0.7)) continue;
+          spots.push({ x, y, sit: 0, ...faceTo(x, y) });
+        }
+      }
+      const now = Date.now();
+      who.forEach((p, i) => {
+        this.endRun(p, false); this.endVisit(p, false); this.release(p);
+        p.chores = null; p.react = null;
+        p.standupSpot = spots[i] || null;
+        p.poi = null; p.until = 0; p.path = [];
+        if (p.mode === 'work') { p.mode = 'wander'; p.desk = null; }
+      });
+      this.standup = { order: who.map((p) => p.key), spots, i: -1, next: now + STANDUP_GATHER_MS, lines: [], lineOf, done, speaker: null };
+      return true;
+    }
+
+    // Someone came down for the stand-up after it started: they join in.
+    standupJoin(p) {
+      const su = this.standup;
+      if (!su || p.standupSpot || su.order.includes(p.key) || !p.s || p.s.subagent || p.key === this.secKey) return;
+      const spot = su.spots[su.order.length];
+      su.order.push(p.key);
+      if (!spot) return;
+      this.endRun(p, false); this.release(p);
+      p.chores = null; p.standupSpot = spot; p.poi = null; p.until = 0; p.path = [];
+    }
+
+    stepStandup(wall) {
+      const su = this.standup;
+      if (!su || wall < su.next) return;
+      su.speaker = null;
+      for (su.i++; su.i < su.order.length; su.i++) {
+        const p = this.people.get(su.order[su.i]);
+        if (!p || p.leaving) continue;
+        const line = String((su.lineOf ? su.lineOf(p.s) : null) || p.s.status || '');
+        su.lines.push({ key: p.key, line });
+        su.speaker = p.key;
+        p.event = { text: line.length > 30 ? line.slice(0, 29) + '…' : line, at: wall, zone: 'work', ttl: STANDUP_TURN_MS / 1000 };
+        su.next = wall + STANDUP_TURN_MS;
+        return;
+      }
+      this.endStandup();
+    }
+
+    endStandup() {
+      const su = this.standup;
+      if (!su) return;
+      this.standup = null;
+      for (const p of this.people.values()) {
+        if (!p.standupSpot) continue;
+        p.standupSpot = null;
+        this.release(p); p.poi = null; p.until = 0;
+      }
+      if (su.done) su.done(su.lines);
+    }
+
+    // After hours: the room goes dark except a pool of lamp light round
+    // everyone still at a desk.
+    nightShade() {
+      const c = this.ctx;
+      if (!this.shadeCv) this.shadeCv = document.createElement('canvas');
+      const sc = this.shadeCv;
+      if (sc.width !== this.cw || sc.height !== this.ch) { sc.width = this.cw; sc.height = this.ch; }
+      const g = sc.getContext('2d');
+      g.globalCompositeOperation = 'source-over';
+      g.clearRect(0, 0, sc.width, sc.height);
+      g.fillStyle = 'rgba(6, 10, 30, 0.5)';
+      g.fillRect(0, 0, sc.width, sc.height);
+      g.globalCompositeOperation = 'destination-out';
+      const z = this.cam.zoom;
+      for (const p of this.bodies()) {
+        if (!((p.mode === 'work' && p.desk) || (p.me && p.seated)) || p.path.length) continue;
+        const at = this.iso(p.x, p.y, 0.6), x = at.x * z + this.cam.ox, y = at.y * z + this.cam.oy, r = 70 * z;
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(0.6, 'rgba(0,0,0,0.6)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grad;
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      }
+      c.save();
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      c.drawImage(sc, 0, 0, this.cw, this.ch);
+      c.restore();
+    }
+
+    // ------------------------------------------------------------ you
+    //
+    // Your own person, at your desk downstairs. W A S D walk (in the
+    // directions of the screen), Space opens the session of whoever you
+    // are standing next to, R sits you back down.
+    meOn() {
+      if (this.me || !this.plan.boss || this.compact) return this.me;
+      const seat = this.plan.boss.seat;
+      this.me = {
+        me: true, key: 'me', h: 7, x: seat.x, y: seat.y, path: [], phase: 0.5, walkFace: 'back', seated: true, moving: false,
+        skin: SKIN[1], hair: HAIR[0], pants: '#2c2c34', shirt: '#2f3a52', hairStyle: 1,
+        s: { key: 'me', agent: 'claude', status: 'idle', title: '你', level: 4 },
+      };
+      this.meKeys = new Set();
+      return this.me;
+    }
+
+    // Everyone drawn: the sessions, and you.
+    bodies() { return this.me ? [...this.people.values(), this.me] : [...this.people.values()]; }
+
+    // Screen directions on the floor (unit vectors in floor x/y): right and up.
+    screenAxes() { const k = Math.SQRT1_2; return { right: { x: k, y: -k }, up: { x: -k, y: -k } }; }
+
+    meKey(key, down) {
+      const me = this.meOn();
+      if (!me) return false;
+      const k = key.toLowerCase();
+      if ('wasd'.includes(k) && k.length === 1) { if (down) this.meKeys.add(k); else this.meKeys.delete(k); return true; }
+      if (!down) return false;
+      if (k === 'r') { me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
+      if (k === ' ' || k === 'e') { const p = this.meNear(); if (p) this.onHover(p.s, null, true); return !!p; }
+      return false;
+    }
+
+    // Who you are standing next to.
+    meNear() {
+      const me = this.me;
+      if (!me || me.seated) return null;
+      let best = null, d = 1.4;
+      for (const p of this.people.values()) {
+        if (p.leaving) continue;
+        const k = Math.hypot(p.x - me.x, p.y - me.y);
+        if (k < d) { d = k; best = p; }
+      }
+      return best;
+    }
+
+    stepMe(dt) {
+      const me = this.me;
+      if (!me) return;
+      const keys = this.meKeys;
+      let dx = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0), dy = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
+      const grid = this.plan.grid;
+      if (dx || dy) {
+        me.path = []; me.homing = false; me.seated = false;
+        const ax = this.screenAxes();
+        let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
+        const n = Math.hypot(vx, vy) || 1, v = SPEED * 1.3 * dt;
+        vx = vx / n * v; vy = vy / n * v;
+        const ok = (x, y) => x > 0.15 && y > 0.15 && x < this.plan.W - 0.15 && y < this.plan.D - 0.08 && !grid.blocked(x, y);
+        if (ok(me.x + vx, me.y + vy)) { me.x += vx; me.y += vy; }
+        else if (ok(me.x + vx, me.y)) me.x += vx;
+        else if (ok(me.x, me.y + vy)) me.y += vy;
+        me.walkFace = vx + vy >= 0 ? 'front' : 'back';
+        me.moving = true;
+        return;
+      }
+      if (me.path.length) {
+        const nx = me.path[0], ddx = nx.x - me.x, ddy = nx.y - me.y, d = Math.hypot(ddx, ddy), v = SPEED * dt;
+        me.walkFace = ddx + ddy >= 0 ? 'front' : 'back';
+        if (d <= v) { me.x = nx.x; me.y = nx.y; me.path.shift(); } else { me.x += ddx / d * v; me.y += ddy / d * v; }
+        me.moving = true;
+        return;
+      }
+      me.moving = false;
+      if (me.homing) { me.homing = false; me.seated = true; }
+    }
+
+    // No desk while the boss is in: somewhere that looks like work.
+    pretendAt(p) {
+      const plan = this.plan;
+      const LOOKS_BUSY = { whiteboard: 'whiteboard', printer: 'printer', read: 'read', phone: 'phone', meeting: 'typefast', stool: 'typefast', couch: 'typefast', beanbag: 'typefast' };
+      const free = plan.pois.filter((q) => !q.taken && LOOKS_BUSY[q.act])
+        .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)).slice(0, 4);
+      let q = free[Math.floor(Math.random() * free.length)];
+      if (q) p.pretendAct = LOOKS_BUSY[q.act];
+      else {
+        // Nothing left: stand somewhere holding a clipboard.
+        for (let k = 0; k < 12 && !q; k++) {
+          const x = rand(0.8, plan.W - 0.8), y = rand(1.2, plan.D - 0.8);
+          if (!plan.grid.blocked(x, y)) q = { x, y, act: 'clipboard', face: 'front' };
+        }
+        if (!q) return;
+        p.pretendAct = 'clipboard';
+      }
+      q.taken = p.key;
+      p.poi = q;
+      p.until = Infinity;
+      p.stay = Infinity;
+      this.goTo(p, q);
     }
 
     // ------------------------------------------------------------ the boss
@@ -2519,6 +2770,11 @@
 
     stateOf(p) {
       const s = p.s || {};
+      if (p.me) {
+        if (p.moving) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
+        if (p.seated) return { pose: 'sit', face: 'back', act: 'type', sitZ: 0.34 };
+        return { pose: 'stand', face: 'front', act: 'lookaround', sitZ: 0 };
+      }
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
       if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
@@ -2559,6 +2815,14 @@
         const breaks = lunch() ? ['eat', 'eat', 'sip'] : night() ? ['yawn', 'stretch', 'sip'] : ['stretch', 'sip', 'neck'];
         if (cyc < (lunch() ? 6 : 2.4) && kind !== 'reply') act = breaks[Math.floor((t + p.phase * 5) / 26) % 3];
         return { pose: 'sit', face, act, sitZ: 0.34 };
+      }
+      if (p.mode === 'wander' && p.poi && p.pretend && !p.path.length) {
+        const q = p.poi;
+        return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: p.pretendAct || 'clipboard', sitZ: q.sit || 0 };
+      }
+      if (p.mode === 'wander' && p.poi && p.standupSpot && !p.path.length) {
+        const q = p.poi, talking = this.standup && this.standup.speaker === p.key;
+        return { pose: q.sit ? 'sit' : 'stand', face: q.face, act: talking ? 'chat' : q.sit ? 'meeting' : 'lookaround', sitZ: q.sit || 0 };
       }
       if (p.mode === 'wander' && p.poi) {
         const q = p.poi;
@@ -2609,6 +2873,12 @@
         c.lineWidth = 2;
         c.beginPath(); c.ellipse(fb.x, fb.y, 12, 6, 0, 0, Math.PI * 2); c.stroke();
         c.globalAlpha = 1;
+      }
+      // Today's best: a gold ring at their feet.
+      if (this.bestKey === p.key && !held) {
+        c.strokeStyle = '#e8b931';
+        c.lineWidth = 2.5;
+        c.beginPath(); c.ellipse(fb.x, fb.y, 13 + Math.sin(t * 2) * 1, 6.5, 0, 0, Math.PI * 2); c.stroke();
       }
       if (this.dropOn === p.key) {
         c.strokeStyle = '#8b6be6';
@@ -3019,7 +3289,7 @@
 
       // Bubbles go above the sign when one is held up.
       const headTop = y + (st.act === 'sign' ? hip - 46 : hy - 8) * sc;
-      this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
+      if (!p.me) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
     }
 
@@ -3215,19 +3485,25 @@
       }
 
       const hover = this.hoverKey === p.key;
-      if ((!s.subagent && p.zone !== 'idle') || hover) {
-        const loud = p.mode === 'work' || p.zone === 'wait' || p.zone === 'error' || hover;
-        top = pill(this.label(s), pal.text, pal.tagBg, top - 11, loud ? 1 : 0.7, true);
+      const best = this.bestKey === p.key;
+      if (p.me) {
+        top = pill('🧑‍💼 你', '#fff', '#2f3a52', top - 11, 1, false);
+        const near = this.meNear();
+        if (near) top = pill(`空白鍵：找「${this.label(near.s).slice(0, 14)}」`, '#fff', '#8b6be6', top - 4, 1, false);
+      } else if ((!s.subagent && p.zone !== 'idle') || hover || best) {
+        const loud = p.mode === 'work' || p.zone === 'wait' || p.zone === 'error' || hover || best;
+        top = pill((best ? '🏆 ' : '') + this.label(s), best ? '#5a4300' : pal.text, best ? '#ffd76a' : pal.tagBg, top - 11, loud ? 1 : 0.7, true);
       } else if (badge) {
         this.agentBadge(badge, x, top - 11);
       }
       // What just happened, floating up and fading out.
       if (p.event) {
         const age = (Date.now() - p.event.at) / 1000;
-        if (age > 4.5) p.event = null;
+        const ttl = p.event.ttl || 4.5;
+        if (age > ttl) p.event = null;
         else {
           const col = { work: STATUS_COLOR.tool, wait: STATUS_COLOR.waiting, error: STATUS_COLOR.error, done: STATUS_COLOR.done, held: '#8b6be6', level: '#c99a14' }[p.event.zone] || pal.text;
-          c.globalAlpha = Math.min(1, (4.5 - age) * 1.5);
+          c.globalAlpha = Math.min(1, (ttl - age) * 1.5);
           c.font = font(800, 12);
           const w = c.measureText(p.event.text).width + 14;
           const yy = top - 22 - age * 6;
@@ -3377,6 +3653,8 @@
       this.moveCat(dt, wall);
       if (this.cat2) this.moveCat(dt, wall, this.cat2);
       this.life(wall);
+      this.stepStandup(wall);
+      this.stepMe(dt);
     }
 
     draw() {
@@ -3399,7 +3677,8 @@
         items.push({ depth: dk.x + 0.7 + dk.y + 0.4, draw: () => this.desk(dk, p) });
         items.push({ depth: dk.seat.x + dk.seat.y - 0.06, draw: () => this.chair(dk, p) });
       }
-      for (const p of this.people.values()) items.push({ depth: p.held ? 1e9 : p.x + p.y + 0.01, person: p });
+      if (this.me && this.me.seated && this.plan.boss) occupant.set(this.plan.boss, this.me);
+      for (const p of this.bodies()) items.push({ depth: p.held ? 1e9 : p.x + p.y + 0.01, person: p });
       items.push({ depth: this.cat.x + this.cat.y, draw: () => this.drawCat() });
       if (this.cat2) items.push({ depth: this.cat2.x + this.cat2.y, draw: () => this.drawCat(this.cat2) });
       items.sort((a, b) => a.depth - b.depth);
@@ -3410,6 +3689,7 @@
         if (it.person) heads.push([it.person, this.person(it.person)]);
         else it.draw();
       }
+      if (this.closedNow) this.nightShade();
       this.pingPongBall();
       if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();
@@ -3458,7 +3738,7 @@
   // already working upstairs stays there until they stop, so nobody bounces
   // between floors. `prev`: key -> { floor, zone } from the last call.
   // Returns { floors: Map key -> { floor, zone }, moved: Set of keys that changed floor }.
-  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null } = {}) {
+  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false } = {}) {
     const floors = new Map();
     const workers = [];
     // Only the newest matching session is the secretary (as in update()).
@@ -3483,6 +3763,8 @@
       const parent = byId.get(s.parentId);
       floors.set(s.key, { floor: (parent && floors.get(parent.key) || { floor: 1 }).floor, zone: zoneOf(s) });
     }
+    // Stand-up: everyone comes down to the meeting room.
+    if (allDown) for (const v of floors.values()) v.floor = 1;
     const moved = new Set();
     for (const [k, v] of floors) if (prev.has(k) && prev.get(k).floor !== v.floor) moved.add(k);
     return { floors, moved };

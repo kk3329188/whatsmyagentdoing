@@ -1124,6 +1124,17 @@ export class Office3D extends window.Office {
     this.pad = pad;
   }
 
+  // W A S D follow the screen however the camera is turned.
+  screenAxes() {
+    const flat = (col) => {
+      const v = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, col);
+      const n = Math.hypot(v.x, v.z) || 1;
+      return { x: v.x / n, y: v.z / n };
+    };
+    // The camera's up, laid flat, points into the room: up the screen.
+    return { right: flat(0), up: flat(1) };
+  }
+
   // Slides the view by screen pixels: positive x shows more of the right.
   panView(dx, dy) {
     this.spotCancel(); this.spotRestoreNow();
@@ -1405,6 +1416,7 @@ export class Office3D extends window.Office {
 
   facing(p, st) {
     if (st.pose === 'walk') return null;
+    if (p.me) return p.seated ? Math.PI : null;
     if (p.held || p.landed) return 0;
     // Knocking: on your side of the screen.
     if (st.act === 'knock') return Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.y);
@@ -1429,9 +1441,9 @@ export class Office3D extends window.Office {
 
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k)) { this.scene.remove(a.obj, a.prop); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop); this.actors.delete(k); }
     }
-    for (const p of this.people.values()) {
+    for (const p of this.bodies()) {
       const a = this.actorFor(p);
       const st = this.stateOf(p);
       p.pose = st.pose;
@@ -1572,6 +1584,9 @@ export class Office3D extends window.Office {
     const sky = skyNow();
     this.sun.intensity = sky.sun;
     this.hemi.intensity = sky.amb;
+    // After hours: dim the room, a desk lamp over everyone still working.
+    if (this.closedNow) { this.sun.intensity *= 0.3; this.hemi.intensity *= 0.4; }
+    this.deskLamps(!!this.closedNow);
     if (this.windowMat) {
       this.windowMat.color.setHex(sky.sky);
       this.windowMat.emissive.setHex(sky.sky);
@@ -1621,7 +1636,7 @@ export class Office3D extends window.Office {
     this.hit = [];
     const heads = [];
     const v = new THREE.Vector3();
-    for (const p of this.people.values()) {
+    for (const p of this.bodies()) {
       const a = this.actors.get(p.key);
       if (!a) continue;
       const st = this.stateOf(p);
@@ -1634,7 +1649,7 @@ export class Office3D extends window.Office {
       const foot = new THREE.Vector3(p.x, 0, p.y).project(this.camera);
       const fy = (1 - foot.y) / 2 * this.ch;
       heads.push([p, { x: sx, y: sy, act: st.act }, v.z]);
-      this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
+      if (!p.me) this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
     }
     heads.sort((a, b) => b[2] - a[2]);
     if (this.plan.boss) {
@@ -1655,6 +1670,19 @@ export class Office3D extends window.Office {
       c.fillText(`+${this.offDuty} ${this.offDutyLabel}`, 12, this.ch - 12);
       c.globalAlpha = 1;
     }
+  }
+
+  // A few warm lights, moved to whoever is still at a desk after hours.
+  deskLamps(on) {
+    if (!this.lamps) {
+      this.lamps = Array.from({ length: 6 }, () => { const l = new THREE.PointLight(0xffd59a, 0, 3.2, 1.6); this.scene.add(l); return l; });
+    }
+    const at = on ? this.bodies().filter((p) => ((p.mode === 'work' && p.desk) || (p.me && p.seated)) && !p.path.length) : [];
+    this.lamps.forEach((l, i) => {
+      const p = at[i];
+      l.intensity = p ? 3.2 : 0;
+      if (p) l.position.set(p.x, 1.5, p.y - 0.3);
+    });
   }
 
   // Today's notes, a jammed printer, lunch and cake.

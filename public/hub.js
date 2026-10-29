@@ -248,6 +248,67 @@
 
   const company = () => String(store.get('company', '') || '').trim().slice(0, 24);
 
+  // ---- the stand-up: what each one says, and the minutes
+
+  function standupLine(s) {
+    const need = needsYou(s);
+    if (need) return `等你：${cut(need, 26)}`;
+    if (s.status === 'error') return `卡住了：${cut(s.error || '出錯', 24)}`;
+    const p = steps(s);
+    if (p && p.total && p.done < p.total) return `第 ${p.done + 1}/${p.total} 步${p.step ? `：${cut(p.step, 22)}` : ''}`;
+    if (ACTIVE.has(s.status) && s.activity) return `正在${cut(words(s.activity), 24)}`;
+    if (s.recap) return `做完了：${cut(firstLine(s.recap), 24)}`;
+    return '沒事，待命中';
+  }
+  function showMinutes(lines) {
+    const hm = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const nameOf = (k) => { const s = byKey(k); return s ? name(s) : k; };
+    const html = `<h3>🗣️ 晨會紀錄・${esc(hm)}・${lines.length} 人</h3>`
+      + (lines.length ? `<ul class="hub-list">${lines.map((l) => `<li><button data-open="${esc(l.key)}">${esc(cut(nameOf(l.key), 30))}</button><small>${esc(l.line)}</small></li>`).join('')}</ul>` : '<p class="hub-muted">沒有人報告。</p>')
+      + '<div class="hub-row"><button class="hub-btn primary" data-m="copy">複製成文字</button><button class="hub-btn" data-m="close">關閉</button></div>';
+    modal(html, { text: `晨會紀錄 ${hm}\n` + lines.map((l) => `- ${nameOf(l.key)}：${l.line}`).join('\n') });
+  }
+
+  // ---- employee card, and today's best
+
+  const KIND_TEXT = {
+    lookup: '查資料', edit: '改程式', shell: '跑指令', test: '跑測試', build: '編譯', web: '上網查', doc: '寫文件',
+    plan: '排計畫', agent: '派小幫手', chat: '溝通', browser: '操作瀏覽器', push: '推上去', commit: '存檔', other: '其他',
+  };
+  function hashOf(t) { let h = 2166136261; for (const ch of String(t)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; }
+  function deptOf(s) {
+    const cwd = String(s.cwd || '');
+    const m = cwd.match(/^(.*?)\/\.(?:claude|codex)\/worktrees\//);
+    return (m ? m[1] : cwd).split('/').filter(Boolean).pop() || s.project || '其他';
+  }
+  function todayOf(key) {
+    const t = state.data && state.data.office && state.data.office.today;
+    return (t && t.top || []).find((r) => r.key === key) || null;
+  }
+  function bestKey() {
+    const t = state.data && state.data.office && state.data.office.today;
+    const top = t && t.top && t.top.find((r) => r.turns > 0 && byKey(r.key) && !byKey(r.key).subagent);
+    return top ? top.key : null;
+  }
+  function employeeCard(s) {
+    if (s.subagent) return '';
+    const id = `EMP-${String(hashOf(s.key) % 9000 + 1000)}`;
+    const since = s.startedAt ? new Date(s.startedAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    const td = todayOf(s.key);
+    const all = Object.entries(s.kinds || {});
+    const total = all.reduce((a, [, n]) => a + n, 0);
+    // What they spend their time on ("other" tools last, only if nothing else).
+    const kinds = all.filter(([k]) => k !== 'other').sort((a, b) => b[1] - a[1]);
+    if (!kinds.length && total) kinds.push(['other', total]);
+    const bars = kinds.slice(0, 4).map(([k, n]) => `<div class="hub-skill"><span>${esc(KIND_TEXT[k] || k)}</span><span class="hub-bar"><i style="width:${Math.round(n / total * 100)}%"></i></span><small>${Math.round(n / total * 100)}%</small></div>`).join('');
+    const o = s.outcome;
+    const last = o ? `${{ test: '測試', build: '編譯', push: '推送', commit: 'commit' }[o.task] || o.task}${o.ok ? '成功' : '失敗'}` : null;
+    return `<div class="hub-sec hub-card-emp"><h4>🪪 員工資料${bestKey() === s.key ? '　<span class="hub-best">🏆 今日最佳員工</span>' : ''}</h4>
+      <div class="hub-emp"><span>工號 <b>${id}</b></span><span>部門 <b>${esc(cut(deptOf(s), 20))}</b></span><span>到職 <b>${esc(since)}</b></span>
+      <span>今天 <b>${td ? `${td.turns} 輪・${td.tools} 個動作` : '還沒做完一輪'}</b></span>${last ? `<span>最近 <b>${esc(last)}</b></span>` : ''}</div>
+      ${total ? `<div class="hub-skills">${bars}</div>` : ''}</div>`;
+  }
+
   // ---- the boss walks in (everyone looks busy) and leaves again
 
   const bossIn = () => store.get('boss', false) === true;
@@ -401,6 +462,7 @@
         <button class="hub-x" aria-label="關閉">×</button>
       </div>
       ${levelLine(s)}
+      ${employeeCard(s)}
       ${relayFrom && canSay ? `<div class="hub-relay">↪ 轉話：把「${esc(cut(name(state.data.sessions.find((x) => x.key === relayFrom) || {}), 24))}」的最後回覆轉給這個 session。可以先改內容，按 Enter 送出。<button class="hub-btn" data-act="unrelay">不轉了</button></div>` : ''}
       ${need ? `<div class="hub-need"><b>${s.stuck ? '可能卡住' : '等你處理'}</b>${esc(s.stuck || need)}
         ${s.choices && canSay ? `<div class="hub-row hub-choices">${s.choices.map((c, i) => `<button class="hub-btn primary" data-choice="${i}" title="${esc(c.message)}">${esc(c.label)}</button>`).join('')}</div>` : ''}
@@ -792,6 +854,7 @@
     toolsEl.dataset.sig = sig;
     toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
       + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
+      + '<button type="button" data-tool="standup">🗣️ 開晨會</button>'
       + `<button type="button" data-tool="boss" class="${bossIn() ? 'on' : ''}" title="B 鍵也能切換">${bossIn() ? '🚶 老闆走了' : '👔 老闆回來了'}</button>`
       + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
       + '<span class="hub-muted">拖到印表機＝複製報告、白板＝釘選、咖啡機＝叫它停下、門口＝先不顯示</span>';
@@ -802,6 +865,7 @@
     if (b.dataset.tool === 'report') report();
     if (b.dataset.tool === 'board') showBoard();
     if (b.dataset.tool === 'boss') toggleBoss();
+    if (b.dataset.tool === 'standup' && opts.onStandup) opts.onStandup();
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
   });
 
@@ -811,6 +875,7 @@
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
+    standupLine, showMinutes, bestKey,
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },

@@ -705,3 +705,149 @@ test('the company name takes the first window on the back wall, on both floors',
   up.setCompany('測試公司');
   assert.ok(up.plan.logo);
 });
+
+test('a full floor is laid out once, not again on every update (the boss coming in upstairs)', () => {
+  for (const floor of [1, 2]) {
+    const o = loadFloor(floor);
+    const many = Array.from({ length: 16 }, (_, i) => at('idle', { n: i, ago: 60 * MIN }));
+    settle(o, many);
+    o.first = false;
+    let n = 0;
+    const orig = o.rebuild.bind(o);
+    o.rebuild = () => { n++; orig(); };
+    o.setBoss(true);
+    for (let i = 0; i < 5; i++) o.update(many);
+    assert.ok(n <= 1, `floor ${floor}: rebuilt ${n} times`);
+    const ppl = [...o.people.values()];
+    assert.equal(ppl.filter((p) => !p.leaving).length, 16, `floor ${floor}: nobody sent home`);
+    const desks = ppl.filter((p) => p.mode === 'work').length;
+    assert.ok(desks > 0 && desks <= o.plan.desks.length, `floor ${floor}: the free desks are taken (${desks})`);
+    for (const p of ppl.filter((x) => x.mode !== 'work')) {
+      assert.equal(p.pretend, true);
+      p.path = []; p.poi = null; p.until = 0;
+      o.wander(p, Date.now());
+      p.path = []; if (p.poi) { p.x = p.poi.x; p.y = p.poi.y; }
+      assert.match(o.stateOf(p).act, /^(whiteboard|printer|read|phone|typefast|clipboard)$/, `floor ${floor}: no desk, looks busy`);
+    }
+  }
+  // Pretending gives way to real work.
+  {
+    const o = load(true);
+    const idle = Array.from({ length: 9 }, (_, i) => at('idle', { n: i, ago: 60 * MIN }));
+    settle(o, idle);
+    o.first = false;
+    o.setBoss(true);
+    o.update(idle);
+    assert.equal(o.deskOf.size, o.plan.desks.length, 'all desks taken by pretenders');
+    const real = at('tool', { n: 'real' });
+    o.update([...idle, real]);
+    assert.equal(o.people.get(real.key).mode, 'work', 'the one really working gets a desk');
+  }
+});
+
+test('stand-up: everyone goes to the meeting room, each one speaks in turn, minutes at the end', () => {
+  const o = load(true);
+  o.floor = 1;
+  const list = [at('tool'), at('idle', { ago: 60 * MIN }), at('done', { ago: 2 * MIN }), at('error')];
+  settle(o, list);
+  o.first = false;
+  let minutes = null;
+  assert.equal(o.startStandup((s) => `報告 ${s.key}`, (lines) => { minutes = lines; }), true);
+  o.update(list);
+  for (const p of o.people.values()) {
+    assert.ok(p.standupSpot, `${p.key} has a place`);
+    assert.notEqual(p.mode, 'work', 'nobody stays at a desk');
+    p.path = []; p.poi = null; p.until = 0;
+    o.wander(p, Date.now());
+    assert.ok(Math.hypot(p.poi.x - p.standupSpot.x, p.poi.y - p.standupSpot.y) < 0.01);
+  }
+  const t = o.plan.props.find((q) => q.t === 'meetingTable');
+  const spot = o.people.get('claude:tool').standupSpot;
+  assert.ok(Math.hypot(spot.x - (t.x + t.w / 2), spot.y - (t.y + t.d / 2)) < 4, 'round the meeting table');
+  let wall = Date.now() + 7000;
+  o.stepStandup(wall);
+  const first = o.standup.speaker;
+  const p1 = o.people.get(first);
+  p1.path = []; p1.x = p1.poi.x; p1.y = p1.poi.y;
+  assert.equal(o.stateOf(p1).act, 'chat', 'the one speaking talks');
+  assert.match(p1.event.text, /^報告/);
+  for (let i = 0; i < 5; i++) { wall += 5100; o.stepStandup(wall); }
+  assert.equal(o.standup, null, 'over');
+  assert.equal(minutes.length, 4);
+  assert.ok([...o.people.values()].every((p) => !p.standupSpot));
+  o.update(list);
+  assert.equal(o.people.get('claude:tool').mode, 'work', 'back to work');
+});
+
+test('stand-up: the one coming down by the lift afterwards joins in; everyone comes downstairs', () => {
+  const o = load(true);
+  o.floor = 1;
+  const a = at('tool');
+  settle(o, [a]);
+  o.first = false;
+  o.startStandup(() => 'x', () => {});
+  const late = at('idle', { n: 'late', ago: 60 * MIN });
+  o.update([a, late], { moved: new Set([late.key]) });
+  assert.ok(o.people.get(late.key).standupSpot, 'latecomer gets a place');
+  assert.equal(o.standup.order.length, 2);
+});
+
+test('after hours the ones just resting go home and the room goes dark; the ones that need you stay', () => {
+  const o = load(true, clockAt(21));
+  const list = [at('tool'), at('idle', { ago: 60 * MIN }), at('done', { ago: 2 * MIN }), at('waiting')];
+  settle(o, list);
+  assert.equal(o.closedNow, true);
+  assert.ok(o.people.get('claude:tool'));
+  assert.ok(o.people.get('claude:waiting'));
+  assert.equal(o.people.get('claude:idle'), undefined);
+  assert.equal(o.people.get('claude:done'), undefined);
+  assert.equal(o.offDuty, 2, 'counted as gone home');
+  const day = load(true, clockAt(15));
+  settle(day, list);
+  assert.equal(day.closedNow, false);
+  assert.ok(day.people.get('claude:idle'));
+});
+
+test('you: W A S D walk you about (not through furniture), Space talks to whoever is next to you, R sits you down', () => {
+  const o = load(true);
+  o.floor = 1;
+  const s = at('idle', { ago: 60 * MIN });
+  settle(o, [s]);
+  const me = o.meOn();
+  assert.ok(me.seated);
+  // From open floor in the middle of the room.
+  const open = [];
+  for (let x = 2; x < o.plan.OW; x += 0.25) for (let y = 2; y < o.plan.D - 2; y += 0.25) {
+    if ([[0, 0], [-0.6, -0.6], [-1.2, -1.2], [0.6, 0.6]].every(([dx, dy]) => !o.plan.grid.blocked(x + dx, y + dy))) open.push({ x, y });
+  }
+  const start = open[Math.floor(open.length / 2)];
+  me.x = start.x; me.y = start.y; me.seated = false;
+  o.meKey('w', true);
+  for (let i = 0; i < 6; i++) o.stepMe(0.05);
+  o.meKey('w', false);
+  o.stepMe(0.05);
+  assert.ok(me.x < start.x - 0.2 && me.y < start.y - 0.2, 'W walks up the screen (back of the room)');
+  assert.equal(me.moving, false, 'stops when the key is let go');
+  assert.equal(me.seated, false);
+  assert.ok(!o.plan.grid.blocked(me.x, me.y));
+  // Next to someone: Space opens them.
+  const p = o.people.get(s.key);
+  me.x = p.x + 0.5; me.y = p.y;
+  let opened = null;
+  o.onHover = (sess, at2, click) => { if (click) opened = sess; };
+  assert.equal(o.meNear(), p);
+  o.meKey(' ', true);
+  assert.equal(opened.key, s.key);
+  o.meKey('r', true);
+  for (let i = 0; i < 400 && !me.seated; i++) o.stepMe(0.05);
+  assert.ok(me.seated, 'back at your desk');
+  assert.equal(o.bodies().length, 2);
+  assert.equal(o.meKey('x', true), false, 'other keys are left alone');
+});
+
+test("today's best gets a gold ring and a trophy in the name tag", () => {
+  const o = load(true);
+  o.bestKey = 'claude:idle';
+  const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
+  assert.equal(o.bestKey, p.key);
+});

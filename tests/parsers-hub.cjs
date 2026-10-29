@@ -147,3 +147,12 @@ test('a /clear keeps one person: older logs of the same desktop session are drop
   // The log the desktop app points at wins even if another started later.
   assert.deepEqual(latestSegments([old, cur], (s) => s.id === 'a').map((s) => s.id), ['a']);
 });
+
+test('each session counts its tool calls by kind of work', () => {
+  const s = newSession('claude', 'x', 'f');
+  applyClaude(s, tool(0, 'Read', { file_path: '/a/b.js' }));
+  applyClaude(s, tool(1, 'Grep', { pattern: 'x' }));
+  applyClaude(s, tool(2, 'Bash', { command: 'npm test' }));
+  applyClaude(s, tool(3, 'Skill', { skill: 'x' }));
+  assert.equal(JSON.stringify(s.kinds), JSON.stringify({ lookup: 2, test: 1, other: 1 }));
+});

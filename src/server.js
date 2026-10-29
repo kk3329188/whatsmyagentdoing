@@ -65,6 +65,7 @@ function view(s, now, { privacy }) {
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
     task: status === 'tool' ? s.task || null : null,
     outcome: s.outcome && now - s.outcome.at < 5 * 60_000 ? s.outcome : null,
+    kinds: s.kinds || {},
     prompt: s.prompt,
     reply: s.reply,
     error: s.error,
