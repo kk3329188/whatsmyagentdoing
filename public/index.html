@@ -388,6 +388,7 @@
               <label class="tog" id="agentBadgeToggle"><input type="checkbox" id="showAgent"> <span data-t="showAgent"></span></label>
               <label class="tog"><input type="checkbox" id="followCam"> <span>開工／做完時鏡頭跟拍</span></label>
               <label class="tog"><input type="checkbox" id="autoStandup"> <span>每天 10:00 自動開晨會</span></label>
+              <label class="tog"><input type="checkbox" id="ambientOn"> <span>辦公室環境音</span></label>
             </div>
           </div>
           <div class="setting-group">
@@ -430,6 +431,7 @@
 <script src="/office.js"></script>
 <script src="/popout.js"></script>
 <script src="/hub.js"></script>
+<script src="/ambient.js"></script>
 
 <script>
 // Language: your pick in the 🌐 menu, else the language of your prompts
@@ -632,6 +634,7 @@ function render() {
     // Someone from outside walks in downstairs (src/visitors.js).
     if (!PIP && !replay && office.visitorsIn) { office.masked = Hub.live; if (office.visitorsIn(state.data.visitors) > 0) Hub.ding('wait'); }
     for (const o of [office, office2]) if (o && o.setWeather) o.setWeather(state.data.weather);
+    if (!PIP && office.setLeave) office.setLeave(replay ? [] : (state.data.office && state.data.office.onLeave) || []);
     for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
@@ -739,6 +742,18 @@ settingsMenu.addEventListener('toggle', () => { if (settingsMenu.open) hideTip()
 const followCam = document.getElementById('followCam');
 followCam.checked = store.get('follow', true) !== false;
 followCam.addEventListener('change', () => { store.set('follow', followCam.checked); if (!followCam.checked) for (const o of [office, office2]) if (o && o.spotCancel) o.spotCancel(); if (state.data) render(); });
+// The office soundscape: off unless you turn it on; browsers only let sound
+// start after you click or press something, so a saved "on" waits for that.
+const ambient = new OfficeAmbient.Ambient();
+const ambientOn = document.getElementById('ambientOn');
+ambientOn.checked = store.get('ambient', false) === true;
+ambientOn.addEventListener('change', () => { store.set('ambient', ambientOn.checked); if (ambientOn.checked) ambient.start(); else ambient.stop(); });
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { if (ambientOn.checked && !PIP) ambient.start(); }, { once: true, capture: true });
+setInterval(() => {
+  if (!ambient.on) return;
+  const o = state.floor === 2 && office2 ? office2 : office;
+  ambient.update(document.hidden || state.view !== 'office' ? { typing: 0, coffee: 0, chat: 0, weather: null } : OfficeAmbient.sceneOf(o));
+}, 400);
 const autoStandup = document.getElementById('autoStandup');
 autoStandup.checked = store.get('autoStandup', true) !== false;
 autoStandup.addEventListener('change', () => store.set('autoStandup', autoStandup.checked));

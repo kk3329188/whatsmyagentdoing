@@ -107,8 +107,15 @@ test('visitors: a new message in a watched folder is a visit; old ones, your own
   write('REQ-3-OUT-X', { messages: [msg('我們發出去的')] });
   write('REQ-4', { userName: '阿華', messages: [msg('機器人自己的回覆', 'UBOT', '小菜')] });
   v.lastScan = 0; v.scan(now + 6000);
-  const got = v.recent(now + 6000).map((x) => `${x.from}:${x.text}`).sort();
+  const got = v.recent(now + 6000).filter((x) => x.kind === 'visit').map((x) => `${x.from}:${x.text}`).sort();
   assert.deepEqual(got, ['小明（前端）:還有一個問題', '阿華:新的需求']);
+  // The bot answering is a reply: the secretary sees them out.
+  const reply = v.recent(now + 6000).find((x) => x.kind === 'reply');
+  assert.equal(reply.from, '阿華');
+  assert.equal(reply.conv, 'REQ-4');
+  write('REQ-2', { userName: '阿華', messages: [msg('新的需求', 'U2', '阿華'), msg('好的我來看', 'UBOT', '小菜', now / 1000 + 9)] });
+  v.lastScan = 0; v.scan(now + 12_000);
+  assert.ok(v.recent(now + 12_000).some((x) => x.kind === 'reply' && x.conv === 'REQ-2'), 'answered after the visit');
   assert.equal(visitOf({ id: 'a', userName: 'X', messages: [{ ts: '1', text: '<@U1> 看 <https://a.b|連結>' }] }, 'a', 0, new Set()).text, '看 連結');
   assert.equal(v.add({ from: 'CI 機器人', text: 'build 好了' }, now), true);
   assert.equal(v.add({ text: 'no one' }, now), false);

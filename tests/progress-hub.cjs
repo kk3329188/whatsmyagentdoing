@@ -159,3 +159,29 @@ test('badges: earned from what they do; history already there is given quietly, 
   const wall = p.office().badges.find((b) => b.id === 'pusher');
   assert.equal(wall.holders[0].key, 'claude:b1');
 });
+
+test('on leave: regulars not seen today but within two weeks, by name, newest first', () => {
+  const p = new Progress(path.join(os.tmpdir(), `wmad-leave-${process.pid}-${Date.now()}.json`));
+  const now = Date.now(), DAY = 86_400_000;
+  p.data.sessions = {
+    'claude:a': { turns: 10, tools: 1, at: now - 2 * DAY, title: '報表' },
+    'claude:b': { turns: 10, tools: 1, at: now - 5 * DAY, title: '活動' },
+    'claude:c': { turns: 1, tools: 1, at: now - 2 * DAY, title: '只做一輪' },
+    'claude:d': { turns: 10, tools: 1, at: now - 20 * DAY, title: '太久了' },
+    'claude:e': { turns: 10, tools: 1, at: now - 3 * 3600_000, title: '今天才動過' },
+    'claude:f': { turns: 10, tools: 1, at: now - 3 * DAY, title: '在線上' },
+  };
+  const got = p.onLeave(new Set(['claude:f']), now);
+  assert.equal(got.map((x) => x.title).join(), '報表,活動');
+  assert.equal(got[1].days, 5);
+  // Never named here: the desktop app's title; archived there: not on leave.
+  p.data.sessions['claude:g'] = { turns: 9, tools: 1, at: now - 2 * DAY };
+  p.data.sessions['claude:h'] = { turns: 9, tools: 1, at: now - 2 * DAY, title: '封存了' };
+  const named = p.onLeave(new Set(['claude:f']), now, (k) => (k === 'claude:g' ? '從 app 來的名字' : k === 'claude:h' ? null : undefined));
+  assert.ok(named.some((x) => x.title === '從 app 來的名字'));
+  assert.ok(!named.some((x) => x.key === 'claude:h'));
+  // The name is remembered from what the page shows.
+  p.update([], now);
+  p.track([{ key: 'claude:a', agent: 'claude', status: 'idle', title: '新名字' }], now);
+  assert.equal(p.data.sessions['claude:a'].title, '新名字');
+});

@@ -33,18 +33,25 @@ function clean(t) {
     .replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
-// One conversation file -> { id, from, text, topic, at } for its newest message, or null.
+// One conversation file -> its newest message, or null: a visit
+// ({ kind: 'visit', id, from, text, topic, at }) when someone wrote, or a
+// reply ({ kind: 'reply', id, from: who was answered, at }) when your own bot
+// (one of `ignore`) wrote last: the secretary sees the visitor out.
 function visitOf(j, fallbackId, mtime, ignore) {
   if (!j || typeof j !== 'object') return null;
   const id = String(j.id || fallbackId);
   if (/-OUT-/.test(id) || j.outbound) return null;
   const msgs = Array.isArray(j.messages) ? j.messages : null;
   const last = msgs && msgs.length ? msgs[msgs.length - 1] : null;
-  if (last && last.user && ignore.has(last.user)) return null;
+  const at = last && last.ts ? Number(last.ts) * 1000 : Number(j.at) || (j.lastMsgTs ? Number(j.lastMsgTs) * 1000 : mtime);
+  if (last && last.user && ignore.has(last.user)) {
+    const asker = [...msgs].reverse().find((m) => m.user && !ignore.has(m.user));
+    const to = (asker && asker.userName) || j.userName || null;
+    return to ? { kind: 'reply', id, from: String(to).slice(0, 30), text: '', topic: j.role || null, at } : null;
+  }
   const from = (last && last.userName) || j.userName || j.from || null;
   if (!from) return null;
-  const at = last && last.ts ? Number(last.ts) * 1000 : Number(j.at) || (j.lastMsgTs ? Number(j.lastMsgTs) * 1000 : mtime);
-  return { id, from: String(from).slice(0, 30), text: clean(last ? last.text : j.text), topic: j.role || j.topic || null, at };
+  return { kind: 'visit', id, from: String(from).slice(0, 30), text: clean(last ? last.text : j.text), topic: j.role || j.topic || null, at };
 }
 
 class Visitors {
@@ -87,14 +94,15 @@ class Visitors {
   }
 
   push(v) {
-    this.list.push({ ...v, id: `${v.id}@${v.at}` });
+    this.list.push({ kind: 'visit', ...v, conv: v.id, id: `${v.id}@${v.at}` });
     if (this.list.length > 30) this.list.shift();
   }
 
-  // A visit announced over HTTP.
-  add({ from, text, topic } = {}, now = Date.now()) {
+  // A visit (or, with reply: true, the answer to one) announced over HTTP.
+  // `conversation` ties a reply to its visit.
+  add({ from, text, topic, reply, conversation } = {}, now = Date.now()) {
     if (!from) return false;
-    this.push({ id: `api-${now}`, from: String(from).slice(0, 30), text: clean(text), topic: topic ? String(topic).slice(0, 20) : null, at: now });
+    this.push({ kind: reply ? 'reply' : 'visit', id: String(conversation || `api-${now}`).slice(0, 80), from: String(from).slice(0, 30), text: clean(text), topic: topic ? String(topic).slice(0, 20) : null, at: now });
     return true;
   }
 

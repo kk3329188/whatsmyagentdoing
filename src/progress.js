@@ -132,6 +132,25 @@ class Progress {
     }
   }
 
+  // Regulars (3+ finished turns) not seen today but within the last two
+  // weeks: they are on leave. `live` are the keys showing right now.
+  // `titleOf(key)` names the ones we never saw a title for (and returns
+  // null for closed work, which is not on leave).
+  onLeave(live, now = Date.now(), titleOf = () => undefined) {
+    const out = [];
+    for (const [key, r] of Object.entries(this.data.sessions)) {
+      if (live.has(key) || (r.turns || 0) < 3) continue;
+      const away = now - (r.at || 0);
+      if (away < 86_400_000 || away > 14 * 86_400_000) continue;
+      const known = titleOf(key);
+      if (known === null) continue;
+      const title = r.title || known;
+      if (!title) continue;
+      out.push({ key, title, since: r.at, days: Math.floor(away / 86_400_000) });
+    }
+    return out.sort((a, b) => b.since - a.since).slice(0, 8);
+  }
+
   badges(key) {
     const got = (this.data.sessions[key] && this.data.sessions[key].badges) || {};
     return BADGES.filter((b) => got[b.id]).map((b) => ({ id: b.id, name: b.name, emoji: b.emoji, at: got[b.id] }));
@@ -150,6 +169,9 @@ class Progress {
       if (s.subagent || s.archived) continue;
       const z = TRACK_ZONE(s);
       const rec = spans[s.key] || (spans[s.key] = { title: null, s: [] });
+      // Remember the name for when they are away (the "on leave" sign).
+      const life = d.sessions[s.key];
+      if (life && s.title && life.title !== s.title) { life.title = String(s.title).slice(0, 80); this.dirty = true; }
       if (s.title && rec.title !== s.title) { rec.title = String(s.title).slice(0, 80); this.dirty = true; }
       const last = rec.s[rec.s.length - 1];
       if (last && last[1] === z) continue;

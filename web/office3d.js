@@ -431,6 +431,28 @@ export class Office3D extends window.Office {
     return t;
   }
 
+  // Dust sheets on the desks of those on leave (made once per desk).
+  dustDesks() {
+    this.dust = this.dust || new Map();
+    const want = new Set();
+    for (const dk of this.plan.desks) if (this.leaveDesk(dk)) want.add(dk);
+    for (const [dk, m] of this.dust) if (!want.has(dk) || !this.room || m.parent !== this.room) { if (m.parent) m.parent.remove(m); this.dust.delete(dk); }
+    for (const dk of want) {
+      if (this.dust.has(dk) || !this.room) continue;
+      if (!this.dustMat) {
+        const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+        const c = cv.getContext('2d');
+        for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(160,152,140,${0.25 + (i % 5) * 0.08})`; c.fillRect((i * 37) % 64, (i * 23 + (i >> 3)) % 64, 2, 2); }
+        this.dustMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false });
+      }
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.72), this.dustMat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(dk.x + 0.7, DESK_H + 0.006, dk.y + 0.4);
+      this.room.add(m);
+      this.dust.set(dk, m);
+    }
+  }
+
   // Rain streaks or snowflakes over the window glass (scrolled each frame).
   weatherTexture(kind) {
     this.wxTex = this.wxTex || {};
@@ -1676,6 +1698,7 @@ export class Office3D extends window.Office {
   facing(p, st) {
     if (st.pose === 'walk') return null;
     if (p.me) return p.seated ? Math.PI : null;
+    if (p.seeOff && !p.path.length) return Math.atan2(this.plan.door.x - p.x, this.plan.door.y - p.y);
     if (p.meeting && !p.path.length) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
     // A visitor talks to whoever sits at the desk they came to.
     if (p.visitor) return p.path.length ? null : Math.atan2(p.desk.seat.x - p.x, p.desk.seat.y - p.y);
@@ -2001,6 +2024,17 @@ export class Office3D extends window.Office {
       const b = this.plan.boss;
       v.set(b.x + 0.7, 0, Math.min(this.plan.D - 0.1, b.y + 1.7)).project(this.camera);
       this.deskSignAt({ x: (v.x + 1) / 2 * this.cw, y: (1 - v.y) / 2 * this.ch });
+    }
+    // On leave: a sign over their dusty desk.
+    if (!this.compact) {
+      const busy = new Set([...this.people.values()].filter((p) => p.mode === 'work' && p.desk).map((p) => p.desk));
+      for (const dk of this.plan.desks) {
+        const who = !busy.has(dk) && this.leaveDesk(dk);
+        if (!who) continue;
+        v.set(dk.x + 0.7, DESK_H + 0.55, dk.y + 0.4).project(this.camera);
+        this.leaveSign((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, who);
+      }
+      this.dustDesks();
     }
     if (!this.compact) for (const d of this.podDepts()) {
       v.set(d.x, d.z, d.y).project(this.camera);

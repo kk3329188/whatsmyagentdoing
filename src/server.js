@@ -13,6 +13,7 @@ const STATIC = {
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/popout.js': ['popout.js', 'text/javascript; charset=utf-8'],
   '/hub.js': ['hub.js', 'text/javascript; charset=utf-8'],
+  '/ambient.js': ['ambient.js', 'text/javascript; charset=utf-8'],
 };
 const TYPES = { '.js': 'text/javascript; charset=utf-8', '.glb': 'model/gltf-binary', '.png': 'image/png', '.json': 'application/json' };
 // 3D models, served as-is (3D view only).
@@ -165,6 +166,15 @@ function latestSegments(raw, current = () => false) {
     .map((s) => (s.subagent && moved.has(s.parentId) ? { ...s, parentId: moved.get(s.parentId) } : s));
 }
 
+// The desktop app's title for a session that is not showing any more; null
+// when it was archived (finished work, not someone on leave).
+function leaveTitle(key) {
+  if (!key.startsWith('claude:')) return undefined;
+  const m = desktop.get(key.slice(7));
+  if (!m) return undefined;
+  return m.archived ? null : m.title || undefined;
+}
+
 function snapshot(watcher, opts) {
   const now = Date.now();
   if (!opts.demo) desktop.refresh(now);
@@ -176,7 +186,7 @@ function snapshot(watcher, opts) {
   if (!opts.demo) visitors.scan(now);
   const visits = opts.demo ? [] : visitors.recent(now).map((v) => (opts.privacy ? { ...v, text: null, from: '訪客' } : v));
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions, visitors: visits, weather: opts.demo ? null : weather.tick(now) };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : { ...progress.office(), onLeave: progress.onLeave(new Set(sessions.map((s) => s.key)), now, leaveTitle).map((x) => (opts.privacy ? { ...x, title: '員工' } : x)) }, sessions, visitors: visits, weather: opts.demo ? null : weather.tick(now) };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {

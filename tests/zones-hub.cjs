@@ -1116,3 +1116,90 @@ test('messaging another session: both go to the meeting room, sit across the tab
   assert.ok(pa.path.length && pa.desk === deskA, 'back to the desk');
   assert.equal(sa.taken, null);
 });
+
+test('your bot answered: the secretary walks the visitor to the door, waves them off, and goes back', () => {
+  const o = load(true);
+  o.isSecretary = (s) => s.key === 'claude:sec';
+  const sec = { ...at('tool'), key: 'claude:sec', title: '秘書' };
+  settle(o, [sec]);
+  o.first = false;
+  const host = o.people.get('claude:sec');
+  host.path = []; host.x = host.desk.seat.x; host.y = host.desk.seat.y;
+  o.visitorsIn([{ id: 'REQ-9@1', conv: 'REQ-9', kind: 'visit', from: '小明', text: '問題', at: Date.now() }]);
+  const v = o.visitors.get('visitor:REQ-9@1');
+  v.path = []; v.stage = 'talk'; v.until = Date.now() + 60_000;
+  o.visitorsIn([{ id: 'REQ-9@2', conv: 'REQ-9', kind: 'reply', from: '小明', at: Date.now() }]);
+  assert.ok(host.seeOff, 'off to the door');
+  assert.ok(host.path.length);
+  assert.equal(v.until, 0, 'the visitor wraps up');
+  host.path = [];
+  o.stepSeeOff(host, Date.now());
+  assert.match(host.event.text, /慢走/);
+  assert.equal(o.stateOf(host).act, 'wave');
+  o.stepSeeOff(host, Date.now() + 5000);
+  assert.equal(host.seeOff, null);
+  assert.ok(host.path.length, 'back to the desk');
+});
+
+test('on leave: a free desk downstairs gets their sign and dust; back again, they say so', () => {
+  const o = load(true);
+  o.label = (s) => s.title;
+  const w = at('tool');
+  settle(o, [w]);
+  o.first = false;
+  o.setLeave([{ key: 'claude:away', title: '活動報表', days: 3, since: 0 }]);
+  const desk = o.plan.desks.find((d) => o.leaveDesk(d));
+  assert.ok(desk, 'a desk with their sign');
+  assert.notEqual(o.plan.desks.indexOf(desk), o.deskOf.get(w.key), "not someone else's desk");
+  assert.equal(o.leaveDesk(desk).title, '活動報表');
+  // Back at work: the sign goes, and they announce it.
+  const back = { ...at('tool', { n: 'b' }), key: 'claude:away' };
+  o.update([w, back]);
+  o.setLeave([]);
+  assert.equal(o.plan.desks.some((d) => o.leaveDesk(d)), false);
+  assert.match(o.people.get('claude:away').event.text, /休假回來/);
+  // Upstairs there are no leave desks.
+  const up = loadFloor(2);
+  up.setLeave([{ key: 'claude:x', title: 'x', days: 2 }]);
+  assert.equal(up.plan.desks.some((d) => up.leaveDesk(d)), false);
+});
+
+test('soundscape: keyboards while people type, the coffee machine, voices, rain; quiet when nothing happens', () => {
+  const o = load(true);
+  const p = settle(o, [at('typing'), at('done', { n: 'c', ago: 2 * MIN })])('claude:typing');
+  seat(p);
+  o.t = 1000;
+  const win = {};
+  // A stand-in for the browser's audio: count what gets made and started.
+  const made = { started: 0, gains: [] };
+  const node = () => ({ connect: () => {}, disconnect: () => {}, frequency: { value: 0 }, Q: { value: 0 }, gain: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime(v) { made.gains.push(v); } } });
+  class FakeAudio {
+    constructor() { this.currentTime = 0; this.sampleRate = 8000; this.state = 'running'; this.destination = {}; }
+    createGain() { return node(); }
+    createBiquadFilter() { return node(); }
+    createBuffer(ch, n) { return { getChannelData: () => new Float32Array(n) }; }
+    createBufferSource() { return { ...node(), start() { made.started++; }, stop() {} }; }
+  }
+  win.AudioContext = FakeAudio;
+  const ctx = { window: win, Math, Date, setInterval: () => 1, clearInterval() {}, setTimeout() {}, Float32Array };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), ctx);
+  const { Ambient, sceneOf } = win.OfficeAmbient;
+  o.stateOf = ((orig) => (q) => (q === p ? { pose: 'sit', act: 'type' } : orig.call(o, q)))(o.stateOf);
+  const scene = sceneOf(o);
+  assert.equal(scene.typing, 1);
+  o.setWeather({ kind: 'rain' });
+  assert.equal(sceneOf(o).weather, 'rain');
+  const a = new Ambient();
+  a.start();
+  const loops = made.started;
+  assert.equal(loops, 4, 'room tone, coffee machine, rain, voices');
+  a.update({ typing: 6, coffee: 1, chat: 2, weather: 'rain' });
+  for (let i = 0; i < 20; i++) a.tick();
+  assert.ok(made.started > loops, 'keys clicking');
+  assert.ok(made.gains.some((g) => g > 0.1), 'coffee machine and rain up');
+  made.started = 0;
+  a.update({ typing: 0, coffee: 0, chat: 0, weather: null });
+  for (let i = 0; i < 20; i++) a.tick();
+  assert.equal(made.started, 0, 'no typing, no clicks');
+  a.stop();
+});

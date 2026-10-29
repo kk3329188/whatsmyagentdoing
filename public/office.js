@@ -1866,7 +1866,9 @@
         if (this.visitorSeen.has(v.id)) continue;
         this.visitorSeen.add(v.id);
         if (this.first || !this.plan.zones || this.compact || !this.plan.boss) continue;
-        if (Date.now() - v.at > 3 * 60_000 || this.visitors.size >= 4) continue;
+        if (Date.now() - v.at > 3 * 60_000) continue;
+        if (v.kind === 'reply') { this.seeOff(v); continue; }
+        if (this.visitors.size >= 4) continue;
         this.spawnVisitor(v);
         n++;
       }
@@ -1884,13 +1886,43 @@
       const key = `visitor:${v.id}`;
       const masked = !!this.masked;
       const body = {
-        visitor: true, key, h, x: door.x, y: door.y, path: plan.grid.path(door.x, door.y, at.x, at.y), walkFace: 'front',
+        visitor: true, key, conv: v.conv || v.id, h, x: door.x, y: door.y, path: plan.grid.path(door.x, door.y, at.x, at.y), walkFace: 'front',
         phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: h % 4,
         stage: 'in', until: 0, spot: at, desk, text: masked ? '有事來找' : v.text || '有事來找',
         s: { key, agent: 'claude', status: 'idle', title: masked ? '訪客' : `訪客・${v.from}`, level: 2, visitor: true },
       };
       body.event = { text: masked ? '你好～' : `你好，我是${v.from}`.slice(0, 18), at: Date.now(), zone: 'held' };
       this.visitors.set(key, body);
+    }
+
+    // Your bot answered someone (src/visitors.js reply): the secretary walks
+    // them to the door and waves them off, then goes back to their desk. A
+    // visitor from that conversation still here leaves with them.
+    seeOff(v) {
+      const sec = this.secKey && this.people.get(this.secKey);
+      if (!sec || sec.leaving || sec.held || sec.seeOff) return false;
+      const door = this.plan.door;
+      const spot = [[0.8, 0], [0.8, -0.6], [0.8, 0.6], [1.3, 0]].map(([dx, dy]) => ({ x: door.x + dx, y: door.y + dy })).find((q) => !this.plan.grid.hard(q.x, q.y)) || door;
+      sec.seeOff = { stage: 'go', until: 0, to: this.masked ? '訪客' : v.from };
+      sec.event = { text: '我送一下客', at: Date.now(), zone: 'held' };
+      this.goTo(sec, spot);
+      for (const vis of (this.visitors || new Map()).values()) {
+        if (vis.conv === (v.conv || v.id) && vis.stage !== 'out') { vis.until = 0; vis.stage = 'talk'; vis.replyAt = 0; }
+      }
+      return true;
+    }
+
+    stepSeeOff(p, wall) {
+      const s = p.seeOff;
+      if (p.path.length) return;
+      if (s.stage === 'go') {
+        s.stage = 'bye';
+        s.until = wall + 3500;
+        p.event = { text: `慢走～已回覆${s.to ? ` ${s.to}` : ''}`.slice(0, 24), at: wall, zone: 'done' };
+      } else if (s.stage === 'bye' && wall > s.until) {
+        p.seeOff = null;
+        if (p.desk) this.goTo(p, p.desk.seat);
+      }
     }
 
     stepVisitors(dt) {
@@ -2088,6 +2120,56 @@
       const top = Math.max(r.top, 0), bot = Math.min(r.bottom, vh), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
       if (bot - top < 120 || right - left < 160) return whole;
       return { x: (left + right) / 2 - r.left, y: (top + bot) / 2 - r.top + 18, w: right - left, h: bot - top };
+    }
+
+    // On leave (src/progress.js onLeave): regulars not seen today get a free
+    // desk downstairs with a sign and a layer of dust; when one of them is
+    // back, they say so.
+    setLeave(list) {
+      list = this.plan.zones && this.plan.floor !== 2 && !this.compact ? list || [] : [];
+      this.leaveKeys = this.leaveKeys || new Set();
+      for (const k of this.leaveKeys) {
+        const p = this.people.get(k);
+        if (p && !list.some((x) => x.key === k)) p.event = { text: '休假回來了！🏖️', at: Date.now(), zone: 'done' };
+      }
+      this.leaveKeys = new Set(list.map((x) => x.key));
+      const used = new Set(this.deskOf.values());
+      const free = this.plan.desks.map((d, i) => i).filter((i) => !used.has(i));
+      const keep = new Map();
+      for (const [k, i] of this.leaveAt || []) if (this.leaveKeys.has(k) && free.includes(i)) keep.set(k, i);
+      for (const x of list) {
+        if (keep.has(x.key)) continue;
+        const i = free.find((n) => ![...keep.values()].includes(n));
+        if (i == null) break;
+        keep.set(x.key, i);
+      }
+      this.leaveAt = keep;
+      this.leaveInfo = new Map(list.map((x) => [x.key, x]));
+    }
+
+    // Desk -> who is on leave there.
+    leaveDesk(dk) {
+      if (!this.leaveAt) return null;
+      const i = this.plan.desks.indexOf(dk);
+      for (const [k, n] of this.leaveAt) if (n === i) return this.leaveInfo.get(k);
+      return null;
+    }
+
+    // The sign on a desk of someone on leave, at screen point (x, y).
+    leaveSign(x, y, who) {
+      const c = this.ctx;
+      const name = (this.label ? this.label({ key: who.key, title: who.title }) : who.title).slice(0, 12);
+      const text = `🏖️ 休假中・${name}${who.days > 1 ? `（第 ${who.days} 天）` : ''}`;
+      c.save();
+      c.font = '700 9px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      const w = c.measureText(text).width + 12;
+      c.globalAlpha = 0.9;
+      this.roundRect(x - w / 2, y - 7, w, 14, 4, '#f3e3c3', '#c9a46a');
+      c.globalAlpha = 1;
+      c.fillStyle = '#6a4b1c';
+      c.fillText(text, x, y + 0.5);
+      c.restore();
     }
 
     // The real weather outside (src/weather.js): clear, partly, cloudy, fog,
@@ -3108,6 +3190,14 @@
       }
       this.box(x, y, 0.72, 1.4, 0.8, 0.07, pal.deskTop, pal.deskL, pal.deskR);
       const worker = p && p.mode === 'work' ? p : null;
+      const away = !p && this.leaveDesk(dk);
+      if (away) {
+        // A layer of dust.
+        const c = this.ctx;
+        c.save(); c.fillStyle = 'rgba(150,145,135,.45)';
+        for (let i = 0; i < 40; i++) { const q = this.iso(x + 0.05 + ((i * 0.37) % 1.3), y + 0.05 + ((i * 0.61) % 0.7), 0.795); c.fillRect(q.x, q.y, 1.3, 1.3); }
+        c.restore();
+      }
       if (dk.side === 's') {
         const mx = x + 0.42, my = y + 0.1, mz = 0.79;
         this.box(mx + 0.22, my + 0.04, mz, 0.1, 0.1, 0.18, pal.monitor, pal.monitor, pal.monitor);
@@ -3271,6 +3361,7 @@
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
       if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
+      if (p.seeOff && !p.path.length) return { pose: 'stand', face: 'front', act: p.seeOff.stage === 'bye' ? 'wave' : 'lookaround', sitZ: 0 };
       if (p.meeting && !p.path.length) {
         const m = p.meeting;
         return { pose: 'sit', face: m.seat.face, act: m.speaker === p.key ? 'chat' : m.start ? 'write' : 'lookaround', sitZ: m.seat.sit || 0.42 };
@@ -4211,7 +4302,8 @@
             p.until = wall + rand(2500, 4000);
           }
         }
-        if (p.meeting) this.stepMeeting(p, wall);
+        if (p.seeOff) this.stepSeeOff(p, wall);
+        else if (p.meeting) this.stepMeeting(p, wall);
         else if (p.visit) this.stepVisit(p, wall);
         else if (p.mode === 'work' && p.desk && this.plan.zones && !this.bossIn && !this.trip(p, wall)) this.coffeeRun(p, wall);
         if (p.mode === 'wander' && !p.visit && !p.meeting) {
@@ -4276,6 +4368,10 @@
       }
       if (this.closedNow) this.nightShade();
       this.pingPongBall();
+      if (!this.compact) for (const dk of this.plan.desks) {
+        const who = !occupant.get(dk) && this.leaveDesk(dk);
+        if (who) { const at = this.iso(dk.x + 0.7, dk.y + 0.4, 1.25); this.leaveSign(at.x, at.y, who); }
+      }
       if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();
       this.deskSign();
