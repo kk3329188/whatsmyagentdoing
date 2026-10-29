@@ -63,6 +63,8 @@ function view(s, now, { privacy }) {
     model: s.model,
     status,
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
+    task: status === 'tool' ? s.task || null : null,
+    outcome: s.outcome && now - s.outcome.at < 5 * 60_000 ? s.outcome : null,
     prompt: s.prompt,
     reply: s.reply,
     error: s.error,
@@ -134,13 +136,36 @@ function promptLanguage(raw) {
   return guessFromPrompts(recent);
 }
 
+// One desktop conversation can leave several logs behind: /clear (and some
+// restarts) start a new log under the same desktop session, and the old one
+// would otherwise stay on as a second person with the same name, still
+// "waiting on you" for a question that is no longer on screen. Keep only the
+// current log of each: the one the desktop app points at, else the newest.
+// Helpers started from an older log follow the current one.
+function latestSegments(raw, current = () => false) {
+  const keep = new Map(); // bridge id -> session
+  for (const s of raw) {
+    if (s.agent !== 'claude' || s.subagent || !s.bridgeId) continue;
+    const k = keep.get(s.bridgeId);
+    const better = !k || (current(s) !== current(k) ? current(s) : (s.startedAt || 0) > (k.startedAt || 0));
+    if (better) keep.set(s.bridgeId, s);
+  }
+  const moved = new Map(); // dropped id -> kept id
+  for (const s of raw) {
+    const k = s.bridgeId && !s.subagent && s.agent === 'claude' && keep.get(s.bridgeId);
+    if (k && k !== s) moved.set(s.id, k.id);
+  }
+  return raw.filter((s) => !moved.has(s.id))
+    .map((s) => (s.subagent && moved.has(s.parentId) ? { ...s, parentId: moved.get(s.parentId) } : s));
+}
+
 function snapshot(watcher, opts) {
   const now = Date.now();
   if (!opts.demo) desktop.refresh(now);
   const raw = watcher.sessions();
   if (!opts.demo) progress.update(raw, now);
   // Archived desktop sessions are closed work: keep them out of the office.
-  const sessions = raw.map((s) => view(s, now, opts)).filter((s) => !s.archived);
+  const sessions = latestSegments(raw, (s) => !!desktop.get(s.id)).map((s) => view(s, now, opts)).filter((s) => !s.archived);
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
   return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : progress.office(), sessions };
 }
@@ -302,4 +327,4 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   return server;
 }
 
-module.exports = { createServer, snapshot };
+module.exports = { createServer, snapshot, latestSegments };

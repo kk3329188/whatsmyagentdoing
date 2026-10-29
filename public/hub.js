@@ -210,7 +210,7 @@
         const log = (kind) => { eventLog.push({ key: s.key, kind, at }); if (eventLog.length > 300) eventLog.shift(); };
         if (s.status === 'error' && b.status !== 'error') { want('error'); log('error'); }
         else if (now.wait && !b.wait) { want('wait'); log('wait'); }
-        else if (s.status === 'done' && BUSY.has(b.status)) { want('done'); log('done'); }
+        else if (s.status === 'done' && BUSY.has(b.status)) { want('done'); log('done'); pinNote(s, at); }
         if (now.level > b.level) { want('level'); log('level'); }
         if (now.wait && !now.reminded && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) { now.reminded = true; want('wait'); }
       } else if (now.wait && Date.now() - state.skew - (s.lastEventAt || 0) > 10 * 60_000) now.reminded = true;
@@ -218,6 +218,35 @@
     }
     if (sound) Sound.play(sound);
   }
+
+  // ---- the notice board: what got finished today, one note per finished turn
+
+  const firstLine = (t) => String(t || '').split('\n').map((x) => x.trim()).find(Boolean) || '';
+  function boardToday() {
+    const b = store.get('board', null);
+    return b && b.day === today() ? b.notes : [];
+  }
+  function pinNote(s, at) {
+    const notes = boardToday();
+    const text = PRIVATE ? '' : firstLine(s.recap || s.summary || s.reply);
+    notes.push({ at, key: s.key, who: PRIVATE ? '' : name(s), text: cut(text || '做完一輪', 140) });
+    store.set('board', { day: today(), notes: notes.slice(-40) });
+    renderTools();
+  }
+  function showBoard() {
+    const notes = boardToday().slice().reverse();
+    const hm = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const html = `<h3>📌 佈告欄・今天做完的 ${notes.length} 件事</h3>`
+      + (notes.length
+        ? `<ul class="hub-list">${notes.map((n) => `<li><button data-open="${esc(n.key)}">${esc(hm(n.at))}　${esc(cut(byKey(n.key) ? name(byKey(n.key)) : n.who || '（已關閉的 session）', 30))}</button><small>${esc(n.text)}</small></li>`).join('')}</ul>`
+        : '<p class="hub-muted">今天還沒有人做完事。做完一輪的人會走去佈告欄貼一張。</p>')
+      + '<div class="hub-row"><button class="hub-btn primary" data-m="copy">複製成文字</button><button class="hub-btn" data-m="close">關閉</button></div>';
+    modal(html, { text: notes.map((n) => `${hm(n.at)} ${n.who}：${n.text}`).join('\n') });
+  }
+
+  // ---- the company's name (shown on the office wall and the page title)
+
+  const company = () => String(store.get('company', '') || '').trim().slice(0, 24);
 
   // ---- experience and unlocks
 
@@ -747,10 +776,12 @@
   toolsEl.className = 'legend hub-tools';
   function renderTools() {
     const n = state.data ? state.data.sessions.filter((s) => hidden[s.key] != null && isHidden(s)).length : 0;
-    const sig = `${n}|${PRIVATE}`;
+    const notes = boardToday().length;
+    const sig = `${n}|${PRIVATE}|${notes}`;
     if (toolsEl.dataset.sig === sig) return;
     toolsEl.dataset.sig = sig;
     toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
+      + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
       + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
       + '<span class="hub-muted">拖到印表機＝複製報告、白板＝釘選、咖啡機＝叫它停下、門口＝先不顯示</span>';
   }
@@ -758,6 +789,7 @@
     const b = e.target.closest("[data-tool]");
     if (!b) return;
     if (b.dataset.tool === 'report') report();
+    if (b.dataset.tool === 'board') showBoard();
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
   });
 
@@ -766,7 +798,8 @@
   let PRIVATE = false;
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
-    command, isHidden, isSecretary, pinNames, report, showAway, welcome,
+    command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company,
+    boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },
   };

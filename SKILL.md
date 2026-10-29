@@ -91,3 +91,7 @@ log 是從尾巴讀的，所以已記錄過的 session 重啟後只算之後的�
 
 `--update` 跟著 clone 時的分支更新（`git pull --rebase`）。改 web/office3d.js 後要 `npm run build`。
 測試：`node --test tests/hub.cjs tests/parsers-hub.cjs tests/zones-hub.cjs tests/watcher.cjs tests/progress-hub.cjs`。
+
+生活化（public/office.js）：server 在 parsers.js 用 `taskOf()` 把每個工具呼叫標成 test／build／push／commit／lookup／web／doc／plan…（`s.task`），test／build／push／commit 的結果記成 `s.outcome = { at, task, ok }`。office.js：`trip()` 讓工作中的人依 task 短暫離座（push→機房、查資料 20 秒以上→書架、寫文件→印表機、新計畫→白板），`REACT` 依 outcome 歡呼／抱頭；`life()`／`chore()` 照真實時鐘排外送（11:45）、下午茶（15:00）與隨機小事（卡紙、補咖啡豆、澆花），由 idle／done 的人去做（`p.chores` 一串步驟，`arrive` 到達時觸發 `lifeMark`）。座位依 `deptOf()`（repo 名，worktree 算原 repo）分組，`podDepts()` 給部門牌。佈告欄便條存在瀏覽器 `wmad.board`（只留當天），公司名稱存 `wmad.company`。
+
+同一個桌面 session 的多段 log：/clear 等會以同一個 `bridge-session` 的 bridgeSessionId 開新 log；server.js `latestSegments()` 只留桌面 meta 指著的那段（沒有就最新那段），子代理改掛到現行那段。

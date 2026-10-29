@@ -49,6 +49,9 @@ function newSession(agent, id, file) {
     spawning: null,   // tool_use id of a start_session call whose result names the new session
     tools: 0,         // tool calls seen and turns finished, for experience points (src/progress.js)
     turns: 0,
+    task: null,       // what kind of work the current tool call is (taskOf)
+    pendingTasks: {}, // tool_use id -> task, for the ones whose result is worth reacting to
+    outcome: null,    // { at, task, ok }: the last test / build / push / commit result
   };
 }
 
@@ -145,6 +148,29 @@ function describeClaudeTool(name, input = {}) {
   }
 }
 
+// What kind of work a tool call is, so the office can act it out: a test
+// run, a push, reading up on something, writing a document, planning.
+const NOTABLE = new Set(['test', 'build', 'push', 'commit']);
+function taskOf(name, input = {}) {
+  if (name === 'Bash') {
+    const cmd = String(input.command || '');
+    if (/\bgit\s+push\b/.test(cmd)) return 'push';
+    if (/\bgit\s+commit\b/.test(cmd)) return 'commit';
+    if (/node\s+--test|\b(npm|pnpm|yarn)\s+(run\s+)?test\b|\b(jest|vitest|pytest|mocha|karate)\b|\bgo\s+test\b|\b(mvn|mvnw|gradle|gradlew)\b[^|;&]*\b(test|verify)\b|\bcargo\s+test\b/.test(cmd)) return 'test';
+    if (/\b(npm|pnpm|yarn)\s+run\s+build\b|\b(mvn|mvnw)\b[^|;&]*\b(package|install|compile)\b|\bgradlew?\b[^|;&]*\b(build|assemble)\b|\b(tsc|webpack|esbuild)\b|\bvite\s+build\b|\bcargo\s+build\b|^\s*make\b/.test(cmd)) return 'build';
+    return 'shell';
+  }
+  if (/^(Read|Grep|Glob|LS)$/.test(name)) return 'lookup';
+  if (/^(WebSearch|WebFetch)$/.test(name)) return 'web';
+  if (name === 'Write') return /\.(md|html?|pdf|docx?|txt|csv|xlsx?|pptx?)$/i.test(String(input.file_path || '')) ? 'doc' : 'edit';
+  if (/^(Edit|MultiEdit|NotebookEdit)$/.test(name)) return 'edit';
+  if (name === 'TodoWrite' || (name === 'mcp__ccd_turn__update_plan' && Array.isArray(input.items))) return 'plan';
+  if (name === 'Agent' || name === 'Task') return 'agent';
+  if (/Browser|chrome/i.test(name)) return 'browser';
+  if (/slack|send_message|SendMessage/i.test(name)) return 'chat';
+  return null;
+}
+
 // The desktop app's task list (update_plan), TodoWrite, and the
 // session board's progress tool all describe the same thing: the steps.
 function applyPlan(s, name, input = {}) {
@@ -212,6 +238,11 @@ function applyClaude(s, d) {
     case 'agent-name':
       if (!s.title && d.agentName) s.title = d.agentName;
       return;
+    case 'bridge-session':
+      // The desktop app's own id for the conversation. /clear and some
+      // restarts begin a new log under the same one (see latestSegments).
+      if (d.bridgeSessionId) s.bridgeId = d.bridgeSessionId;
+      return;
     case 'system':
       if (d.subtype === 'stop_hook_summary') set(s, 'done', null);
       else if (d.subtype === 'api_error') {
@@ -242,6 +273,12 @@ function applyClaude(s, d) {
         s.question = null;
         s.options = null;
         s.errStreak = c.some((x) => x.type === 'tool_result' && x.is_error) ? s.errStreak + 1 : 0;
+        for (const r of c) {
+          const task = r.type === 'tool_result' && s.pendingTasks[r.tool_use_id];
+          if (!task) continue;
+          delete s.pendingTasks[r.tool_use_id];
+          s.outcome = { at: ts, task, ok: !r.is_error };
+        }
         set(s, 'thinking');
         return;
       }
@@ -282,6 +319,12 @@ function applyClaude(s, d) {
           const what = describeClaudeTool(b.name, b.input);
           set(s, WAITING_TOOLS.has(b.name) ? 'waiting' : 'tool', what);
           applyPlan(s, b.name, b.input || {});
+          s.task = taskOf(b.name, b.input || {});
+          if (NOTABLE.has(s.task) && b.id) {
+            s.pendingTasks[b.id] = s.task;
+            const ids = Object.keys(s.pendingTasks);
+            if (ids.length > 20) delete s.pendingTasks[ids[0]];
+          }
           if (b.name === 'AskUserQuestion') {
             const q = (b.input?.questions || [])[0];
             s.question = q ? short(q.question, 200) : null;
@@ -544,4 +587,4 @@ function applyGeminiDocument(s, doc) {
   applyGemini(s, { $set: doc });
 }
 
-module.exports = { newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, clean };
+module.exports = { newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, clean, taskOf };

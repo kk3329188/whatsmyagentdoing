@@ -54,6 +54,9 @@
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 24px; margin-bottom: 16px; }
   h1 { font-size: 19px; margin: 0; letter-spacing: -.01em; }
   h1 span { color: var(--ink); font-weight: 600; }
+  h1 .company:not(:empty) { color: var(--claude, #c96442); font-weight: 800; }
+  h1 .company:not(:empty)::after { content: '・'; color: var(--muted); font-weight: 400; }
+  #companyInput { width: 170px; font: inherit; }
   .summary { display: flex; gap: 18px; flex-wrap: wrap; margin-left: auto; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 0; font-size: 12px; color: var(--muted); }
   .chip b { color: var(--ink); font-weight: 600; }
@@ -313,7 +316,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>👀 <span data-t="title"></span></h1>
+    <h1>👀 <span class="company" id="companyName"></span><span data-t="title"></span></h1>
     <div class="summary" id="summary"></div>
     <button class="newver" id="newVer" hidden></button>
     <div class="controls">
@@ -349,6 +352,10 @@
             </div>
           </div>
           <div class="setting-group">
+            <div class="setting-row">
+              <label class="setting-label" for="companyInput">公司名稱</label>
+              <input class="btn" id="companyInput" maxlength="24" placeholder="例：我的 AI 公司" autocomplete="off">
+            </div>
             <div class="setting-row">
               <label class="setting-label" for="langSel" data-t="language"></label>
               <select class="btn" id="langSel"></select>
@@ -559,7 +566,9 @@ function render() {
 
   const working = count((s) => ACTIVE.has(s));
   const needs = count(GROUPS[0].match);
-  document.title = (needs ? `(${needs}!) ` : working ? `(${working}) ` : '') + L.title;
+  const co = Hub.company();
+  document.title = (needs ? `(${needs}!) ` : working ? `(${working}) ` : '') + (co ? `${co}・` : '') + L.title;
+  document.getElementById('companyName').textContent = co;
 
   const main = document.getElementById('main');
   const officeMode = state.view === 'office';
@@ -573,6 +582,7 @@ function render() {
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
+    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
       const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary });
@@ -674,6 +684,9 @@ document.addEventListener('keydown', (e) => {
   }
 });
 settingsMenu.addEventListener('toggle', () => { if (settingsMenu.open) hideTip(); });
+const companyInput = document.getElementById('companyInput');
+companyInput.value = store.get('company', '') || '';
+companyInput.addEventListener('input', () => { store.set('company', companyInput.value.trim()); if (state.data) render(); });
 
 document.getElementById('qualSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;

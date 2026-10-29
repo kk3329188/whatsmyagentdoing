@@ -97,3 +97,53 @@ test('messages to and from other sessions are remembered with who and which way'
     [C, 'out', '查 log'],
   ]);
 });
+
+test('tool calls are tagged by kind of work; test / push results are remembered', () => {
+  const { taskOf } = require('../src/parsers');
+  assert.equal(taskOf('Bash', { command: 'node --test tests/a.cjs' }), 'test');
+  assert.equal(taskOf('Bash', { command: 'cd x && mvn -q test -Dtest=Foo' }), 'test');
+  assert.equal(taskOf('Bash', { command: 'git push -q origin hub:hub' }), 'push');
+  assert.equal(taskOf('Bash', { command: 'git commit -m "x"' }), 'commit');
+  assert.equal(taskOf('Bash', { command: 'npm run build' }), 'build');
+  assert.equal(taskOf('Bash', { command: 'ls -la' }), 'shell');
+  assert.equal(taskOf('Grep', { pattern: 'x' }), 'lookup');
+  assert.equal(taskOf('WebSearch', { query: 'x' }), 'web');
+  assert.equal(taskOf('Write', { file_path: '/a/REPORT.md' }), 'doc');
+  assert.equal(taskOf('Write', { file_path: '/a/b.js' }), 'edit');
+  assert.equal(taskOf('mcp__ccd_turn__update_plan', { items: [] }), 'plan');
+  assert.equal(taskOf('mcp__ccd_turn__update_plan', { advance: true }), null);
+
+  const s = newSession('claude', 'x', 'f');
+  const use = (m, id, command) => ({ type: 'assistant', timestamp: at(m), message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const res = (m, id, isError) => ({ type: 'user', timestamp: at(m), message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError }] } });
+  applyClaude(s, use(0, 't1', 'npm test'));
+  assert.equal(s.task, 'test');
+  applyClaude(s, res(1, 't1', true));
+  assert.deepEqual({ task: s.outcome.task, ok: s.outcome.ok }, { task: 'test', ok: false });
+  applyClaude(s, use(2, 'l1', 'ls'));
+  applyClaude(s, res(3, 'l1', false));
+  assert.equal(s.outcome.task, 'test', 'an ordinary command leaves the last outcome alone');
+  applyClaude(s, use(4, 'p1', 'git push'));
+  applyClaude(s, res(5, 'p1', false));
+  assert.deepEqual({ task: s.outcome.task, ok: s.outcome.ok }, { task: 'push', ok: true });
+});
+
+test('a /clear keeps one person: older logs of the same desktop session are dropped', () => {
+  const { latestSegments } = require('../src/server');
+  const s = newSession('claude', 'old', 'f');
+  applyClaude(s, { type: 'bridge-session', sessionId: 'old', bridgeSessionId: 'cse_1' });
+  assert.equal(s.bridgeId, 'cse_1');
+  const seg = (id, startedAt, extra = {}) => ({ agent: 'claude', id, bridgeId: 'cse_1', startedAt, ...extra });
+  const old = seg('a', 1, { ask: '要保留還是還原？', status: 'done' });
+  const mid = seg('b', 2);
+  const cur = seg('c', 3);
+  const other = { agent: 'claude', id: 'z', bridgeId: 'cse_2', startedAt: 1 };
+  const helper = { agent: 'claude', id: 'h', subagent: true, parentId: 'a' };
+  const plain = { agent: 'codex', id: 'x' };
+  const out = latestSegments([old, mid, cur, other, helper, plain]);
+  assert.deepEqual(out.map((s) => s.id), ['c', 'z', 'h', 'x']);
+  assert.equal(out.find((s) => s.id === 'h').parentId, 'c', 'a helper follows the current log');
+  assert.equal(helper.parentId, 'a', 'the watcher\'s own record is left alone');
+  // The log the desktop app points at wins even if another started later.
+  assert.deepEqual(latestSegments([old, cur], (s) => s.id === 'a').map((s) => s.id), ['a']);
+});

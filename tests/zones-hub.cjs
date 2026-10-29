@@ -7,9 +7,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function load(roam = false) {
+function load(roam = false, clock = Date) {
   const window = {};
-  const ctx = { window, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
+  const ctx = { window, Math, Date: clock, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), ctx);
   const Office = window.Office;
   const o = Object.create(Office.prototype);
@@ -513,4 +513,129 @@ test('on the treadmill they stand on the belt and run', () => {
   assert.equal(st.act, 'run');
   assert.equal(st.pose, 'stand');
   assert.ok(st.sitZ > 0.1);
+});
+
+// A Date whose "now" (new Date()) is the given local time today; Date.now stays real.
+function clockAt(h) {
+  const fixed = new Date(); fixed.setHours(h, 0, 0, 0);
+  return class extends Date { constructor(...a) { if (a.length) super(...a); else super(fixed.getTime()); } static now() { return Date.now(); } };
+}
+const seat = (p) => { p.x = p.desk.seat.x; p.y = p.desk.seat.y; p.path = []; };
+
+test('departments: sessions in the same repository sit in the same pod, and it gets their name', () => {
+  const o = load(true);
+  const w = (n, cwd) => ({ ...at('tool', { n }), cwd, startedAt: n });
+  settle(o, [w(1, '/r/alpha'), w(2, '/r/beta'), w(3, '/r/alpha/.claude/worktrees/x-1'), w(4, '/r/beta'), w(5, '/r/alpha')]);
+  const pod = (n) => o.plan.desks[o.deskOf.get(`claude:tool${n}`)].pod;
+  assert.equal(pod(1), pod(3), 'a worktree counts as its repository');
+  assert.equal(pod(1), pod(5));
+  assert.equal(pod(2), pod(4));
+  assert.notEqual(pod(1), pod(2));
+  assert.equal(o.podDepts().map((d) => d.name).sort().join(), 'alpha,beta');
+});
+
+test('a push carries a box to the server rack and back; the same push only once', () => {
+  const o = load(true);
+  const s = { ...at('tool'), task: 'push' };
+  const p = settle(o, [s])('claude:tool');
+  seat(p);
+  const now = Date.now();
+  assert.equal(o.trip(p, now), true);
+  assert.equal(p.run.poi.act, 'rack');
+  assert.equal(o.stateOf(p).act, 'carry', 'carrying the box on the way');
+  assert.match(p.event.text, /機房/);
+  p.x = p.run.poi.x; p.y = p.run.poi.y; p.path = [];
+  o.trip(p, now);
+  assert.equal(o.stateOf(p).act, 'deliver');
+  o.trip(p, now + 10_000);
+  assert.equal(p.run, null);
+  assert.ok(p.path.length, 'walking back to the desk');
+  seat(p);
+  assert.equal(o.trip(p, now + 20_000), false);
+});
+
+test('reading up for a while goes to the bookshelf', () => {
+  const o = load(true);
+  const p = settle(o, [{ ...at('tool'), task: 'web' }])('claude:tool');
+  seat(p);
+  const now = Date.now();
+  assert.equal(o.trip(p, now), false, 'not straight away');
+  assert.equal(o.trip(p, now + 21_000), true);
+  assert.equal(p.run.poi.act, 'read');
+  assert.equal(p.run.act, 'read');
+});
+
+test('a test run that fails gets a facepalm, one that passes a cheer; old results do not count', () => {
+  const o = load(true);
+  const s = at('tool', { task: 'test' });
+  const p = settle(o, [s])('claude:tool');
+  seat(p);
+  o.first = false;
+  o.update([{ ...s, outcome: { at: Date.now(), task: 'test', ok: false } }]);
+  assert.equal(o.stateOf(p).act, 'facepalm');
+  assert.equal(p.event.text, '測試沒過…');
+  o.update([{ ...s, outcome: { at: Date.now() + 1, task: 'test', ok: true } }]);
+  assert.equal(o.stateOf(p).act, 'cheer');
+  assert.equal(o.stateOf(p).pose, 'stand', 'jumps up from the chair');
+  const late = { ...at('tool', { n: 'late' }), outcome: { at: Date.now() - 1000, task: 'test', ok: true } };
+  o.update([s, late]);
+  assert.equal(o.people.get(late.key).react, undefined, 'a result from before they showed up is old news');
+});
+
+test('finishing a piece of work: walk to the notice board and pin a note', () => {
+  const o = load(true);
+  const s = at('tool');
+  const p = settle(o, [s])('claude:tool');
+  o.first = false;
+  o.update([{ ...s, status: 'done', lastEventAt: Date.now() }]);
+  assert.equal(p.chores.length, 1);
+  o.wander(p, Date.now());
+  assert.equal(p.poi.act, 'pin');
+  assert.equal(p.event.text, '做完了 ✓', 'the finish message stays up while walking over');
+  p.x = p.poi.x; p.y = p.poi.y; p.path = [];
+  o.step(0.016);
+  assert.equal(p.event.text, '貼上佈告欄 📌');
+  assert.ok(o.pinnedAt > 0);
+});
+
+test('chores: whoever is free fixes a jammed printer, fetches lunch at noon, brings cake at three', () => {
+  const o = load(true);
+  o.floor = 1;
+  const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
+  o.first = false;
+  assert.equal(o.chore('jam'), true);
+  assert.equal(p.chores[0].act, 'fix');
+  assert.equal(o.jamUntil, Infinity, 'jammed until someone gets there');
+  p.chores = null;
+  const noon = new Date(); noon.setHours(11, 50, 0, 0);
+  o.nextLife = Infinity;
+  o.life(noon.getTime());
+  assert.equal(p.chores[0].text, '外送到了！');
+  assert.equal(p.chores[1].carry, true);
+  p.chores = null;
+  o.life(noon.getTime() + 60_000);
+  assert.equal(p.chores, null, 'one delivery a day');
+  o.lifeMark('lunch', Date.now(), 0, p);
+  assert.ok(o.lunchUntil > Date.now());
+  const three = new Date(); three.setHours(15, 5, 0, 0);
+  o.life(three.getTime());
+  assert.equal(p.chores.at(-1).arrive, 'cake');
+  // Nobody free (everyone working): nothing happens.
+  const busy = load(true);
+  settle(busy, [at('tool')]);
+  busy.first = false;
+  assert.equal(busy.chore('jam'), false);
+});
+
+test('breaks at the desk follow the clock: lunch at noon, yawning at night', () => {
+  const actAt = (h) => {
+    const o = load(true, clockAt(h));
+    const p = settle(o, [at('thinking')])('claude:thinking');
+    seat(p);
+    o.t = (78 - p.phase * 5) * 1000 + 100;
+    return o.stateOf(p).act;
+  };
+  assert.equal(actAt(12), 'eat');
+  assert.equal(actAt(22), 'yawn');
+  assert.equal(actAt(10), 'stretch');
 });

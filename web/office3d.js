@@ -233,6 +233,8 @@ export class Office3D extends window.Office {
     this.screens.clear();
     this.blinkers = [];
     this.tvScreen = this.neonMat = this.liftDoors = null;
+    this.boardAt = this.jamLight = this.companySign = null;
+    this.companyShown = null; this.boardShown = -1; this.tables = [];
     const { W, D, OW, MR, PY } = plan;
     const dark = this.pal.dark;
 
@@ -395,6 +397,11 @@ export class Office3D extends window.Office {
         this.boxMesh(p.x + 0.05, p.y + 0.05, 0.55, 0.65, 0.45, 0.28, 0xe8e8e8);
         this.boxMesh(p.x + 0.15, p.y + 0.35, 0.83, 0.45, 0.15, 0.02, 0xffffff);
         this.place('cardboardBoxClosed', p.x - 0.7, p.y + 0.05, 0.5, 0.5, { h: 0.35 });
+        // Blinks when it jams.
+        this.jamLight = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0xff3b30, emissiveIntensity: 2 }));
+        this.jamLight.position.set(p.x + 0.6, 0.86, p.y + 0.5);
+        this.jamLight.visible = false;
+        this.room.add(this.jamLight);
         break;
       case 'plant':
         this.place('pottedPlant', p.x - 0.3, p.y - 0.3, 0.6, 0.6, { h: 1.0 });
@@ -500,9 +507,39 @@ export class Office3D extends window.Office {
       }
       case 'sink':
         break; // part of the counter
-      case 'roundTable':
+      case 'roundTable': {
         this.place('tableRound', p.x - 0.45, p.y - 0.45, 0.9, 0.9, { h: 0.75 });
+        // Lunch from the delivery, and the afternoon cake.
+        const lunch = new THREE.Group();
+        const bag = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.24, 0.14), new THREE.MeshStandardMaterial({ color: 0xf2efe6 }));
+        bag.position.set(p.x - 0.15, 0.88, p.y - 0.1);
+        const bento = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, 0.14), new THREE.MeshStandardMaterial({ color: 0xc9773a }));
+        bento.position.set(p.x + 0.12, 0.79, p.y + 0.1);
+        lunch.add(bag, bento);
+        const cake = new THREE.Group();
+        const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.015, 20), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        plate.position.set(p.x, 0.765, p.y);
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 20), new THREE.MeshStandardMaterial({ color: 0xf5d7a1 }));
+        body.position.set(p.x, 0.82, p.y);
+        const berry = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshStandardMaterial({ color: 0xe0344b }));
+        berry.position.set(p.x, 0.885, p.y);
+        cake.add(plate, body, berry);
+        lunch.visible = cake.visible = false;
+        this.room.add(lunch, cake);
+        this.tables.push({ lunch, cake });
         break;
+      }
+      case 'board': {
+        // Cork board on the left wall; the notes are added as they get pinned.
+        const cork = this.textPlane('', '#b98e5c', p.w, 0.8);
+        cork.rotation.y = Math.PI / 2;
+        cork.position.set(0.01, 1.2, p.y + p.w / 2);
+        this.room.add(cork);
+        this.boardAt = p;
+        this.boardGroup = new THREE.Group();
+        this.room.add(this.boardGroup);
+        break;
+      }
       case 'barStool':
         this.place('stoolBar', p.x - 0.2, p.y - 0.2, 0.4, 0.4, { h: 0.5 });
         break;
@@ -1185,6 +1222,13 @@ export class Office3D extends window.Office {
     prop.add(cup, book);
     this.scene.add(obj, prop);
     a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, prop, cup, book, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
+    // A box (or the lunch bag) held out front.
+    if (rest.bodyBox) {
+      a.box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.22), new THREE.MeshStandardMaterial({ color: 0xc8a06a }));
+      const b = rest.bodyBox;
+      this.wear(a, obj, rest.root, a.box, new THREE.Vector3(0, (b.min.y + b.max.y) / 2, b.max.z + 0.12));
+      a.box.visible = false;
+    }
     // Held up over their head after waiting on you a while.
     if (rest.headBox) {
       a.sign = this.signBoard();
@@ -1305,6 +1349,8 @@ export class Office3D extends window.Office {
         walk: 'walk', wave: 'emote-yes', coffee: 'holding-right', water: 'holding-right', read: 'holding-both',
         phone: 'holding-right', arcade: 'interact-right', whiteboard: 'interact-right', foosball: 'interact-left',
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
+        cheer: 'emote-yes', facepalm: 'emote-no', yawn: 'idle', deliver: 'pick-up', unpack: 'interact-right',
+        fix: 'interact-left', refill: 'interact-right', waterplant: 'holding-right', pin: 'interact-right', peek: 'idle',
       }[st.pose === 'walk' ? 'walk' : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
       let chosen = anim;
       if (st.act === 'station') chosen = p.s.status === 'thinking' ? 'idle' : (p.desk.anim || 'interact-right');
@@ -1347,7 +1393,8 @@ export class Office3D extends window.Office {
       this.dress(a, (p.s && p.s.level) || 1);
       if (a.sign) a.sign.visible = st.act === 'sign';
       // hand-held props
-      a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
+      a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || st.act === 'waterplant' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
+      if (a.box) a.box.visible = st.act === 'carry' || st.act === 'deliver' || st.act === 'unpack';
       a.book.visible = st.act === 'read' || st.act === 'clipboard';
       if (a.armR && (a.cup.visible || a.book.visible)) {
         a.obj.updateMatrixWorld(true);
@@ -1355,7 +1402,7 @@ export class Office3D extends window.Office {
         a.armR.localToWorld(hand);
         a.prop.position.copy(hand);
         a.prop.rotation.y = a.yaw;
-        a.cup.material.color.set(st.act === 'water' ? 0x9fd3ff : 0xffffff);
+        a.cup.material.color.set(st.act === 'water' ? 0x9fd3ff : st.act === 'waterplant' ? 0x4f9ad8 : 0xffffff);
       }
     }
   }
@@ -1466,6 +1513,7 @@ export class Office3D extends window.Office {
       this.liftDoors[0].position.z = ly - 0.275 - open;
       this.liftDoors[1].position.z = ly + 0.275 + open;
     }
+    this.officeLife();
     if (this.tvScreen) this.tvScreen.material.emissive.setHSL((Math.floor(t / 2.6) * 0.27) % 1, 0.6, 0.45);
     if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
@@ -1502,6 +1550,10 @@ export class Office3D extends window.Office {
       v.set(b.x + 0.7, 0, Math.min(this.plan.D - 0.1, b.y + 1.7)).project(this.camera);
       this.deskSignAt({ x: (v.x + 1) / 2 * this.cw, y: (1 - v.y) / 2 * this.ch });
     }
+    if (!this.compact) for (const d of this.podDepts()) {
+      v.set(d.x, d.z, d.y).project(this.camera);
+      this.deptPlaque((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, d.name, d.color);
+    }
     for (const [p, at] of heads) this.bubble(p, at);
     if (this.offDuty > 0) {
       c.font = '600 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
@@ -1511,6 +1563,49 @@ export class Office3D extends window.Office {
       c.fillText(`+${this.offDuty} ${this.offDutyLabel}`, 12, this.ch - 12);
       c.globalAlpha = 1;
     }
+  }
+
+  // The company sign, today's notes, a jammed printer, lunch and cake.
+  officeLife() {
+    if (this.plan.scene || !this.plan.lift) return;
+    const now = Date.now();
+    const co = this.company || '';
+    if (co !== this.companyShown && this.room) {
+      if (this.companySign) { this.room.remove(this.companySign); this.companySign.geometry.dispose(); this.companySign = null; }
+      const y0 = this.plan.board ? this.plan.board.y : 6.2;
+      const w = Math.min(3.2, Math.max(1.6, co.length * 0.32 + 0.6));
+      if (co && y0 + 2 < this.plan.lift.y - 0.7) {
+        const cv = document.createElement('canvas');
+        cv.width = 512; cv.height = Math.round(512 * 0.5 / w);
+        const c = cv.getContext('2d');
+        c.fillStyle = '#2f3542'; c.fillRect(0, 0, cv.width, cv.height);
+        c.strokeStyle = '#ffd98a'; c.lineWidth = 6; c.strokeRect(6, 6, cv.width - 12, cv.height - 12);
+        c.fillStyle = '#ffd98a'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.font = `900 ${Math.round(cv.height * 0.58)}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`;
+        c.fillText(co, cv.width / 2, cv.height / 2 + 2, cv.width - 40);
+        const tex = new THREE.CanvasTexture(cv);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.companySign = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.5), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.35 }));
+        this.companySign.rotation.y = Math.PI / 2;
+        this.companySign.position.set(0.012, 2.0, y0 + w / 2);
+        this.room.add(this.companySign);
+      }
+      this.companyShown = co;
+    }
+    const n = Math.min(12, this.boardNotes || 0);
+    if (this.boardAt && n !== this.boardShown) {
+      this.boardGroup.clear();
+      const colors = [0xfff3a3, 0xffd0d8, 0xc9f0d0, 0xcfe3ff];
+      for (let i = 0; i < n; i++) {
+        const note = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.16), new THREE.MeshStandardMaterial({ color: colors[i % 4] }));
+        note.rotation.y = Math.PI / 2;
+        note.position.set(0.016, 1.34 - Math.floor(i / 4) * 0.22, this.boardAt.y + 0.26 + (i % 4) * 0.36);
+        this.boardGroup.add(note);
+      }
+      this.boardShown = n;
+    }
+    if (this.jamLight) this.jamLight.visible = this.jamUntil > now && Math.sin(this.t / 150) > 0;
+    for (const tb of this.tables) { tb.lunch.visible = this.lunchUntil > now; tb.cake.visible = this.cakeUntil > now; }
   }
 
   updateBall() {

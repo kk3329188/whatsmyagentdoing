@@ -62,8 +62,26 @@
   const SIGN_MS = 3 * 60_000;
   const KNOCK_MS = 10 * 60_000;
   const waitedMs = (s) => Date.now() - (s.lastEventAt || Date.now());
-  const lunch = () => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h >= 12 && h < 13.5; };
+  const hour = () => new Date().getHours() + new Date().getMinutes() / 60;
+  const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
   const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
+  const morning = () => { const h = hour(); return h >= 7 && h < 10; };
+  // Which department a session works in: its repository (a worktree counts
+  // as the repository it was cut from), else its folder.
+  function deptOf(s) {
+    const cwd = String((s && s.cwd) || '');
+    const m = cwd.match(/^(.*?)\/\.(?:claude|codex)\/worktrees\//);
+    return (m ? m[1] : cwd).split('/').filter(Boolean).pop() || (s && s.project) || '其他';
+  }
+  // How a desk worker takes the result of a test run, a build or a push
+  // (src/parsers.js outcome): [act when it failed, text], [act when it passed, text].
+  const REACT = {
+    test: [['facepalm', '測試沒過…'], ['cheer', '測試全過！']],
+    build: [['facepalm', '編譯失敗…'], ['cheer', '建好了！']],
+    push: [['facepalm', '推不上去…'], ['cheer', '推上去了 🚀']],
+    commit: [['facepalm', 'commit 失敗'], [null, 'commit ✓']],
+  };
+  const REACT_MS = 4500;
 
   const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
   const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
@@ -97,6 +115,7 @@
     window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
     vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
     tv: '📺', trophy: '🏆', run: '🏃', yoga: '🧘',
+    pin: '📌', fix: '🔧', refill: '☕', waterplant: '🌱', unpack: '🍱', deliver: '📦',
   };
 
   function hash(str) {
@@ -331,6 +350,7 @@
       const items = [];
       const pois = [];
       const desks = [];
+      const podSpots = [];
       const add = (depth, draw) => items.push({ depth, draw });
       // Semantic list of what is where, for renderers that don't use the 2D
       // draw closures (the 3D view).
@@ -359,10 +379,11 @@
         const c = p % podCols, r = Math.floor(p / podCols);
         const px = 1.3 + c * 4.2, py = 2.0 + r * 4.7;
         const panel = PANEL[p % PANEL.length];
+        podSpots.push({ x: px, y: py, color: panel });
         for (let k = 0; k < 2; k++) {
           const x = px + k * 1.5;
-          desks.push({ x, y: py, side: 'n', seat: { x: x + 0.7, y: py - 0.45 } });
-          desks.push({ x, y: py + 0.92, side: 's', seat: { x: x + 0.7, y: py + 0.92 + 1.25 } });
+          desks.push({ x, y: py, side: 'n', pod: p, seat: { x: x + 0.7, y: py - 0.45 } });
+          desks.push({ x, y: py + 0.92, side: 's', pod: p, seat: { x: x + 0.7, y: py + 0.92 + 1.25 } });
           solid(x, py, 1.4, 0.8, 0.08);
           solid(x, py + 0.92, 1.4, 0.8, 0.08);
         }
@@ -378,7 +399,7 @@
       if (this.floor === 2) {
         // Upstairs: a few hot desks for overflow work, the rest is for breaks.
         cubicles(Math.max(1, Math.ceil(nWorking / 4)));
-        return this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift });
+        return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots };
       }
       cubicles(pods);
 
@@ -564,6 +585,17 @@
       const neon = un.has('neon') ? { x: Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
 
+      // ---- the notice board on the left wall: whoever finishes pins a note
+      let board = null;
+      for (const by0 of [6.2, 5.6, 7.0]) {
+        if (by0 + 1.6 > lift.y - 0.8) continue;
+        const spot = { x: 0.8, y: by0 + 0.8 };
+        if (grid.blocked(spot.x, spot.y)) continue;
+        board = { y: by0, w: 1.6, spot };
+        break;
+      }
+      if (board) prop('board', { y: board.y, w: board.w });
+
       // ---- your desk at the front (you sit on this side of the screen), the
       // secretary's beside it, and a queue of whoever is waiting on you.
       let boss = null, sec = null;
@@ -612,7 +644,7 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, board, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
     }
 
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
@@ -881,12 +913,30 @@
       // Fill the desks that face us first so more faces and screens show.
       const desks = this.plan.desks;
       const order = desks.map((d, i) => i).sort((a, b) => (desks[a].side === 's') - (desks[b].side === 's') || a - b);
+      // Departments sit together: a newcomer takes a free desk in the pod
+      // where their own repository already works, else an empty pod.
+      const byKey = new Map(working.map((s) => [s.key, s]));
       for (const s of [...working].sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0))) {
         if (this.deskOf.has(s.key)) continue;
-        const i = order.find((n) => !used.has(n));
-        if (i == null) continue;
-        this.deskOf.set(s.key, i);
-        used.add(i);
+        const mine = deptOf(s);
+        const podCount = new Map(); // pod -> [same dept, others]
+        for (const [k, i] of this.deskOf) {
+          const pod = desks[i].pod;
+          if (pod == null || !byKey.has(k)) continue;
+          const c = podCount.get(pod) || [0, 0];
+          c[deptOf(byKey.get(k)) === mine ? 0 : 1]++;
+          podCount.set(pod, c);
+        }
+        let best = null, bestScore = -Infinity;
+        order.forEach((n, rank) => {
+          if (used.has(n)) return;
+          const c = podCount.get(desks[n].pod) || [0, 0];
+          const score = c[0] * 10 - c[1] * 3 - rank * 0.01;
+          if (score > bestScore) { best = n; bestScore = score; }
+        });
+        if (best == null) continue;
+        this.deskOf.set(s.key, best);
+        used.add(best);
       }
       const takenDesks = new Set([...this.deskOf.values()].map((i) => desks[i]));
 
@@ -909,10 +959,13 @@
         if (!isWorker && atDesk(s)) continue; // no desk left
         shown.add(s.key);
         let p = this.people.get(s.key);
+        let arrived = false;
         if (!p) {
           p = this.newPerson(s, viaLift(s.key) ? this.plan.lift : null);
           this.people.set(s.key, p);
+          arrived = !this.first;
           if (viaLift(s.key) && !this.first) { this.liftOpen = Date.now(); p.event = { text: this.floor === 2 ? '上樓了' : '下樓了', at: Date.now(), zone: 'held' }; }
+          else if (arrived && morning()) p.event = { text: '早安！☀️', at: Date.now(), zone: 'work' };
         }
         p.s = s;
         p.leaving = false;
@@ -921,7 +974,18 @@
         if (zoned && !this.first && p.lastZone && p.lastZone !== nowZone && EVENT_TEXT[nowZone]) {
           p.event = { text: EVENT_TEXT[nowZone](s), at: Date.now(), zone: nowZone };
         }
+        const wasWork = p.lastZone === 'work';
         p.lastZone = nowZone;
+        // A test run, build or push just came back: cheer or facepalm.
+        const o = s.outcome;
+        if (o && o.at > (p.outcomeAt || 0)) {
+          p.outcomeAt = o.at;
+          const r = REACT[o.task] && REACT[o.task][o.ok ? 1 : 0];
+          if (r && isWorker && Date.now() - o.at < 90_000) {
+            p.react = r[0] ? { act: r[0], until: Date.now() + REACT_MS } : null;
+            p.event = { text: r[1], at: Date.now(), zone: o.ok ? 'done' : 'error' };
+          }
+        }
         if (!this.first && s.level && p.level && s.level > p.level) {
           p.event = { text: `升等！Lv${s.level} ${LEVEL_TITLE[s.level] || ''}`, at: Date.now(), zone: 'level' };
         }
@@ -931,11 +995,15 @@
           const desk = desks[this.deskOf.get(s.key)];
           if (p.desk !== desk || p.mode !== 'work') { p.desk = desk; this.goTo(p, desk.seat); }
           p.mode = 'work';
+          p.chores = null;
         } else {
           if (p.mode !== 'wander') { this.endRun(p, false); p.mode = 'wander'; p.desk = null; p.poi = null; p.until = 0; }
+          p.react = null;
           // Changed state: head to the new zone now.
           const zone = zoned ? zoneOf(s) : null;
-          if (p.zone !== zone) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; }
+          if (p.zone !== zone) { p.zone = zone; this.release(p); p.poi = null; p.until = 0; p.path = []; p.chores = null; }
+          // Just finished a piece of work: pin it on the notice board first.
+          if (zone === 'done' && (wasWork || (arrived && viaLift(s.key))) && this.plan.board) p.chores = [this.pinStep()];
           // Someone started working at the desk this one was napping on.
           if (p.napDesk && takenDesks.has(p.napDesk)) { this.release(p); p.path = []; }
         }
@@ -1031,6 +1099,7 @@
         phase: (h % 1000) / 1000 * Math.PI * 2,
         x: door.x, y: door.y,
         path: [], walkFace: 'front', until: 0, mode: null,
+        outcomeAt: s.outcome ? s.outcome.at : 0,
         // On the first snapshot everyone is placed directly, no stampede.
         placeOnArrive: this.first,
       };
@@ -1056,6 +1125,16 @@
         p.until = Infinity;
         p.stay = 20_000;
         this.goTo(p, slot);
+        return;
+      }
+      // Something to do first: pin a note, fix the printer, fetch lunch.
+      if (p.chores && p.chores.length) {
+        const job = p.chores.shift();
+        p.poi = { ...job };
+        p.until = Infinity;
+        p.stay = job.ms;
+        if (job.text) p.event = { text: job.text, at: now, zone: 'work' };
+        this.goTo(p, p.poi);
         return;
       }
       // Waited on you for ages: come to the front and knock on the screen.
@@ -1125,7 +1204,8 @@
         if (q.restless) w = 4;
         if (q.pair) w *= plan.pois.some((o) => o.pair === q.pair && o !== q && o.taken) ? 4 : 0.6;
         if (p.zone === 'idle' && night() && (q.act === 'couch' || q.act === 'beanbag')) w *= 3;
-        if (lunch() && q.act === 'stool') w *= 3;
+        if ((lunch() || this.cakeUntil > now) && q.act === 'stool') w *= 3;
+        if (morning() && /^(coffee|water)$/.test(q.act)) w *= 3;
         options.push([q, w]);
       }
       // Someone standing about who isn't busy talking: go and chat.
@@ -1265,6 +1345,152 @@
       if (p.run.poi.taken === p.key) p.run.poi.taken = null;
       p.run = null;
       if (back && p.desk) this.goTo(p, p.desk.seat);
+    }
+
+    // Work that sends a desk worker out for a moment, after what the
+    // session is really doing: a push carries a box to the server rack,
+    // reading up for a while goes to the bookshelf, a new document gets
+    // printed, a new plan goes on the whiteboard. Returns true while on one.
+    trip(p, wall) {
+      if (p.run && p.run.trip) {
+        if (p.path.length) return true;
+        if (p.run.until === Infinity) p.run.until = wall + p.run.ms;
+        else if (wall > p.run.until) this.endRun(p, true);
+        return true;
+      }
+      if (p.run || p.path.length || Math.hypot(p.x - p.desk.seat.x, p.y - p.desk.seat.y) > 0.05) return false;
+      const s = p.s;
+      const task = s.status === 'tool' ? s.task : null;
+      if (task !== p.task) { p.task = task; p.taskSince = wall; }
+      const since = wall - (p.taskSince || wall), last = wall - (p.lastTrip || 0);
+      let go = null;
+      if (task === 'push' && p.pushSeen !== s.lastEventAt) { p.pushSeen = s.lastEventAt; go = { at: 'rack', act: 'deliver', ms: 4500, text: '送去機房 📦', carry: true }; }
+      else if ((task === 'lookup' || task === 'web') && since > 20_000 && last > 240_000) go = { at: 'read', act: 'read', ms: rand(6000, 9000), text: task === 'web' ? '上網查資料…' : '翻一下文件…' };
+      else if (task === 'doc' && p.docSeen !== s.lastEventAt && last > 120_000) { p.docSeen = s.lastEventAt; go = { at: 'printer', act: 'printer', ms: 4000, text: '印出來看看' }; }
+      else if (task === 'plan' && wall - (p.planTrip || 0) > 360_000) { p.planTrip = wall; go = { at: 'whiteboard', act: 'whiteboard', ms: 5000, text: '排一下步驟' }; }
+      if (!go) return false;
+      const spots = this.plan.pois.filter((q) => !q.taken && q.act === go.at);
+      if (!spots.length) return false;
+      const q = spots.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+      q.taken = p.key;
+      p.lastTrip = wall;
+      p.run = { poi: q, until: Infinity, trip: true, act: go.act, ms: go.ms, carry: !!go.carry };
+      p.event = { text: go.text, at: wall, zone: 'work' };
+      this.goTo(p, q);
+      return true;
+    }
+
+    // Walk up to the notice board and pin a note.
+    pinStep() {
+      const b = this.plan.board;
+      return { x: b.spot.x, y: b.spot.y, act: 'pin', face: 'back', yaw: -Math.PI / 2, ms: 3500, arrive: 'pin' };
+    }
+
+    // ------------------------------------------------------------ office life
+    //
+    // The day goes by on the real clock: someone fetches the lunch delivery
+    // around noon, cake comes out at three; and now and then something small
+    // happens that whoever is free takes care of.
+    life(wall) {
+      if (!this.plan.zones || this.compact || this.first) return;
+      if (!this.nextLife) this.nextLife = wall + rand(30_000, 70_000);
+      const d = new Date(wall), h = d.getHours() + d.getMinutes() / 60, day = d.toDateString();
+      if (this.floor === 1 && h >= 11.75 && h < 12.5 && this.lunchDay !== day && this.chore('delivery')) this.lunchDay = day;
+      if (h >= 15 && h < 15.5 && this.teaDay !== day && this.chore('tea')) this.teaDay = day;
+      if (wall < this.nextLife) return;
+      this.nextLife = wall + rand(180_000, 420_000);
+      this.chore(pick(['jam', 'refill', 'plants', 'plants'], Math.floor(wall / 1000), 1));
+    }
+
+    // Sends someone who is free (resting or just done) off to do `kind`.
+    // Returns false when nobody is free or the floor has no place for it.
+    chore(kind) {
+      const plan = this.plan;
+      const free = [...this.people.values()].filter((p) => p.mode === 'wander' && !p.leaving && !p.held && !p.visit && !(p.chores && p.chores.length)
+        && p.queue == null && (p.zone === 'idle' || p.zone === 'done') && p.key !== this.secKey);
+      if (!free.length) return false;
+      const p = free[Math.floor(Math.random() * free.length)];
+      const poiOf = (act) => plan.pois.find((q) => q.act === act);
+      const near = (x, y) => [[0.7, 0.7], [-0.7, 0.7], [0.75, 0], [0, 0.75], [-0.75, 0], [0, -0.75]]
+        .map(([dx, dy]) => ({ x: x + dx, y: y + dy })).find((o) => !plan.grid.blocked(o.x, o.y) && o.x > 0.3 && o.y > 0.3 && o.x < plan.W - 0.3 && o.y < plan.D - 0.3);
+      const table = plan.props.find((o) => o.t === 'roundTable');
+      let steps = null;
+      if (kind === 'jam' && poiOf('printer')) {
+        const q = poiOf('printer');
+        steps = [{ x: q.x, y: q.y, act: 'fix', face: q.face, ms: 6000, text: '印表機又卡紙了…', arrive: 'jam' }];
+        this.jamUntil = Infinity;
+      } else if (kind === 'refill' && poiOf('coffee')) {
+        const q = poiOf('coffee');
+        steps = [{ x: q.x, y: q.y, act: 'refill', face: q.face, ms: 5000, text: '咖啡豆沒了，我來補' }];
+      } else if (kind === 'plants') {
+        steps = plan.props.filter((o) => o.t === 'plant').map((o) => near(o.x, o.y)).filter(Boolean).slice(0, 2)
+          .map((o, i) => ({ ...o, act: 'waterplant', face: 'back', ms: 3500, text: i ? null : '澆個花 🌱' }));
+        if (!steps.length) steps = null;
+      } else if (kind === 'delivery' && table && near(table.x, table.y)) {
+        const door = plan.door;
+        steps = [
+          { x: door.x + 0.5, y: door.y, act: 'peek', face: 'front', ms: 3000, text: '外送到了！' },
+          { ...near(table.x, table.y), act: 'unpack', face: 'back', ms: 4000, text: '午餐來囉 🍱', carry: true, arrive: 'lunch' },
+        ];
+      } else if (kind === 'tea' && table && near(table.x, table.y)) {
+        const f = poiOf('fridge');
+        steps = [
+          ...(f ? [{ x: f.x, y: f.y, act: 'fridge', face: f.face, ms: 2500, text: '下午茶時間 🍰' }] : []),
+          { ...near(table.x, table.y), act: 'unpack', face: 'back', ms: 3500, text: f ? null : '下午茶時間 🍰', carry: true, arrive: 'cake' },
+        ];
+      }
+      if (!steps) return false;
+      p.chores = steps;
+      this.release(p); p.poi = null; p.until = 0; p.path = [];
+      return true;
+    }
+
+    // Something a chore changed when they got there.
+    lifeMark(what, wall, stay, p) {
+      if (what === 'jam') this.jamUntil = wall + stay;
+      if (what === 'pin') { this.pinnedAt = wall; p.event = { text: '貼上佈告欄 📌', at: wall, zone: 'done' }; }
+      if (what === 'lunch') this.lunchUntil = wall + 75 * 60_000;
+      if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
+    }
+
+    // The company's name over the notice board (both floors), and how many
+    // notes are pinned on it today.
+    setCompany(name) { this.company = String(name || '').trim().slice(0, 24); }
+    setBoard(n) { this.boardNotes = Math.max(0, n | 0); }
+
+    // Each pod with people in it: the department most of them belong to.
+    podDepts() {
+      const spots = this.plan.podSpots || [];
+      const count = spots.map(() => new Map());
+      for (const [k, i] of this.deskOf) {
+        const dk = this.plan.desks[i], p = this.people.get(k);
+        if (!dk || dk.pod == null || !p || !count[dk.pod]) continue;
+        const d = deptOf(p.s);
+        count[dk.pod].set(d, (count[dk.pod].get(d) || 0) + 1);
+      }
+      const out = [];
+      count.forEach((m, i) => {
+        if (!m.size) return;
+        const name = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        out.push({ x: spots[i].x + 1.4, y: spots[i].y + 0.86, z: 1.45, name, color: spots[i].color });
+      });
+      return out;
+    }
+
+    // A small plaque with the department's name, at screen point (x, y).
+    deptPlaque(x, y, name, color) {
+      const c = this.ctx;
+      c.save();
+      c.font = '700 9px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      const text = name.length > 18 ? name.slice(0, 17) + '…' : name;
+      const w = c.measureText(text).width + 12;
+      c.globalAlpha = 0.92;
+      this.roundRect(x - w / 2, y - 7, w, 14, 4, this.shade(color, -35));
+      c.globalAlpha = 1;
+      c.fillStyle = '#fff';
+      c.fillText(text, x, y + 0.5);
+      c.restore();
     }
 
     // ------------------------------------------------------------ pick up and drop
@@ -1637,6 +1863,7 @@
         hand((d.getMinutes() / 60) * Math.PI * 2, 8, 1.4);
       });
       this.drawLift();
+      this.drawBoard();
       if (this.plan.floor === 2) return;
       const dy = this.plan.door.y;
       this.poly([P(0, dy - 0.6, 0), P(0, dy + 0.6, 0), P(0, dy + 0.6, 1.8), P(0, dy - 0.6, 1.8)], pal.trim);
@@ -1683,6 +1910,12 @@
       this.box(x, y, 0, 0.75, 0.55, 0.55, pal.deskTop, pal.deskL, pal.deskR);
       this.box(x + 0.05, y + 0.05, 0.55, 0.65, 0.45, 0.28, '#e8e8e8', '#c8c8c8', '#b3b3b3');
       this.box(x + 0.15, y + 0.35, 0.83, 0.45, 0.15, 0.02, '#ffffff', '#eee', '#ddd');
+      // Jammed: a blinking red light and a crumpled sheet sticking out.
+      if (this.jamUntil > Date.now()) {
+        const c = this.ctx, l = this.iso(x + 0.6, y + 0.5, 0.84);
+        if (Math.sin(this.t / 150) > 0) { c.fillStyle = '#ff3b30'; c.beginPath(); c.arc(l.x, l.y, 2.4, 0, Math.PI * 2); c.fill(); }
+        this.box(x + 0.25, y + 0.5, 0.7, 0.25, 0.12, 0.08, '#f4f1e8', '#dedad0', '#cfcac0');
+      }
     }
 
     pingpong(x, y) {
@@ -1720,6 +1953,20 @@
       c.beginPath(); c.ellipse(p.x + 8, p.y - 2, 5, 2.5, 0, 0, Math.PI * 2); c.fill();
       c.fillStyle = '#e6b35c';
       c.beginPath(); c.arc(p.x + 8, p.y - 3, 2, 0, Math.PI * 2); c.fill();
+      const now = Date.now();
+      if (this.lunchUntil > now) {
+        // Delivery bags and bento boxes.
+        this.roundRect(p.x - 16, p.y - 12, 9, 10, 2, '#f2efe6', '#c9c3b4');
+        this.roundRect(p.x - 6, p.y - 4, 10, 5, 1.5, '#c9773a');
+        c.fillStyle = '#fff'; c.fillRect(p.x - 5, p.y - 5, 8, 1.5);
+      }
+      if (this.cakeUntil > now) {
+        // A cake on a plate.
+        c.fillStyle = '#ffffff'; c.beginPath(); c.ellipse(p.x - 6, p.y + 1, 9, 4.5, 0, 0, Math.PI * 2); c.fill();
+        this.roundRect(p.x - 12, p.y - 8, 12, 8, 2, '#f5d7a1', '#d9b77c');
+        c.fillStyle = '#fdf6ee'; c.fillRect(p.x - 12, p.y - 8, 12, 2.5);
+        c.fillStyle = '#e0344b'; c.beginPath(); c.arc(p.x - 6, p.y - 9.5, 1.8, 0, Math.PI * 2); c.fill();
+      }
     }
 
     coffeeMachine(x, y) {
@@ -1843,6 +2090,39 @@
     }
 
     // The lift on the left wall: doors slide open when someone comes or goes.
+    // Left wall: the company's name, and (downstairs) the notice board under it.
+    drawBoard() {
+      const P = (x, y, z) => this.iso(x, y, z);
+      const b = this.plan.board;
+      const y0 = b ? b.y : 6.2;
+      if (this.company && y0 + 2 < this.plan.lift.y - 0.7) {
+        const w = Math.min(3.2, Math.max(1.6, this.company.length * 0.32 + 0.6));
+        this.poly([P(0, y0, 1.75), P(0, y0 + w, 1.75), P(0, y0 + w, 2.25), P(0, y0, 2.25)], this.pal.dark ? '#2b2f3a' : '#2f3542');
+        this.onWall('x0', y0 + w / 2, 1.92, (c) => {
+          c.font = '800 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+          c.fillStyle = '#ffd98a'; c.textAlign = 'center'; c.textBaseline = 'middle';
+          c.fillText(this.company, 0, 0);
+        });
+      }
+      if (!b) return;
+      this.poly([P(0, b.y, 0.8), P(0, b.y + b.w, 0.8), P(0, b.y + b.w, 1.6), P(0, b.y, 1.6)], '#8a6a46');
+      this.poly([P(0, b.y + 0.05, 0.85), P(0, b.y + b.w - 0.05, 0.85), P(0, b.y + b.w - 0.05, 1.55), P(0, b.y + 0.05, 1.55)], '#c9a26b');
+      const n = Math.min(12, this.boardNotes || 0);
+      const colors = ['#fff3a3', '#ffd0d8', '#c9f0d0', '#cfe3ff'];
+      const fresh = Date.now() - (this.pinnedAt || 0) < 4000;
+      for (let i = 0; i < n; i++) {
+        const col = i % 4, row = Math.floor(i / 4);
+        const ny = b.y + 0.13 + col * 0.36, nz = 1.42 - row * 0.22;
+        const last = i === n - 1 && fresh;
+        this.poly([P(0, ny, nz - 0.16), P(0, ny + 0.26, nz - 0.16), P(0, ny + 0.26, nz), P(0, ny, nz)], last ? '#ffffff' : colors[i % 4]);
+      }
+      this.onWall('x0', b.y + b.w / 2, 0.72, (c) => {
+        c.font = '700 7px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
+        c.fillStyle = this.pal.text; c.textAlign = 'center'; c.globalAlpha = 0.7;
+        c.fillText(`佈告欄 ${this.boardNotes || 0}`, 0, 0);
+      });
+    }
+
     drawLift() {
       const L = this.plan.lift;
       if (!L) return;
@@ -2119,7 +2399,7 @@
       const s = p.s || {};
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
-      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
+      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : null, sitZ: 0 };
       if (p.visit) {
         const mate = this.people.get(p.visit.mate);
         return { pose: 'stand', face: 'front', act: mate && mate.chatWith === p.key ? 'chat' : 'lookaround', sitZ: 0 };
@@ -2127,32 +2407,37 @@
       if (p.errand) return { pose: 'stand', face: 'front', act: 'clipboard', sitZ: 0 };
       if (p.mode === 'work' && p.run) {
         const q = p.run.poi;
+        if (p.run.trip) return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: p.run.act, sitZ: q.sit || 0 };
         return { pose: 'stand', face: q.face, act: q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
       }
       if (p.mode === 'work' && p.desk) {
         const face = p.desk.side === 'n' ? 'front' : 'back';
         if (s.status === 'waiting' || s.status === 'error') return { pose: 'stand', face, act: 'wave', sitZ: 0 };
         if (p.desk.pose === 'stand') return { pose: 'stand', face, act: 'station', sitZ: 0 };
+        // Jumps up to cheer, or holds their head.
+        if (p.react && Date.now() < p.react.until) return { pose: 'stand', face, act: p.react.act, sitZ: 0 };
         if (!this.plan.zones) return { pose: 'sit', face, act: s.status === 'tool' || s.status === 'typing' ? 'type' : 'think', sitZ: 0.34 };
         const kind = workKind(s);
         const t = this.t / 1000;
         let act;
         if (kind === 'think') act = ['think', 'chin', 'scratch', 'lookup'][Math.floor((t + p.phase * 3) / 4) % 4];
         else if ((kind === 'shell' || kind === 'agent') && longRun(s)) act = 'leanback';
+        else if (s.task === 'test' || s.task === 'build') act = 'chin'; // watching it run
         else act = { reply: 'type', edit: 'typefast', shell: 'type', read: 'deskread', agent: 'point', chat: 'phone', plan: 'write' }[kind];
         // Someone came over to talk.
         const guest = p.chatWith && this.people.get(p.chatWith);
         if (guest && guest.visit && guest.visit.mate === p.key && !guest.path.length) return { pose: 'sit', face, act: 'chat', sitZ: 0.34 };
         // Nobody works without a break: a stretch, a sip, a neck roll now and then.
         const cyc = (t + p.phase * 5) % 26;
-        if (cyc < 2.4 && kind !== 'reply') act = ['stretch', 'sip', 'neck'][Math.floor((t + p.phase * 5) / 26) % 3];
+        const breaks = lunch() ? ['eat', 'eat', 'sip'] : night() ? ['yawn', 'stretch', 'sip'] : ['stretch', 'sip', 'neck'];
+        if (cyc < (lunch() ? 6 : 2.4) && kind !== 'reply') act = breaks[Math.floor((t + p.phase * 5) / 26) % 3];
         return { pose: 'sit', face, act, sitZ: 0.34 };
       }
       if (p.mode === 'wander' && p.poi) {
         const q = p.poi;
         let act = q.act;
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
-        if (q.act === 'stool' && lunch()) act = 'eat';
+        if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'chat') {
           const mate = this.people.get(q.partner);
           if (!mate || mate.chatWith !== p.key) act = 'lookaround';
@@ -2418,6 +2703,63 @@
           c.fillRect(-9, hip - 11, 3, 10);
           c.fillRect(5, hip - 24, 3, 12);
           c.fillRect(-2, hip - 25, 9, 2.5);
+          break;
+        }
+        case 'cheer': {
+          // Both arms up, bouncing.
+          const k = Math.abs(Math.sin(t * 9 + p.phase)) * 3;
+          c.fillRect(-9, hip - 27 - k, 3, 15);
+          c.fillRect(6, hip - 27 - k, 3, 15);
+          hand(-7.5, hip - 28 - k); hand(7.5, hip - 28 - k);
+          break;
+        }
+        case 'facepalm': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(3, hip - 20, 3, 9);
+          hand(2.5, hip - 22);
+          break;
+        }
+        case 'yawn': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(4, hip - 19, 3, 8);
+          hand(3, hip - 20);
+          break;
+        }
+        case 'carry':
+        case 'deliver':
+        case 'unpack': {
+          // Both hands out front holding a box (a bag for lunch).
+          const k = st.act === 'unpack' ? Math.sin(t * 5 + p.phase) * 1.5 : 0;
+          c.fillRect(-8, hip - 12, 3, 7);
+          c.fillRect(5, hip - 12, 3, 7);
+          if (front) this.roundRect(-7, hip - 13 + k, 14, 9, 1.5, '#c8a06a', '#9c7a4b');
+          break;
+        }
+        case 'fix': {
+          // Jiggling the printer.
+          const k = Math.sin(t * 16 + p.phase) * 2;
+          c.fillRect(-9 + k, hip - 12, 3, 9);
+          c.fillRect(6 + k, hip - 12, 3, 9);
+          break;
+        }
+        case 'refill': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 19, 3, 10);
+          c.fillStyle = '#6b3f22'; c.fillRect(5, hip - 25, 6, 7);
+          break;
+        }
+        case 'waterplant': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(6, hip - 13, 9, 3);
+          c.fillStyle = '#4f9ad8'; c.fillRect(13, hip - 15, 6, 5);
+          c.fillStyle = 'rgba(120,180,255,.8)';
+          for (let i = 0; i < 3; i++) c.fillRect(19 + i, hip - 10 + ((t * 30 + i * 4) % 9), 1, 2);
+          break;
+        }
+        case 'pin': {
+          c.fillRect(-9, hip - 11, 3, 10);
+          c.fillRect(5, hip - 25, 3, 14);
+          hand(6.5, hip - 26);
           break;
         }
         case 'type': {
@@ -2886,9 +3228,12 @@
           }
         }
         if (p.visit) this.stepVisit(p, wall);
-        else if (p.mode === 'work' && p.desk && this.plan.zones) this.coffeeRun(p, wall);
+        else if (p.mode === 'work' && p.desk && this.plan.zones && !this.trip(p, wall)) this.coffeeRun(p, wall);
         if (p.mode === 'wander' && !p.visit) {
-          if (p.poi && !p.path.length && p.until === Infinity) p.until = wall + p.stay;
+          if (p.poi && !p.path.length && p.until === Infinity) {
+            p.until = wall + p.stay;
+            if (p.poi.arrive) { this.lifeMark(p.poi.arrive, wall, p.stay, p); p.poi.arrive = null; }
+          }
           this.wander(p, wall);
         }
         if (p.path.length) {
@@ -2904,6 +3249,7 @@
       }
       this.moveCat(dt, wall);
       if (this.cat2) this.moveCat(dt, wall, this.cat2);
+      this.life(wall);
     }
 
     draw() {
@@ -2938,6 +3284,7 @@
         else it.draw();
       }
       this.pingPongBall();
+      if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();
       this.deskSign();
       // Where a held person would be dropped onto furniture.
