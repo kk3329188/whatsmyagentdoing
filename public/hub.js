@@ -116,6 +116,7 @@
 
   const panel = document.createElement('aside');
   panel.className = 'hub-panel';
+  let moreOpen = false; // whether 更多 is unfolded (kept across redraws)
   panel.hidden = true;
   const bar = document.createElement('div');
   bar.className = 'hub-needs';
@@ -507,6 +508,7 @@
     const canSay = s.controllable && !PRIVATE;
     panel.dataset.key = s.key;
     panel.hidden = false;
+    const current = s.plan && s.plan.find((x) => x.status === 'in_progress');
     panel.innerHTML = `
       <div class="hub-head">
         <div>
@@ -516,27 +518,18 @@
         </div>
         <button class="hub-x" aria-label="關閉">×</button>
       </div>
-      ${levelLine(s)}
-      ${employeeCard(s)}
       ${relayFrom && canSay ? `<div class="hub-relay">↪ 轉話：把「${esc(cut(name(state.data.sessions.find((x) => x.key === relayFrom) || {}), 24))}」的最後回覆轉給這個 session。可以先改內容，按 Enter 送出。<button class="hub-btn" data-act="unrelay">不轉了</button></div>` : ''}
       ${need ? `<div class="hub-need"><b>${s.stuck ? '可能卡住' : '等你處理'}</b>${esc(s.stuck || need)}
         ${s.choices && canSay ? `<div class="hub-row hub-choices">${s.choices.map((c, i) => `<button class="hub-btn primary" data-choice="${i}" title="${esc(c.message)}">${esc(c.label)}</button>`).join('')}</div>` : ''}
         ${s.options ? `<div class="hub-row hub-choices">${s.options.map((o) => `<span class="hub-chip">${esc(o)}</span>`).join('')}</div><p class="hub-muted">選擇題要切過去才能回答。</p>` : ''}
         ${s.stuck && canSay ? '<div class="hub-row hub-choices"><button class="hub-btn" data-say="你好像卡住了：先停下，用一兩句話說明現在卡在哪、試過什麼，再等我指示。">問它卡在哪</button></div>' : ''}
       </div>` : ''}
-      ${badges(s)}
-      ${helperList(s, now)}
-      ${active && s.activity ? `<div class="hub-sec"><h4>正在做</h4><p id="hubDoing">${esc(words(s.activity))}</p></div>` : ''}
-      <div class="hub-sec"><h4>進度${p ? ` <span class="hub-count">${p.done}/${p.total}</span>` : ''}</h4>
-        ${p ? `<div class="hub-bar"><i style="width:${Math.round((p.done / Math.max(1, p.total)) * 100)}%"></i></div>` : ''}
-        ${plan}
+      <div class="hub-now">
+        ${active && s.activity ? `<p id="hubDoing">${esc(words(s.activity))}</p>` : ''}
+        ${p ? `<div class="hub-bar"><i style="width:${Math.round((p.done / Math.max(1, p.total)) * 100)}%"></i></div>
+        <p class="hub-muted">進度 ${p.done}/${p.total}${current ? `・${esc(current.content)}` : p.step ? `・${esc(p.step)}` : ''}</p>` : ''}
       </div>
-      ${s.summary ? `<div class="hub-sec"><h4>App 摘要</h4><p>${esc(s.summary)}</p></div>` : ''}
-      ${recent ? `<div class="hub-sec"><h4>最近動作</h4><ul class="hub-recent">${recent}</ul></div>` : ''}
-      ${s.prompt ? `<div class="hub-sec"><h4>你最後說</h4><p class="hub-quote">${esc(s.prompt)}</p></div>` : ''}
-      ${s.recap || s.reply ? `<div class="hub-sec"><h4>它最後回</h4><p class="hub-quote">${esc(s.recap || s.reply)}</p></div>` : ''}
-      <div class="hub-sec hub-actions">
-        <h4>操作</h4>
+      <div class="hub-actions">
         <div class="hub-row">
           ${s.ccdId ? '<button class="hub-btn primary" data-act="open">切到這個 session</button>' : ''}
           ${canSay && active ? '<button class="hub-btn danger" data-act="stop">中斷這一輪</button>' : ''}
@@ -544,10 +537,21 @@
           ${s.agent === 'claude' ? `<button class="hub-btn" data-act="secretary">${isSecretary(s) ? '不當秘書了' : '設為秘書'}</button>` : ''}
         </div>
         ${canSay ? `
-        <textarea rows="3" placeholder="傳話給這個 session：打完按 Enter 送出（Shift+Enter 換行）">${esc(draft)}</textarea>
-        <div class="hub-row"><button class="hub-btn primary" data-act="say">送出</button><span class="hub-muted" id="hubAck">${esc(flash || (s.pending ? `排隊中（${s.pending}）：等 session 收件` : ackText(s.ack)))}</span></div>
-        <p class="hub-muted hub-note">第一次送出或中斷要按一次 Touch ID，之後 8 小時這個瀏覽器免按。訊息以你的身分出現在該 session，開頭標〔myoffice〕；它正在跑就排到這輪結束才送。中斷只結束這一輪，當時正在跑的指令會轉到背景跑完。</p>` : ''}
-      </div>`;
+        <textarea rows="2" placeholder="傳話給這個 session：Enter 送出、Shift+Enter 換行">${esc(draft)}</textarea>
+        <div class="hub-row"><button class="hub-btn primary" data-act="say" title="第一次送出或中斷要按一次 Touch ID，之後 8 小時這個瀏覽器免按。訊息以你的身分出現在該 session，開頭標〔myoffice〕；它正在跑就排到這輪結束才送。中斷只結束這一輪，當時正在跑的指令會轉到背景跑完。">送出</button><span class="hub-muted" id="hubAck">${esc(flash || (s.pending ? `排隊中（${s.pending}）：等 session 收件` : ackText(s.ack)))}</span></div>` : ''}
+      </div>
+      <details class="hub-more"${moreOpen ? ' open' : ''}>
+        <summary>更多：步驟、最近動作、對話、員工卡</summary>
+        ${levelLine(s)}
+        ${employeeCard(s)}
+        ${badges(s)}
+        ${helperList(s, now)}
+        <div class="hub-sec"><h4>步驟${p ? ` <span class="hub-count">${p.done}/${p.total}</span>` : ''}</h4>${plan}</div>
+        ${s.summary ? `<div class="hub-sec"><h4>App 摘要</h4><p>${esc(s.summary)}</p></div>` : ''}
+        ${recent ? `<div class="hub-sec"><h4>最近動作</h4><ul class="hub-recent">${recent}</ul></div>` : ''}
+        ${s.prompt ? `<div class="hub-sec"><h4>你最後說</h4><p class="hub-quote">${esc(s.prompt)}</p></div>` : ''}
+        ${s.recap || s.reply ? `<div class="hub-sec"><h4>它最後回</h4><p class="hub-quote">${esc(s.recap || s.reply)}</p></div>` : ''}
+      </details>`;
     if (typing) focusBox();
   }
 
@@ -642,6 +646,7 @@
     if (q) act('say', q.dataset.say);
   });
   panel.addEventListener('input', (e) => { if (e.target.tagName === 'TEXTAREA') draft = e.target.value; });
+  panel.addEventListener('toggle', (e) => { if (e.target.classList && e.target.classList.contains('hub-more')) moreOpen = e.target.open; }, true);
   panel.addEventListener('keydown', (e) => {
     if (e.target.tagName !== 'TEXTAREA') return;
     // Enter sends; Shift+Enter is a new line. Enter that confirms a Chinese

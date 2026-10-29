@@ -1239,3 +1239,31 @@ test('a meeting only runs with both in their chairs; pulled away, they go back; 
   o2.stepMeeting(qa, now + 50_000);
   assert.equal(qa.meeting, null);
 });
+
+test('slot machine: someone at it spins, the reels stop left to right, a line pays and they cheer', () => {
+  const o = load(true);
+  const q = o.plan.pois.find((x) => x.act === 'slot');
+  assert.ok(q && o.plan.props.some((x) => x.t === 'slot'), 'a slot machine downstairs');
+  assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length, 'reachable');
+  const p = settle(o, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  // Nobody there: the screen just waits.
+  p.poi = null; p.path = [];
+  o.t = 1000; o.stepSlot(0.03);
+  assert.equal(o.slot.player, null);
+  assert.equal(o.slot.paid, true, 'no spin');
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y;
+  // A spin that has to come in: every reel ends on the same symbol in the middle row.
+  const real = Math.random;
+  Math.random = () => 0.01;
+  try { o.t = 2000; o.stepSlot(0.03); } finally { Math.random = real; }
+  assert.equal(o.slot.player, p.key);
+  const stops = o.slot.dur.slice();
+  assert.ok(stops.every((d, i) => i === 0 || d > stops[i - 1]), 'reels stop one after another');
+  o.t = 2000 + stops[0] + 1; o.stepSlot(0.03);
+  assert.equal(o.slot.paid, false, 'still spinning');
+  o.t = 2000 + stops[4] + 1; o.stepSlot(0.03);
+  assert.ok(o.slot.win > 0, 'paid out');
+  assert.equal(o.stateOf(p).act, 'cheer');
+  o.t += 3000; o.stepSlot(0.03);
+  assert.equal(o.stateOf(p).act, 'slot');
+});

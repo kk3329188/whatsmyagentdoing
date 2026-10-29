@@ -310,7 +310,21 @@
   .hub-needs button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 10px; font: inherit; cursor: pointer; }
   .hub-needs button:hover { border-color: var(--waiting); }
   .hub-needs small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
-  .hub-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); overflow-y: auto; z-index: 20; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0,0,0,.12); padding: 18px 18px 40px; font-size: 13px; }
+  /* A small floating card (bottom right), not a full-height side page; the
+     details fold away under 更多. */
+  .hub-panel { position: fixed; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 560px); overflow-y: auto; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 36px rgba(0,0,0,.22); padding: 12px 14px 12px; font-size: 13px; }
+  .hub-panel .hub-head { margin-bottom: 8px; }
+  .hub-panel .hub-head h3 { font-size: 15px; }
+  .hub-now { margin: 0 0 8px; }
+  .hub-now .hub-bar { margin: 4px 0 4px; }
+  .hub-now p { margin: 0; overflow-wrap: anywhere; }
+  .hub-more { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
+  .hub-more > summary { cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; padding: 2px 0; }
+  .hub-more > summary::-webkit-details-marker { display: none; }
+  .hub-more > summary::before { content: '▸ '; }
+  .hub-more[open] > summary::before { content: '▾ '; }
+  .hub-panel .hub-actions { border-top: 0; padding: 4px 0 0; }
+  .hub-panel .hub-actions textarea { margin-top: 4px; }
   .hub-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; }
   .hub-head > div { flex: 1; min-width: 0; }
   .hub-head h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.3; }

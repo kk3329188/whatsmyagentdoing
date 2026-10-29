@@ -285,7 +285,7 @@ export class Office3D extends window.Office {
     this.scene.add(this.room);
     this.screens.clear();
     this.blinkers = [];
-    this.tvScreen = this.neonMat = this.liftDoors = null;
+    this.tvScreen = this.neonMat = this.liftDoors = this.slotRig = null;
     this.boardAt = this.jamLight = null;
     this.boardShown = -1; this.tables = [];
     const { W, D } = plan;
@@ -916,6 +916,46 @@ export class Office3D extends window.Office {
           leaf.castShadow = true;
           this.room.add(leaf);
         }
+        break;
+      }
+      // A modern video slot machine: a tall dark cabinet, a portrait main
+      // screen with five spinning reels (drawn by the shared simulation), a
+      // jackpot topper, lit edges and a button deck with a big SPIN button.
+      case 'slot': {
+        const g = new THREE.Group();
+        const body = soft(0x2a2d36), trim = soft(0x9aa1ab);
+        const part = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
+        outlineOf(part(roundedBox(0.7, 0.86, 0.66, 0.04), body, 0, 0.43, 0));
+        outlineOf(part(roundedBox(0.7, 1.08, 0.42, 0.05), body, 0, 1.4, -0.12));
+        outlineOf(part(roundedBox(0.7, 0.34, 0.36, 0.05), body, 0, 2.07, -0.1));
+        // button deck, tilted toward the player
+        outlineOf(part(roundedBox(0.66, 0.06, 0.3, 0.02), soft(0x3a3e48), 0, 0.9, 0.2, 0.22));
+        const spin = part(new THREE.CylinderGeometry(0.055, 0.06, 0.03, 20), new THREE.MeshStandardMaterial({ color: 0xff5a3c, emissive: 0xff3b1c, emissiveIntensity: 0.6 }), 0.17, 0.95, 0.22, 0.22);
+        const btns = [-0.22, -0.12, -0.02].map((bx, i) => part(roundedBox(0.07, 0.025, 0.05, 0.008), new THREE.MeshStandardMaterial({ color: [0x3b8ee0, 0x22a874, 0xe09412][i], emissive: [0x3b8ee0, 0x22a874, 0xe09412][i], emissiveIntensity: 0.4 }), bx, 0.95, 0.24, 0.22));
+        // the screens
+        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 320;
+        const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+        const screen = part(new THREE.PlaneGeometry(0.58, 0.725), new THREE.MeshBasicMaterial({ map: tex }), 0, 1.38, 0.105);
+        screen.castShadow = false;
+        const tcv = document.createElement('canvas'); tcv.width = 256; tcv.height = 96;
+        const ttex = new THREE.CanvasTexture(tcv); ttex.colorSpace = THREE.SRGBColorSpace;
+        const topper = part(new THREE.PlaneGeometry(0.62, 0.232), new THREE.MeshBasicMaterial({ map: ttex }), 0, 2.07, 0.081);
+        topper.castShadow = false;
+        // chrome frame around the main screen
+        for (const [w, h, x, y] of [[0.64, 0.03, 0, 1.76], [0.64, 0.03, 0, 1.0], [0.03, 0.78, -0.31, 1.38], [0.03, 0.78, 0.31, 1.38]]) part(roundedBox(w, h, 0.03, 0.01), trim, x, y, 0.105);
+        // lit edges down both sides, and a glowing arch on top
+        const ledMat = new THREE.MeshBasicMaterial({ color: 0xff44aa });
+        for (const x of [-0.355, 0.355]) part(new THREE.BoxGeometry(0.025, 1.4, 0.025), ledMat, x, 1.55, 0.09).castShadow = false;
+        const arch = part(new THREE.TorusGeometry(0.3, 0.025, 8, 24, Math.PI), ledMat, 0, 2.24, -0.1);
+        arch.castShadow = false;
+        // a coin tray
+        part(roundedBox(0.4, 0.06, 0.1, 0.02), trim, 0, 0.32, 0.36);
+        g.position.set(p.x + 0.35, 0, p.y + 0.35);
+        this.room.add(g);
+        const light = new THREE.PointLight(0xff66cc, 0.6, 2.2, 1.5);
+        light.position.set(p.x + 0.35, 1.4, p.y + 1.0);
+        this.room.add(light);
+        this.slotRig = { cv, tex, tcv, ttex, ledMat, spin, btns, light, drawnAt: 0 };
         break;
       }
       case 'coatRack':
@@ -1868,6 +1908,20 @@ export class Office3D extends window.Office {
     }
     if (this.alarmLight) this.alarmLight.intensity = this.alarmUntil > Date.now() ? 4 + 4 * Math.sin(this.t / 150) : 0;
     if (this.arcadeScreen) this.arcadeScreen.material.emissive.setHSL((t * 0.05) % 1, 0.7, 0.5);
+    // The slot machine: repaint its screens (about 30 times a second), cycle
+    // the edge lights, flash everything on a win.
+    if (this.slotRig) {
+      const r = this.slotRig, sl = this.slot, win = sl && sl.winUntil > this.t;
+      if (this.t - r.drawnAt > 33) {
+        r.drawnAt = this.t;
+        this.slotScreen(r.cv.getContext('2d'), r.cv.width, r.cv.height); r.tex.needsUpdate = true;
+        this.slotTopper(r.tcv.getContext('2d'), r.tcv.width, r.tcv.height); r.ttex.needsUpdate = true;
+      }
+      r.ledMat.color.setHSL(win ? (this.t / 300) % 1 : (this.t / 4000) % 1, 0.9, win && Math.sin(this.t / 70) > 0 ? 0.85 : 0.6);
+      r.light.color.copy(r.ledMat.color);
+      r.light.intensity = win ? 1.6 + Math.sin(this.t / 70) : 0.6;
+      r.spin.material.emissiveIntensity = sl && sl.player ? 0.6 + 0.6 * Math.max(0, Math.sin(this.t / 180)) : 0.3;
+    }
     if (this.liftDoors) {
       const since = Date.now() - (this.liftOpen || 0);
       const open = since < 1600 ? Math.sin(Math.min(1, since / 1600) * Math.PI) * 0.45 : 0;
