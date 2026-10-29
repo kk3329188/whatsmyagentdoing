@@ -82,6 +82,9 @@
     commit: [['facepalm', 'commit 失敗'], [null, 'commit ✓']],
   };
   const REACT_MS = 4500;
+  // Starting work or finishing: the camera closes in on them for a moment.
+  const SPOT_MS = 4500;
+  const SPOT_AGAIN_MS = 60_000; // the same person at most once a minute
 
   const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
   const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
@@ -971,6 +974,9 @@
         p.leaving = false;
         // Something happened: say it above their head for a moment.
         const nowZone = isWorker ? 'work' : (zoned ? zoneOf(s) : null);
+        const started = nowZone === 'work' && (arrived || (p.lastZone && p.lastZone !== 'work'));
+        const finished = p.lastZone === 'work' && (nowZone === 'done' || nowZone === 'wait');
+        if (zoned && !this.first && !s.subagent && s.key !== this.secKey && (started || finished)) this.spotlight(s.key);
         if (zoned && !this.first && p.lastZone && p.lastZone !== nowZone && EVENT_TEXT[nowZone]) {
           p.event = { text: EVENT_TEXT[nowZone](s), at: Date.now(), zone: nowZone };
         }
@@ -1453,6 +1459,36 @@
       if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
     }
 
+    // ------------------------------------------------------------ spotlight
+    //
+    // Someone starts working or finishes: the camera zooms in on them and
+    // follows them for a few seconds, then goes back. One at a time; the
+    // newest few wait their turn. `follow` turns it off.
+    spotlight(key) {
+      if (this.follow === false || this.compact || !this.visible) return;
+      const now = Date.now();
+      this.spotSeen = this.spotSeen || new Map();
+      if (now - (this.spotSeen.get(key) || 0) < SPOT_AGAIN_MS) return;
+      this.spotSeen.set(key, now);
+      this.spotQ = (this.spotQ || []).filter((k) => k !== key).concat(key).slice(-3);
+    }
+
+    // Who the camera is on right now, or null.
+    spotPerson() {
+      const now = Date.now();
+      const alive = (p) => p && !p.leaving && !p.held;
+      if (this.spot && now < this.spot.until && alive(this.people.get(this.spot.key))) return this.people.get(this.spot.key);
+      this.spot = null;
+      while (this.spotQ && this.spotQ.length) {
+        const k = this.spotQ.shift(), p = this.people.get(k);
+        if (alive(p)) { this.spot = { key: k, until: now + SPOT_MS }; return p; }
+      }
+      return null;
+    }
+
+    // You moved the camera yourself: drop the spotlight and what was queued.
+    spotCancel() { this.spot = null; this.spotQ = []; }
+
     // The company's name over the notice board (both floors), and how many
     // notes are pinned on it today.
     setCompany(name) { this.company = String(name || '').trim().slice(0, 24); }
@@ -1664,9 +1700,14 @@
       const left = this.iso(0, D, 0).x, right = this.iso(W, 0, 0).x;
       const top = this.iso(0, 0, WALL_H).y - 20, bottom = this.iso(W, D, 0).y + 10;
       const zoom = Math.min(this.cw / (right - left + 30), this.ch / (bottom - top + 30), 2);
-      const want = { zoom, ox: this.cw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
+      let want = { zoom, ox: this.cw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
+      const sp = this.spotPerson();
+      if (sp) {
+        const z = Math.min(zoom * 2.2, 3.2), at = this.iso(sp.x, sp.y, 0.5);
+        want = { zoom: z, ox: this.cw / 2 - at.x * z, oy: this.ch / 2 - at.y * z };
+      }
       if (!this.cam) this.cam = want;
-      else for (const k of ['zoom', 'ox', 'oy']) this.cam[k] += (want[k] - this.cam[k]) * 0.1;
+      else for (const k of ['zoom', 'ox', 'oy']) this.cam[k] += (want[k] - this.cam[k]) * (sp ? 0.08 : 0.1);
     }
 
     pointer(e, click) {

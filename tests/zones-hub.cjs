@@ -639,3 +639,31 @@ test('breaks at the desk follow the clock: lunch at noon, yawning at night', () 
   assert.equal(actAt(22), 'yawn');
   assert.equal(actAt(10), 'stretch');
 });
+
+test('spotlight: starting or finishing work brings the camera in on them, one at a time, not twice a minute', () => {
+  const o = load(true);
+  o.visible = true; o.cw = 800; o.ch = 600;
+  const a = at('done', { n: 'a' }), b = at('done', { n: 'b' }), sub = at('done', { n: 'sub', subagent: true });
+  settle(o, [a, b, sub]);
+  o.first = false;
+  o.update([{ ...a, status: 'tool' }, b, { ...sub, status: 'tool' }]);
+  assert.equal(o.spotQ.join(), a.key, 'starting work: queued (helpers are not)');
+  const p = o.spotPerson();
+  assert.equal(p.key, a.key);
+  o.cam = null; o.fitCamera();
+  const at2 = o.iso(p.x, p.y, 0.5);
+  assert.ok(Math.abs(at2.x * o.cam.zoom + o.cam.ox - 400) < 1 && Math.abs(at2.y * o.cam.zoom + o.cam.oy - 300) < 1, 'centred on them');
+  const close = o.cam.zoom;
+  o.update([{ ...a, status: 'tool' }, { ...b, status: 'tool' }, { ...sub, status: 'tool' }]);
+  o.update([{ ...a, status: 'done', lastEventAt: Date.now() }, { ...b, status: 'tool' }, { ...sub, status: 'tool' }]);
+  assert.equal(o.spotQ.join(), b.key, 'a finished again within a minute: not again');
+  o.spot.until = 0;
+  assert.equal(o.spotPerson().key, b.key, 'next in line');
+  o.spotCancel();
+  assert.equal(o.spotPerson(), null);
+  o.cam = null; o.fitCamera();
+  assert.ok(o.cam.zoom < close, 'back to the whole room');
+  o.follow = false;
+  o.spotlight('claude:x');
+  assert.equal(o.spotQ.length, 0, 'turned off in settings');
+});

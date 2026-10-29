@@ -349,6 +349,7 @@
               <label class="tog"><input type="checkbox" id="showSub"> <span data-t="subagents"></span></label>
               <label class="tog" id="idleToggle"><input type="checkbox" id="showIdle"> <span data-t="showIdle"></span></label>
               <label class="tog" id="agentBadgeToggle"><input type="checkbox" id="showAgent"> <span data-t="showAgent"></span></label>
+              <label class="tog"><input type="checkbox" id="followCam"> <span>開工／做完時鏡頭跟拍</span></label>
             </div>
           </div>
           <div class="setting-group">
@@ -582,7 +583,7 @@ function render() {
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
     office.pins = PIP ? [] : Hub.pinNames();
-    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); }
+    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = store.get('follow', true) !== false; }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
       const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary });
@@ -684,6 +685,9 @@ document.addEventListener('keydown', (e) => {
   }
 });
 settingsMenu.addEventListener('toggle', () => { if (settingsMenu.open) hideTip(); });
+const followCam = document.getElementById('followCam');
+followCam.checked = store.get('follow', true) !== false;
+followCam.addEventListener('change', () => { store.set('follow', followCam.checked); if (!followCam.checked) for (const o of [office, office2]) if (o && o.spotCancel) o.spotCancel(); if (state.data) render(); });
 const companyInput = document.getElementById('companyInput');
 companyInput.value = store.get('company', '') || '';
 companyInput.addEventListener('input', () => { store.set('company', companyInput.value.trim()); if (state.data) render(); });

@@ -1050,6 +1050,10 @@ export class Office3D extends window.Office {
   // centre button (or 0) puts the camera back. Turning always pivots on the
   // point in the middle of the view, so it follows wherever you slid to.
   viewControls() {
+    // Touching the camera yourself ends any spotlight (and keeps your view).
+    const mine = () => { if (this.spot || (this.spotQ && this.spotQ.length)) { this.spotCancel(); this.spotSaved = null; } };
+    this.canvas.addEventListener('pointerdown', mine);
+    this.canvas.addEventListener('wheel', mine, { passive: true });
     this.canvas.addEventListener('wheel', (e) => {
       if (wheelIntent(e) !== 'pan') return;
       e.preventDefault();
@@ -1093,11 +1097,13 @@ export class Office3D extends window.Office {
   // Slides the view by screen pixels: positive x shows more of the right.
   panView(dx, dy) {
     this.fly = null;
+    this.spotCancel(); this.spotSaved = null;
     this.controls._pan(-dx, -dy);
   }
 
   resetView() {
     if (!this.room) return;
+    this.spotCancel(); this.spotSaved = null;
     this.controls._panOffset.set(0, 0, 0); // drop momentum left from earlier slides
     const from = this.controls.target.clone();
     this.fitCamera3D(true);
@@ -1129,9 +1135,23 @@ export class Office3D extends window.Office {
   steerView() {
     const t = this.controls.target;
     const move = new THREE.Vector3();
+    // Spotlight: close in on them and follow; afterwards glide back to your view.
+    const sp = this.spotPerson();
+    if (sp) {
+      if (!this.spotSaved) this.spotSaved = { target: t.clone(), zoom: this.camera.zoom };
+      this.fly = null;
+      move.set((sp.x - t.x) * 0.08, 0, (sp.y - t.z) * 0.08);
+      const z = Math.min(this.controls.maxZoom, Math.max(this.spotSaved.zoom * 1.9, 2.4));
+      this.camera.zoom += (z - this.camera.zoom) * 0.08;
+      this.camera.updateProjectionMatrix();
+    } else if (this.spotSaved) {
+      this.fly = { from: t.clone(), to: this.spotSaved.target, t0: performance.now(), zoomFrom: this.camera.zoom, zoomTo: this.spotSaved.zoom };
+      this.spotSaved = null;
+    }
     if (this.fly) {
       const k = glide(this.fly.t0, performance.now());
       move.lerpVectors(this.fly.from, this.fly.to, k).sub(t);
+      if (this.fly.zoomTo) { this.camera.zoom = this.fly.zoomFrom + (this.fly.zoomTo - this.fly.zoomFrom) * k; this.camera.updateProjectionMatrix(); }
       if (k >= 1) this.fly = null;
     }
     const { W, D } = this.plan;
