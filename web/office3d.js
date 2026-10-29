@@ -1699,7 +1699,7 @@ export class Office3D extends window.Office {
     if (st.pose === 'walk') return null;
     if (p.me) return p.seated ? Math.PI : null;
     if (p.seeOff && !p.path.length) return Math.atan2(this.plan.door.x - p.x, this.plan.door.y - p.y);
-    if (p.meeting && !p.path.length) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
+    if (p.meeting && this.atSeat(p)) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
     // A visitor talks to whoever sits at the desk they came to.
     if (p.visitor) return p.path.length ? null : Math.atan2(p.desk.seat.x - p.x, p.desk.seat.y - p.y);
     if (p.held || p.landed) return 0;

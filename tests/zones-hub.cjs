@@ -7,7 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function load(roam = false, clock = Date) {
+// Daytime by default, so tests do not depend on when they run (closing time, lunch…).
+function load(roam = false, clock = clockAt(15)) {
   const window = {};
   const ctx = { window, Math, Date: clock, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), ctx);
@@ -1202,4 +1203,39 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
   for (let i = 0; i < 20; i++) a.tick();
   assert.equal(made.started, 0, 'no typing, no clicks');
   a.stop();
+});
+
+test('a meeting only runs with both in their chairs; pulled away, they go back; a third message cannot drag them off', () => {
+  const o = load(true);
+  o.label = (s) => s.key;
+  const now = Date.now();
+  const a = at('tool', { activity: 'SendMessage' }), b = at('tool', { n: 'b' }), c = at('tool', { n: 'c' });
+  settle(o, [a, b, c]);
+  o.first = false;
+  const pa = o.people.get(a.key), pb = o.people.get(b.key), pc = o.people.get(c.key);
+  o.update([{ ...a, talk: [{ key: b.key, dir: 'out', at: now, text: '討論' }] }, b, c]);
+  // A is there, B is somewhere else (path cleared elsewhere): no talking yet.
+  pa.path = []; pa.x = pa.meeting.seat.x; pa.y = pa.meeting.seat.y;
+  pb.path = []; pb.x = pb.meeting.seat.x + 3; pb.y = pb.meeting.seat.y + 3;
+  o.stepMeeting(pa, now);
+  assert.equal(pa.meeting.start, 0, 'not started while B is away');
+  assert.notEqual(o.stateOf(pb).pose, 'sit', 'B is not shown sitting at the table from afar');
+  o.stepMeeting(pb, now);
+  assert.ok(pb.path.length, 'B walks back to the chair');
+  // A third session messages B mid-meeting: B stays in the meeting.
+  o.update([a, b, { ...c, talk: [{ key: b.key, dir: 'out', at: now + 1, text: '另一件事' }] }]);
+  assert.equal(pc.visit, undefined);
+  assert.equal(pc.meeting, undefined);
+  // Both seated: it starts.
+  pb.path = []; pb.x = pb.meeting.seat.x; pb.y = pb.meeting.seat.y;
+  o.stepMeeting(pa, now + 10);
+  assert.ok(pa.meeting.start > 0);
+  // It never comes together: called off.
+  const o2 = load(true); o2.label = (s) => s.key;
+  settle(o2, [a, b]); o2.first = false;
+  o2.update([{ ...a, talk: [{ key: b.key, dir: 'out', at: now, text: 'x' }] }, b]);
+  const qa = o2.people.get(a.key);
+  qa.path = []; o2.stepMeeting(qa, now);
+  o2.stepMeeting(qa, now + 50_000);
+  assert.equal(qa.meeting, null);
 });

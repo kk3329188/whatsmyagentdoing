@@ -1395,7 +1395,7 @@
     // Walk over to another person and chat with them for a bit; a worker
     // then goes back to their desk.
     visit(p, mate, text) {
-      if (p.held || mate.held) return;
+      if (p.held || mate.held || p.meeting || mate.meeting) return;
       const spot = this.besideOf(mate);
       this.endRun(p, false);
       this.release(p);
@@ -1436,8 +1436,17 @@
       const m = p.meeting;
       const other = this.people.get(m.with);
       if (!other || other.leaving || !other.meeting || other.meeting.with !== p.key) return this.endMeeting(p);
+      // Pulled away (dragged, sent somewhere): walk back to the chair.
+      if (!p.path.length && !p.held && !p.landed && !this.atSeat(p)) this.goTo(p, m.seat);
       if (!m.host) return; // the one who called it keeps the clock
-      if (p.path.length || other.path.length) return;
+      m.called = m.called || wall;
+      // Never came together (one of them kept getting pulled away): call it off.
+      if (!m.start && wall - m.called > 45_000) { this.endMeeting(other); this.endMeeting(p); return; }
+      // Talk only once both are sitting in their chairs.
+      if (!this.atSeat(p) || !this.atSeat(other)) {
+        if (m.start) m.speaker = other.meeting.speaker = null;
+        return;
+      }
       if (!m.start) { m.start = other.meeting.start = wall; m.until = wall + 20_000; m.next = wall; }
       if (wall >= m.next) {
         const lines = ['我覺得可以', '那這樣改呢？', '好，就這麼辦', '我這邊來處理', '有道理', '細節我再補給你'];
@@ -1449,6 +1458,20 @@
         m.next = wall + 3600;
       }
       if (wall > m.until) { this.endMeeting(other); this.endMeeting(p); }
+    }
+
+    // End a meeting for both sides.
+    endMeetingOf(p) {
+      if (!p.meeting) return;
+      const other = this.people.get(p.meeting.with);
+      this.endMeeting(p);
+      if (other && other.meeting) this.endMeeting(other);
+    }
+
+    // In their meeting chair (not on the way, not pulled off somewhere).
+    atSeat(p) {
+      const m = p.meeting;
+      return !!m && !p.path.length && !p.held && Math.hypot(p.x - m.seat.x, p.y - m.seat.y) < 0.3;
     }
 
     endMeeting(p) {
@@ -1589,7 +1612,7 @@
     // Returns false when nobody is free or the floor has no place for it.
     chore(kind) {
       const plan = this.plan;
-      const free = [...this.people.values()].filter((p) => p.mode === 'wander' && !p.leaving && !p.held && !p.visit && !(p.chores && p.chores.length)
+      const free = [...this.people.values()].filter((p) => p.mode === 'wander' && !p.leaving && !p.held && !p.visit && !p.meeting && !(p.chores && p.chores.length)
         && p.queue == null && (p.zone === 'idle' || p.zone === 'done') && p.key !== this.secKey);
       if (!free.length) return false;
       const tidy = free.filter((o) => this.traits(o).some((tr) => tr.tidy));
@@ -1749,7 +1772,7 @@
       }
       const now = Date.now();
       who.forEach((p, i) => {
-        this.endRun(p, false); this.endVisit(p, false); this.release(p);
+        this.endRun(p, false); this.endVisit(p, false); this.endMeetingOf(p); this.release(p);
         p.chores = null; p.react = null;
         p.standupSpot = spots[i] || null;
         p.poi = null; p.until = 0; p.path = [];
@@ -2074,7 +2097,7 @@
       for (const p of this.people.values()) {
         if (p.leaving || p.held) continue;
         p.rush = now + RUSH_MS;
-        if (on) { p.chores = null; this.endVisit(p, false); this.endRun(p, false); }
+        if (on) { p.chores = null; this.endVisit(p, false); this.endRun(p, false); this.endMeetingOf(p); }
         if ((p.h + i++) % 3 !== 0) p.event = { text: pick(on ? BOSS_IN : BOSS_OUT, p.h, 17), at: now, zone: on ? 'error' : 'done' };
       }
     }
@@ -3362,7 +3385,9 @@
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
       if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
       if (p.seeOff && !p.path.length) return { pose: 'stand', face: 'front', act: p.seeOff.stage === 'bye' ? 'wave' : 'lookaround', sitZ: 0 };
-      if (p.meeting && !p.path.length) {
+      // On the way to a meeting but stopped somewhere: standing, not sitting at a desk.
+      if (p.meeting && !this.atSeat(p) && !p.path.length) return { pose: 'stand', face: 'front', act: 'lookaround', sitZ: 0 };
+      if (p.meeting && this.atSeat(p)) {
         const m = p.meeting;
         return { pose: 'sit', face: m.seat.face, act: m.speaker === p.key ? 'chat' : m.start ? 'write' : 'lookaround', sitZ: m.seat.sit || 0.42 };
       }
@@ -4296,6 +4321,7 @@
           if (wall - p.landed < 1100) continue;
           p.landed = 0;
           if (p.leaving) this.goTo(p, this.plan.door);
+          else if (p.meeting) this.goTo(p, p.meeting.seat);
           else if (p.mode === 'work' && p.desk) this.goTo(p, p.desk.seat);
           else if (p.mode === 'wander') {
             p.poi = { x: p.x, y: p.y, act: 'lookaround', face: 'front' };
