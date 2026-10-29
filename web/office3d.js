@@ -8,7 +8,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
-import { makeChibi, animateChibi, dressChibi } from './chibi.js';
+import { makeChibi, animateChibi, dressChibi, HAIR_STYLES } from './chibi.js';
 
 const FURNITURE = ['desk', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse', 'laptop',
   'pottedPlant', 'plantSmall1', 'plantSmall2', 'plantSmall3', 'kitchenCabinet', 'kitchenCoffeeMachine',
@@ -1563,7 +1563,7 @@ export class Office3D extends window.Office {
     let a = this.actors.get(p.key);
     if (a) return a;
     // A chibi of their own: skin, hair and clothes from who they are.
-    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.h % 5 });
+    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: (p.h >>> 3) % HAIR_STYLES });
     const obj = rig.root;
     if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
     rig.sign.add(this.signBoard());
@@ -1673,7 +1673,7 @@ export class Office3D extends window.Office {
       if (a.rig.held.cup.visible) a.rig.held.cup.material.color.set(st.act === 'water' ? 0x9fd3ff : 0xffffff);
       a.laptop.visible = st.act === 'laptop' && st.pose === 'sit';
       if (a.laptop.visible) {
-        a.laptop.position.set(p.x + Math.sin(a.yaw) * 0.3, seatY + 0.26, p.y + Math.cos(a.yaw) * 0.3);
+        a.laptop.position.set(p.x + Math.sin(a.yaw) * 0.3, seatY + 0.13, p.y + Math.cos(a.yaw) * 0.3);
         a.laptop.rotation.y = a.yaw + Math.PI;
       }
     }

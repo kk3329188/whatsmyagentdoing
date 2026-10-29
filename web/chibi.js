@@ -9,7 +9,10 @@
 // seat of the trousers at the origin (the caller lifts it onto the chair).
 import * as THREE from 'three';
 
-const H = { hip: 0.3, thigh: 0.15, shin: 0.13, torso: 0.26, head: 0.2, upper: 0.12, fore: 0.1 };
+// Big head (half their height), a short chunky body, short thick limbs.
+const H = { hip: 0.165, thigh: 0.085, shin: 0.08, torso: 0.2, head: 0.25, upper: 0.095, fore: 0.085 };
+const K = H.head / 0.2; // hair pieces were sized for a 0.2 head
+export const HAIR_STYLES = 13;
 
 // Three-tone shading, the cartoon look.
 let toonRamp = null;
@@ -21,8 +24,8 @@ function ramp() {
   toonRamp.needsUpdate = true;
   return toonRamp;
 }
-const toon = (color) => new THREE.MeshToonMaterial({ color, gradientMap: ramp() });
-const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x2b2420, side: THREE.BackSide });
+export const toon = (color) => new THREE.MeshToonMaterial({ color, gradientMap: ramp() });
+export const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x2b2420, side: THREE.BackSide });
 
 // A part with a dark outline (the same shape, a little bigger, inside out).
 function part(geo, mat, outline = 1.06) {
@@ -47,7 +50,7 @@ function drawFace(c, expr, blink, mouth, look) {
   const ink = '#2b2420', eyeY = 120, ex = [86, 170];
   c.lineCap = 'round'; c.lineJoin = 'round';
   const closed = (y = eyeY, up = true) => { c.strokeStyle = ink; c.lineWidth = 9; for (const x of ex) { c.beginPath(); c.arc(x, y + (up ? 8 : -6), 15, up ? Math.PI * 1.15 : Math.PI * 0.15, up ? Math.PI * 1.85 : Math.PI * 0.85); c.stroke(); } };
-  const eyes = (r = 17, dx = 0, dy = 0, squash = 1) => {
+  const eyes = (r = 20, dx = 0, dy = 0, squash = 1) => {
     for (const x of ex) {
       c.fillStyle = ink; c.beginPath(); c.ellipse(x + dx, eyeY + dy, r * 0.8, r * squash, 0, 0, Math.PI * 2); c.fill();
       c.fillStyle = '#fff'; c.beginPath(); c.arc(x + dx + r * 0.25, eyeY + dy - r * 0.35 * squash, r * 0.28, 0, Math.PI * 2); c.fill();
@@ -58,13 +61,13 @@ function drawFace(c, expr, blink, mouth, look) {
   const sleepy = expr === 'sleep' || expr === 'yawn';
   if (sleepy || expr === 'happy' || expr === 'laugh') closed(eyeY, expr === 'happy' || expr === 'laugh');
   else if (blink) { c.strokeStyle = ink; c.lineWidth = 8; for (const x of ex) { c.beginPath(); c.moveTo(x - 14, eyeY); c.lineTo(x + 14, eyeY); c.stroke(); } }
-  else if (expr === 'surprised') eyes(20, 0, 0, 1.15);
+  else if (expr === 'surprised') eyes(23, 0, 0, 1.15);
   else if (expr === 'dizzy') { c.strokeStyle = ink; c.lineWidth = 5; for (const x of ex) { c.beginPath(); for (let a = 0; a < 12; a += 0.4) c.lineTo(x + Math.cos(a) * a * 1.4, eyeY + Math.sin(a) * a * 1.4); c.stroke(); } }
-  else if (expr === 'sleepy' || expr === 'bored') eyes(15, 0, 4, 0.55);
-  else if (expr === 'focus') eyes(15, 0, 3, 0.8);
-  else if (expr === 'think') eyes(15, 8, -8);
-  else if (expr === 'look') eyes(16, look * 10, 0);
-  else eyes(16, look * 6, 0);
+  else if (expr === 'sleepy' || expr === 'bored') eyes(18, 0, 4, 0.55);
+  else if (expr === 'focus') eyes(18, 0, 3, 0.8);
+  else if (expr === 'think') eyes(18, 8, -8);
+  else if (expr === 'look') eyes(19, look * 10, 0);
+  else eyes(19, look * 6, 0);
   // brows
   if (expr === 'sad' || expr === 'worried') brows(-7, 82);
   else if (expr === 'focus') brows(5, 90);
@@ -90,7 +93,7 @@ function drawFace(c, expr, blink, mouth, look) {
 
 const hexOf = (c) => (typeof c === 'string' ? new THREE.Color(c) : new THREE.Color(c || 0x888888));
 
-// look: { skin, hair, shirt, pants, hairStyle (0-4), shoe }
+// look: { skin, hair, shirt, pants, hairStyle (0-12), shoe }
 export function makeChibi(look = {}) {
   const skin = toon(hexOf(look.skin || '#f3cfb0'));
   const hair = toon(hexOf(look.hair || '#3a2a20'));
@@ -103,23 +106,23 @@ export function makeChibi(look = {}) {
   const hips = new THREE.Group();
   hips.position.y = H.hip;
   root.add(hips);
-  const pelvis = part(new THREE.SphereGeometry(0.105, 14, 10), pants);
+  const pelvis = part(new THREE.SphereGeometry(0.12, 14, 10), pants);
   pelvis.scale.set(1, 0.6, 0.85);
   hips.add(pelvis);
 
   // legs
   const leg = (side) => {
     const hip = new THREE.Group();
-    hip.position.set(side * 0.058, -0.02, 0);
-    const thigh = part(capsule(0.05, H.thigh - 0.06), pants);
+    hip.position.set(side * 0.064, -0.02, 0);
+    const thigh = part(capsule(0.056, 0.03), pants);
     thigh.position.y = -H.thigh / 2;
     const knee = new THREE.Group();
     knee.position.y = -H.thigh;
-    const shin = part(capsule(0.045, H.shin - 0.06), pants);
+    const shin = part(capsule(0.052, 0.03), pants);
     shin.position.y = -H.shin / 2;
-    const foot = part(new THREE.SphereGeometry(0.055, 12, 8), shoe);
-    foot.scale.set(0.95, 0.55, 1.45);
-    foot.position.set(0, -H.shin + 0.005, 0.03);
+    const foot = part(new THREE.SphereGeometry(0.064, 12, 8), shoe);
+    foot.scale.set(0.95, 0.6, 1.35);
+    foot.position.set(0, -H.shin + 0.012, 0.025);
     knee.add(shin, foot);
     hip.add(thigh, knee);
     hips.add(hip);
@@ -130,27 +133,27 @@ export function makeChibi(look = {}) {
   // body
   const torso = new THREE.Group();
   hips.add(torso);
-  const body = part(capsule(0.11, 0.1), shirt);
-  body.scale.set(1.05, 1, 0.82);
-  body.position.y = 0.13;
+  const body = part(capsule(0.125, 0.05), shirt);
+  body.scale.set(1.1, 1, 0.86);
+  body.position.y = 0.1;
   torso.add(body);
   const front = new THREE.Group(); // things worn on the chest
-  front.position.set(0, 0.16, 0.095);
+  front.position.set(0, 0.11, 0.108);
   torso.add(front);
 
   // arms
   const arm = (side) => {
     const sh = new THREE.Group();
-    sh.position.set(side * 0.125, 0.215, 0);
-    const upper = part(capsule(0.038, H.upper - 0.05), sleeve);
+    sh.position.set(side * 0.145, 0.165, 0);
+    const upper = part(capsule(0.046, 0.03), sleeve);
     upper.position.y = -H.upper / 2;
     const elbow = new THREE.Group();
     elbow.position.y = -H.upper;
-    const fore = part(capsule(0.034, H.fore - 0.05), skin);
+    const fore = part(capsule(0.042, 0.025), skin);
     fore.position.y = -H.fore / 2;
     const hand = new THREE.Group();
     hand.position.y = -H.fore - 0.01;
-    const mitt = part(new THREE.SphereGeometry(0.042, 12, 8), skin);
+    const mitt = part(new THREE.SphereGeometry(0.05, 12, 8), skin);
     hand.add(mitt);
     elbow.add(fore, hand);
     sh.add(upper, elbow);
@@ -171,7 +174,7 @@ export function makeChibi(look = {}) {
   head.add(skull);
   // ears
   for (const s of [-1, 1]) {
-    const ear = part(new THREE.SphereGeometry(0.04, 10, 8), skin, 1.08);
+    const ear = part(new THREE.SphereGeometry(0.048, 10, 8), skin, 1.08);
     ear.scale.set(0.6, 1, 0.8);
     ear.position.set(s * H.head * 1.02, H.head * 0.9, 0);
     head.add(ear);
@@ -189,36 +192,80 @@ export function makeChibi(look = {}) {
   face.position.copy(skull.position);
   face.renderOrder = 2;
   head.add(face);
-  // hair
-  const style = (look.hairStyle ?? 0) % 5;
-  const cap = part(new THREE.SphereGeometry(H.head * 1.06, 22, 14, 0, Math.PI * 2, 0, Math.PI * (style === 1 ? 0.62 : 0.5)), hair, 1.03);
-  cap.position.y = H.head * 0.98;
-  cap.rotation.x = -0.55; // front edge up off the forehead, back edge down the nape
-  head.add(cap);
-  const bangs = part(new THREE.SphereGeometry(H.head * 1.02, 16, 8, Math.PI * 0.2, Math.PI * 0.6, Math.PI * 0.22, Math.PI * 0.14), hair, 0);
-  bangs.position.y = H.head * 0.98;
-  head.add(bangs);
-  if (style === 1) { // bob: hair down the sides and back
-    const back = part(new THREE.SphereGeometry(H.head * 1.08, 18, 12, Math.PI * 0.9, Math.PI * 1.2, Math.PI * 0.35, Math.PI * 0.35), hair, 1.03);
-    back.position.y = H.head * 0.95; back.scale.set(1, 1, 0.95);
-    head.add(back);
-  } else if (style === 2) { // bun on top
-    const bun = part(new THREE.SphereGeometry(0.075, 14, 10), hair);
-    bun.position.set(0, H.head * 2.02, -0.04);
-    head.add(bun);
-  } else if (style === 3) { // spikes
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const sp = part(new THREE.ConeGeometry(0.05, 0.11, 6), hair, 0);
-      sp.position.set(Math.cos(a) * 0.11, H.head * 1.78, Math.sin(a) * 0.11 - 0.02);
-      sp.rotation.set(Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6);
-      head.add(sp);
+  // hair: thirteen styles
+  const style = (look.hairStyle ?? 0) % HAIR_STYLES;
+  const C = H.head * 0.95; // skull centre above the neck
+  const add = (geo, x, y, z, { m = hair, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0, ol = 1.04 } = {}) => {
+    const p = part(geo, m, ol);
+    p.position.set(x, y, z); p.scale.set(sx, sy, sz); p.rotation.set(rx, ry, rz);
+    head.add(p);
+    return p;
+  };
+  const sphere = (r, w = 14, h = 10) => new THREE.SphereGeometry(r, w, h);
+  // the usual top: a cap swept up off the forehead, and a fringe
+  const cap = (size = 1.06, depth = 0.5, tilt = -0.55) => add(new THREE.SphereGeometry(H.head * size, 22, 14, 0, Math.PI * 2, 0, Math.PI * depth), 0, H.head * 0.98, 0, { rx: tilt, ol: 1.03 });
+  const bangs = () => add(new THREE.SphereGeometry(H.head * 1.02, 16, 8, Math.PI * 0.2, Math.PI * 0.6, Math.PI * 0.22, Math.PI * 0.14), 0, H.head * 0.98, 0, { ol: 0 });
+  const backHair = (len) => add(new THREE.SphereGeometry(H.head * 1.08, 18, 12, Math.PI * 0.9, Math.PI * 1.2, Math.PI * 0.35, Math.PI * len), 0, C, 0, { sz: 0.95, ol: 1.03 });
+  switch (style) {
+    case 0: cap(); bangs(); break; // short
+    case 1: cap(1.06, 0.62); bangs(); backHair(0.35); break; // bob
+    case 2: cap(); bangs(); add(sphere(0.075 * K), 0, H.head * 2.02, -0.04 * K); break; // bun on top
+    case 3: // spikes
+      cap(); bangs();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        add(new THREE.ConeGeometry(0.05 * K, 0.11 * K, 6), Math.cos(a) * 0.11 * K, H.head * 1.78, (Math.sin(a) * 0.11 - 0.02) * K, { rx: Math.sin(a) * 0.6, rz: -Math.cos(a) * 0.6, ol: 0 });
+      }
+      break;
+    case 4: cap(); bangs(); add(capsule(0.05 * K, 0.14 * K), 0, H.head * 1.2, -H.head * 1.0, { rx: 0.5 }); break; // ponytail
+    case 5: // twin tails
+      cap(1.06, 0.55); bangs();
+      for (const s of [-1, 1]) {
+        add(sphere(0.035 * K), s * H.head * 1.0, H.head * 1.38, -H.head * 0.3, { m: toon(0xe0525a) }); // hair ties
+        add(capsule(0.055 * K, 0.2 * K), s * H.head * 1.18, H.head * 0.95, -H.head * 0.3, { rz: s * 0.4, rx: 0.15 });
+      }
+      break;
+    case 6: // long and straight, down the back
+      cap(1.06, 0.6); bangs(); backHair(0.45);
+      add(capsule(0.1, 0.13), 0, H.head * 0.45, -H.head * 0.78, { sx: 1.75, sz: 0.42 });
+      break;
+    case 7: // curly: a cloud of curls
+      cap(1.04, 0.5, -0.4);
+      for (let i = 0; i < 16; i++) {
+        const y = 1 - (i / 15) * 0.95, r = Math.sqrt(1 - y * y), a = i * 2.39996;
+        const z = Math.sin(a) * r;
+        if (z > 0.55 && y < 0.55) continue; // keep the face clear
+        add(sphere(0.07 * K, 10, 8), Math.cos(a) * r * H.head * 1.02, C + y * H.head * 1.0, z * H.head * 1.0, { ol: 1.05 });
+      }
+      break;
+    case 8: // side part, a swoop over one eye
+      cap(); bangs();
+      add(sphere(0.1 * K), H.head * 0.3, H.head * 1.72, H.head * 0.42, { sx: 1.7, sy: 0.6, sz: 1.1, rz: -0.35, rx: -0.3 });
+      break;
+    case 9: // space buns
+      cap(); bangs();
+      for (const s of [-1, 1]) add(sphere(0.07 * K), s * H.head * 0.62, H.head * 1.8, -0.02, {});
+      break;
+    case 10: // mohawk
+      cap(1.025, 0.5, -0.3);
+      for (let i = 0; i < 5; i++) {
+        const a = -0.85 + i * 0.42;
+        add(new THREE.ConeGeometry(0.07 * K, 0.2 * K, 5), 0, C + Math.cos(a) * H.head * 1.1, -Math.sin(a) * H.head * 1.1, { rx: -a, sz: 0.45, ol: 0 });
+      }
+      break;
+    case 11: { // knitted beanie with a bobble
+      const knit = toon(hexOf(look.shirt || '#c96442').offsetHSL(0.45, -0.1, 0.05));
+      bangs();
+      add(new THREE.SphereGeometry(H.head * 1.09, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), 0, H.head * 1.02, 0, { m: knit, rx: -0.3, ol: 1.03 });
+      add(new THREE.TorusGeometry(H.head * 1.06, 0.03 * K, 8, 28), 0, H.head * 1.02, 0, { m: knit, rx: Math.PI / 2 - 0.3, ol: 1.04 });
+      add(sphere(0.055 * K), 0, H.head * 2.08, -H.head * 0.3, { m: toon(0xf2ead8) });
+      break;
     }
-  } else if (style === 4) { // ponytail
-    const tail = part(capsule(0.045, 0.14), hair);
-    tail.position.set(0, H.head * 1.2, -H.head * 1.0);
-    tail.rotation.x = 0.5;
-    head.add(tail);
+    default: // 12: messy tufts
+      cap(); bangs();
+      for (const [x, z, rx, rz] of [[-0.3, 0.1, 0.5, 0.7], [0.25, 0.3, 0.7, -0.6], [0.05, -0.35, -0.6, 0.2], [-0.15, 0.45, 0.9, 0.3], [0.4, -0.15, -0.3, -0.8]]) {
+        add(new THREE.ConeGeometry(0.06 * K, 0.15 * K, 5), x * H.head, H.head * 1.95 - Math.abs(x) * 0.3 * H.head, z * H.head, { rx, rz, ol: 0 });
+      }
   }
 
   // things they can hold or wear
@@ -238,13 +285,13 @@ export function makeChibi(look = {}) {
   held.paddle.position.set(0, -0.07, 0.02); held.paddle.rotation.x = Math.PI / 2;
   held.can.position.set(0, -0.03, 0.04);
   for (const m of Object.values(held)) { m.visible = false; m.castShadow = true; armR.hand.add(m); }
-  const box = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.18), mat(0xc8a06a));
-  box.position.set(0, -0.06, 0.13);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.17, 0.19), mat(0xc8a06a));
+  box.position.set(0, -0.03, 0.14);
   box.visible = false;
   front.add(box);
   // level outfits: lanyard (2+), headphones (3, 4), tie (4+), crown (5)
   const lanyard = new THREE.Group();
-  const strap = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.008, 6, 18, Math.PI), mat(0x3b8ee0));
+  const strap = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.009, 6, 18, Math.PI), mat(0x3b8ee0));
   strap.rotation.z = Math.PI; strap.position.y = 0.06;
   const card = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.065, 0.01), mat(0xfafafa));
   card.position.y = -0.02;
@@ -257,9 +304,9 @@ export function makeChibi(look = {}) {
   const band = new THREE.Mesh(new THREE.TorusGeometry(H.head * 1.1, 0.012, 6, 20, Math.PI), mat(0xe2e2e6, { metalness: 0.3 }));
   band.position.y = H.head * 0.95;
   phones.add(band);
-  for (const s of [-1, 1]) { const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.04, 14), mat(0x3a3a44)); ear.rotation.z = Math.PI / 2; ear.position.set(s * H.head * 1.1, H.head * 0.95, 0); phones.add(ear); }
+  for (const s of [-1, 1]) { const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.06 * K, 0.06 * K, 0.045, 14), mat(0x3a3a44)); ear.rotation.z = Math.PI / 2; ear.position.set(s * H.head * 1.1, H.head * 0.95, 0); phones.add(ear); }
   head.add(phones);
-  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.075, 0.07, 8, 1, true), mat(0xf2c230, { metalness: 0.6, roughness: 0.3, side: THREE.DoubleSide }));
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * K, 0.075 * K, 0.07 * K, 8, 1, true), mat(0xf2c230, { metalness: 0.6, roughness: 0.3, side: THREE.DoubleSide }));
   crown.position.y = H.head * 2.02;
   head.add(crown);
   for (const o of [lanyard, tie, phones, crown]) o.visible = false;
@@ -324,7 +371,7 @@ function act(name, t) {
     case 'lookup': return { R: [-0.5, 0.2, -0.8], L: [-0.5, 0.2, -0.8], head: [-0.32, 0.25 * S(t * 0.5), 0], face: 'think' };
     case 'leanback': return { R: [-2.55, -0.55, -2.3], L: [-2.55, -0.55, -2.3], lean: -0.16, head: [-0.12, 0.1 * S(t * 0.3), 0], face: 'neutral' };
     case 'point': return { R: [-1.45, -0.35, -0.1], head: [0, -0.3, 0], face: 'talk' };
-    case 'stretch': return { R: [-3.0, 0.15, -0.25], L: [-3.0, 0.15, -0.25], lean: -0.12, head: [-0.28, 0, 0], face: 'happy' };
+    case 'stretch': return { R: [-2.6, -0.75, -0.2], L: [-2.6, -0.75, -0.2], lean: -0.12, head: [-0.28, 0, 0], face: 'happy' };
     case 'neck': return { R: [-2.3, 0.6, -2.0], head: [0.2 * S(t * 1.5), 0, 0.32 * S(t * 1.5)], face: 'sleepy' };
     case 'sip': case 'coffee': case 'water': {
       const drink = S(t * 0.9) > 0.55;
@@ -339,14 +386,14 @@ function act(name, t) {
     case 'laugh': return { R: [-0.55, 0.45, -1.3], L: [-0.55, 0.45, -1.3], lean: -0.14 + 0.08 * Math.abs(S(t * 8)), head: [-0.3, 0, 0.06 * S(t * 8)], face: 'laugh' };
     case 'chat': case 'meeting-talk': return { R: [-0.55 - 0.45 * up(t * 4), 0.2 + 0.18 * S(t * 3), -0.95 - 0.35 * up(t * 5)], L: [-0.25, 0.15, -0.55], head: [0.06 * S(t * 5), 0.16 * S(t * 1.3), 0], face: 'talk' };
     case 'watch': case 'tv': return { R: [-0.45, 0.25, -0.95], L: [-0.45, 0.25, -0.95], lean: -0.12, head: [-0.1, 0, 0], face: 'smile' };
-    case 'cheer': return { R: [-3.0 + 0.2 * S(t * 9), -0.3, -0.25], L: [-3.0 + 0.2 * S(t * 9 + 1), -0.3, -0.25], bounce: 0.05 * Math.abs(S(t * 9)), face: 'happy' };
+    case 'cheer': return { R: [-2.4 + 0.2 * S(t * 9), -1.0, -0.3], L: [-2.4 + 0.2 * S(t * 9 + 1), -1.0, -0.3], bounce: 0.05 * Math.abs(S(t * 9)), face: 'happy' };
     case 'facepalm': return { R: [-1.35, 0.65, -2.3], head: [0.32, 0, 0], lean: 0.1, face: 'sad' };
     case 'wave': return { R: [-2.6, -0.45 + 0.4 * S(t * 10), -0.55], head: [0, 0, 0.1], face: 'smile' };
     case 'dazed': return { head: [0.1 * S(t * 7), 0, 0.28 * S(t * 5)], lean: 0.06 * S(t * 5), R: [-0.3, -0.5, -0.4], L: [-0.3, -0.5, -0.4], face: 'dizzy' };
     case 'yawn': return { R: [-1.45, 0.55, -2.1], head: [-0.32, 0, 0], face: 'yawn' };
     case 'nap': return { head: [0.62, 0, 0.12], lean: 0.22, R: [-0.35, 0.25, -0.7], L: [-0.35, 0.25, -0.7], face: 'sleep' };
     case 'knock': return { R: [-1.45, 0.1, -0.8 + 0.45 * up(t * 9)], face: 'worried' };
-    case 'sign': return { R: [-2.95, 0.12, -0.35], L: [-2.95, 0.12, -0.35], bounce: 0.02 * Math.abs(S(t * 3)), face: 'worried', sign: true };
+    case 'sign': return { R: [-2.7, -0.55, -0.35], L: [-2.7, -0.55, -0.35], bounce: 0.02 * Math.abs(S(t * 3)), face: 'worried', sign: true };
     case 'carry': case 'deliver': return { R: [-0.95, 0.38, -0.95], L: [-0.95, 0.38, -0.95], face: 'focus', box: true };
     case 'unpack': return { R: [-0.95, 0.38, -0.95 + 0.15 * S(t * 5)], L: [-0.95, 0.38, -0.95 + 0.15 * S(t * 5 + 1)], face: 'smile', box: true };
     case 'fix': return { R: [-1.15 + 0.18 * S(t * 16), 0.25, -0.6], L: [-1.15 + 0.18 * S(t * 16 + 2), 0.25, -0.6], lean: 0.28, face: 'focus' };
