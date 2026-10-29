@@ -83,8 +83,12 @@
   };
   const REACT_MS = 4500;
   // Starting work or finishing: the camera closes in on them for a moment.
-  const SPOT_MS = 4500;
+  const SPOT_MS = 5500;
   const SPOT_AGAIN_MS = 60_000; // the same person at most once a minute
+  // The boss walks in: everyone hurries back to a desk and looks busy.
+  const BOSS_IN = ['老闆來了！', '快回座位！', '假裝很忙…', '咳咳，在做事', '老闆好～'];
+  const BOSS_OUT = ['呼～老闆走了', '終於…', '休息一下', '伸個懶腰', '可以摸魚了'];
+  const RUSH_MS = 9000;
 
   const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
   const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
@@ -420,8 +424,13 @@
       poi(OW - 1.95, 1.1, 'rack', 'back', { zone: 'error' });
       poi(rx - 0.55, 1.05, 'rack', 'back', { zone: 'error' });
       for (const [x, y] of [[0.45, 0.45], [0.45, OD - 0.2]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
+      // The company's name, big on the back wall over the open office
+      // (windows give way to it).
+      const logo = this.company ? { x: Math.max(0.6, OW / 2 - 1.6), w: 3.2 } : null;
+      const clearOfLogo = (x) => !logo || x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1;
       const windows = [];
       for (let x = 1.0; x < OW - 2.6; x += 2.4) {
+        if (!clearOfLogo(x)) continue;
         windows.push(x);
         poi(x + 0.75, 0.75, 'window', 'back');
       }
@@ -585,7 +594,7 @@
         solid(0.1, 3.2, 0.45, 0.9);
         poi(0.95, 3.65, 'trophy', 'back', { yaw: -Math.PI / 2 });
       }
-      const neon = un.has('neon') ? { x: Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
+      const neon = un.has('neon') ? { x: logo ? (logo.x > 2.8 ? 0.5 : logo.x + logo.w + 0.3) : Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
 
       // ---- the notice board on the left wall: whoever finishes pins a note
@@ -647,7 +656,7 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, board, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
     }
 
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
@@ -700,8 +709,9 @@
         poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
       }
       for (const [x, y] of [[0.45, 0.45], [OW - 0.45, 0.45], [OW - 0.45, D - 0.6]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
+      const logo = this.company ? { x: Math.max(0.6, OW / 2 - 1.6), w: 3.2 } : null;
       const windows = [];
-      for (let x = 1.0; x < OW - 2.6; x += 2.4) { windows.push(x); poi(x + 0.75, 0.75, 'window', 'back', { zone: 'idle' }); }
+      for (let x = 1.0; x < OW - 2.6; x += 2.4) { if (logo && !(x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1)) continue; windows.push(x); poi(x + 0.75, 0.75, 'window', 'back', { zone: 'idle' }); }
 
       // ---- library behind glass (top right)
       for (const [y, d] of [[0, 1], [1, 1], [2, 1], [3, 0.6], [4.6, MR - 4.6]]) this.glassX(add, mx, y, d);
@@ -798,7 +808,7 @@
         { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
         { id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' },
       ];
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
 
     // The sign over your desk: how many are waiting in line.
@@ -812,7 +822,7 @@
     deskSignAt(at) {
       const c = this.ctx;
       const n = this.queueCount || 0;
-      const text = n ? `🧑‍💼 你的桌・${n} 個在等你` : '🧑‍💼 你的桌';
+      const text = (this.bossIn ? '👀 老闆在・' : '🧑‍💼 ') + (n ? `你的桌・${n} 個在等你` : '你的桌');
       c.save();
       c.font = '700 10px ui-sans-serif, system-ui, -apple-system, "PingFang TC", "Apple Color Emoji", sans-serif';
       c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -877,7 +887,8 @@
       if (sec) sessions = sessions.filter((s) => s !== sec);
       // With zones only the ones actually working get a desk; waiting and
       // errors go to their own rooms. Scene packs keep the old rule.
-      const atDesk = (s) => (zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
+      // While the boss is in, everyone not waiting on you sits at a desk.
+      const atDesk = (s) => (this.bossIn && zoned ? zoneOf(s) !== 'wait' : zoned ? zoneOf(s) === 'work' : WORKING.has(s.status));
       const working = sessions.filter(atDesk);
       const off = sessions
         .filter((s) => !atDesk(s))
@@ -973,7 +984,7 @@
         p.s = s;
         p.leaving = false;
         // Something happened: say it above their head for a moment.
-        const nowZone = isWorker ? 'work' : (zoned ? zoneOf(s) : null);
+        const nowZone = zoned ? zoneOf(s) : (isWorker ? 'work' : null);
         const started = nowZone === 'work' && (arrived || (p.lastZone && p.lastZone !== 'work'));
         const finished = p.lastZone === 'work' && (nowZone === 'done' || nowZone === 'wait');
         if (zoned && !this.first && !s.subagent && s.key !== this.secKey && (started || finished)) this.spotlight(s.key);
@@ -1398,7 +1409,7 @@
     // around noon, cake comes out at three; and now and then something small
     // happens that whoever is free takes care of.
     life(wall) {
-      if (!this.plan.zones || this.compact || this.first) return;
+      if (!this.plan.zones || this.compact || this.first || this.bossIn) return;
       if (!this.nextLife) this.nextLife = wall + rand(30_000, 70_000);
       const d = new Date(wall), h = d.getHours() + d.getMinutes() / 60, day = d.toDateString();
       if (this.floor === 1 && h >= 11.75 && h < 12.5 && this.lunchDay !== day && this.chore('delivery')) this.lunchDay = day;
@@ -1459,6 +1470,27 @@
       if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
     }
 
+    // ------------------------------------------------------------ the boss
+    //
+    // You say the boss walked in: everyone runs back to a desk and looks
+    // busy (the ones waiting on you stay in line at your desk). The boss
+    // leaves: back to whatever they were doing. The page calls update()
+    // right after, which hands out the desks.
+    setBoss(on) {
+      on = !!on;
+      if (on === !!this.bossIn) return;
+      this.bossIn = on;
+      if (this.first) return;
+      const now = Date.now();
+      let i = 0;
+      for (const p of this.people.values()) {
+        if (p.leaving || p.held) continue;
+        p.rush = now + RUSH_MS;
+        if (on) { p.chores = null; this.endVisit(p, false); this.endRun(p, false); }
+        if ((p.h + i++) % 3 !== 0) p.event = { text: pick(on ? BOSS_IN : BOSS_OUT, p.h, 17), at: now, zone: on ? 'error' : 'done' };
+      }
+    }
+
     // ------------------------------------------------------------ spotlight
     //
     // Someone starts working or finishes: the camera zooms in on them and
@@ -1489,9 +1521,28 @@
     // You moved the camera yourself: drop the spotlight and what was queued.
     spotCancel() { this.spot = null; this.spotQ = []; }
 
+    // The part of the canvas you can actually see (the page may be scrolled):
+    // its size and its centre, in canvas pixels. The spotlight puts them a
+    // little below the centre so their speech bubble fits above.
+    spotFrame() {
+      const whole = { x: this.cw / 2, y: this.ch / 2 + 18, w: this.cw, h: this.ch };
+      const r = this.canvas && this.canvas.getBoundingClientRect && this.canvas.getBoundingClientRect();
+      const vw = typeof innerWidth === 'number' ? innerWidth : 0, vh = typeof innerHeight === 'number' ? innerHeight : 0;
+      if (!r || !r.height || !vw || !vh) return whole;
+      const top = Math.max(r.top, 0), bot = Math.min(r.bottom, vh), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
+      if (bot - top < 120 || right - left < 160) return whole;
+      return { x: (left + right) / 2 - r.left, y: (top + bot) / 2 - r.top + 18, w: right - left, h: bot - top };
+    }
+
     // The company's name over the notice board (both floors), and how many
     // notes are pinned on it today.
-    setCompany(name) { this.company = String(name || '').trim().slice(0, 24); }
+    setCompany(name) {
+      const v = String(name || '').trim().slice(0, 24);
+      if (v === (this.company || '')) return;
+      this.company = v;
+      // The sign takes the place of a window: lay the floor out again.
+      if (this.plan && !this.plan.fixed) this.rebuild();
+    }
     setBoard(n) { this.boardNotes = Math.max(0, n | 0); }
 
     // Each pod with people in it: the department most of them belong to.
@@ -1703,11 +1754,22 @@
       let want = { zoom, ox: this.cw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
       const sp = this.spotPerson();
       if (sp) {
-        const z = Math.min(zoom * 2.2, 3.2), at = this.iso(sp.x, sp.y, 0.5);
-        want = { zoom: z, ox: this.cw / 2 - at.x * z, oy: this.ch / 2 - at.y * z };
+        // About 7 x 7 tiles around them fill the part of the window you see.
+        const f = this.spotFrame();
+        const spanW = this.iso(7, 0, 0).x - this.iso(0, 7, 0).x, spanH = this.iso(7, 7, 0).y - this.iso(0, 0, 0).y + 60;
+        const z = Math.max(zoom * 1.3, Math.min(f.w / spanW, f.h / spanH, 3.2));
+        const at = this.iso(sp.x, sp.y, 0.5);
+        want = { zoom: z, ox: f.x - at.x * z, oy: f.y - at.y * z };
       }
+      // Eased by time, so it glides the same at any frame rate.
+      const now = this.t || 0, dt = Math.min(0.1, Math.max(0, (now - (this.camAt || now)) / 1000));
+      this.camAt = now;
+      const k = 1 - Math.exp(-dt * (sp || this.spotBack ? 2.2 : 6));
       if (!this.cam) this.cam = want;
-      else for (const k of ['zoom', 'ox', 'oy']) this.cam[k] += (want[k] - this.cam[k]) * (sp ? 0.08 : 0.1);
+      else for (const key of ['zoom', 'ox', 'oy']) this.cam[key] += (want[key] - this.cam[key]) * k;
+      // Coming back from a spotlight: ease until settled.
+      if (sp) this.spotBack = true;
+      else if (this.spotBack && Math.abs(this.cam.zoom - want.zoom) < 0.002) this.spotBack = false;
     }
 
     pointer(e, click) {
@@ -1904,6 +1966,7 @@
         hand((d.getMinutes() / 60) * Math.PI * 2, 8, 1.4);
       });
       this.drawLift();
+      this.drawLogo();
       this.drawBoard();
       if (this.plan.floor === 2) return;
       const dy = this.plan.door.y;
@@ -2131,20 +2194,38 @@
     }
 
     // The lift on the left wall: doors slide open when someone comes or goes.
-    // Left wall: the company's name, and (downstairs) the notice board under it.
+    // The company's name on the back wall: a dark panel, a gold frame, the
+    // name as big as fits, glowing a little; the floor underneath.
+    drawLogo() {
+      const L = this.plan.logo;
+      if (!L || !this.company) return;
+      const P = (x, y, z) => this.iso(x, y, z);
+      const t = this.t / 1000;
+      // High on the wall, above the desk dividers in front of it.
+      this.poly([P(L.x, 0, 1.2), P(L.x + L.w, 0, 1.2), P(L.x + L.w, 0, 2.34), P(L.x, 0, 2.34)], '#c9a24c');
+      this.poly([P(L.x + 0.06, 0, 1.26), P(L.x + L.w - 0.06, 0, 1.26), P(L.x + L.w - 0.06, 0, 2.28), P(L.x + 0.06, 0, 2.28)], '#1f2533');
+      const px = P(L.x + L.w, 0, 0).x - P(L.x, 0, 0).x;
+      this.onWall('y0', L.x + L.w / 2, 1.82, (c) => {
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        let size = 26;
+        c.font = `900 ${size}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`;
+        const fit = c.measureText(this.company).width;
+        if (fit > px * 0.82) { size = Math.max(10, Math.floor(size * px * 0.82 / fit)); c.font = `900 ${size}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`; }
+        c.shadowColor = '#ffcf6b';
+        c.shadowBlur = 10 + Math.sin(t * 2) * 3;
+        c.fillStyle = '#ffd98a';
+        c.fillText(this.company, 0, 0);
+        c.shadowBlur = 0;
+        c.font = '700 8px ui-sans-serif, system-ui, sans-serif';
+        c.fillStyle = 'rgba(255,217,138,.7)';
+        c.fillText(this.plan.floor === 2 ? '2F  LOUNGE' : '1F  OFFICE', 0, size * 0.62 + 3);
+      });
+    }
+
+    // Left wall (downstairs): the notice board.
     drawBoard() {
       const P = (x, y, z) => this.iso(x, y, z);
       const b = this.plan.board;
-      const y0 = b ? b.y : 6.2;
-      if (this.company && y0 + 2 < this.plan.lift.y - 0.7) {
-        const w = Math.min(3.2, Math.max(1.6, this.company.length * 0.32 + 0.6));
-        this.poly([P(0, y0, 1.75), P(0, y0 + w, 1.75), P(0, y0 + w, 2.25), P(0, y0, 2.25)], this.pal.dark ? '#2b2f3a' : '#2f3542');
-        this.onWall('x0', y0 + w / 2, 1.92, (c) => {
-          c.font = '800 11px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
-          c.fillStyle = '#ffd98a'; c.textAlign = 'center'; c.textBaseline = 'middle';
-          c.fillText(this.company, 0, 0);
-        });
-      }
       if (!b) return;
       this.poly([P(0, b.y, 0.8), P(0, b.y + b.w, 0.8), P(0, b.y + b.w, 1.6), P(0, b.y, 1.6)], '#8a6a46');
       this.poly([P(0, b.y + 0.05, 0.85), P(0, b.y + b.w - 0.05, 0.85), P(0, b.y + b.w - 0.05, 1.55), P(0, b.y + 0.05, 1.55)], '#c9a26b');
@@ -2440,7 +2521,7 @@
       const s = p.s || {};
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
-      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : null, sitZ: 0 };
+      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
       if (p.visit) {
         const mate = this.people.get(p.visit.mate);
         return { pose: 'stand', face: 'front', act: mate && mate.chatWith === p.key ? 'chat' : 'lookaround', sitZ: 0 };
@@ -2453,6 +2534,11 @@
       }
       if (p.mode === 'work' && p.desk) {
         const face = p.desk.side === 'n' ? 'front' : 'back';
+        // Not really working, but the boss is in: look busy.
+        if (this.bossIn && this.plan.zones && zoneOf(s) !== 'work') {
+          const t = (this.t || 0) / 1000;
+          return { pose: 'sit', face, act: ['typefast', 'deskread', 'typefast', 'write', 'type'][Math.floor((t + p.phase * 3) / 3) % 5], sitZ: 0.34 };
+        }
         if (s.status === 'waiting' || s.status === 'error') return { pose: 'stand', face, act: 'wave', sitZ: 0 };
         if (p.desk.pose === 'stand') return { pose: 'stand', face, act: 'station', sitZ: 0 };
         // Jumps up to cheer, or holds their head.
@@ -3269,7 +3355,7 @@
           }
         }
         if (p.visit) this.stepVisit(p, wall);
-        else if (p.mode === 'work' && p.desk && this.plan.zones && !this.trip(p, wall)) this.coffeeRun(p, wall);
+        else if (p.mode === 'work' && p.desk && this.plan.zones && !this.bossIn && !this.trip(p, wall)) this.coffeeRun(p, wall);
         if (p.mode === 'wander' && !p.visit) {
           if (p.poi && !p.path.length && p.until === Infinity) {
             p.until = wall + p.stay;
@@ -3279,7 +3365,7 @@
         }
         if (p.path.length) {
           const n = p.path[0];
-          const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy), v = SPEED * dt;
+          const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy), v = SPEED * dt * (p.rush > wall ? 2.3 : 1);
           if (d > 0.001) p.walkFace = dx + dy >= 0 ? 'front' : 'back';
           if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
           else { p.x += (dx / d) * v; p.y += (dy / d) * v; }

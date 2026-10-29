@@ -652,7 +652,7 @@ test('spotlight: starting or finishing work brings the camera in on them, one at
   assert.equal(p.key, a.key);
   o.cam = null; o.fitCamera();
   const at2 = o.iso(p.x, p.y, 0.5);
-  assert.ok(Math.abs(at2.x * o.cam.zoom + o.cam.ox - 400) < 1 && Math.abs(at2.y * o.cam.zoom + o.cam.oy - 300) < 1, 'centred on them');
+  assert.ok(Math.abs(at2.x * o.cam.zoom + o.cam.ox - 400) < 1 && Math.abs(at2.y * o.cam.zoom + o.cam.oy - 318) < 1, 'centred on them (a little low, so the bubble fits)');
   const close = o.cam.zoom;
   o.update([{ ...a, status: 'tool' }, { ...b, status: 'tool' }, { ...sub, status: 'tool' }]);
   o.update([{ ...a, status: 'done', lastEventAt: Date.now() }, { ...b, status: 'tool' }, { ...sub, status: 'tool' }]);
@@ -666,4 +666,42 @@ test('spotlight: starting or finishing work brings the camera in on them, one at
   o.follow = false;
   o.spotlight('claude:x');
   assert.equal(o.spotQ.length, 0, 'turned off in settings');
+});
+
+test('the boss walks in: everyone but the ones waiting on you hurries to a desk and looks busy; leaves: back to normal', () => {
+  const o = load(true);
+  const idle = at('idle', { ago: 60 * MIN }), done = at('done', { ago: 2 * MIN }), wait = at('waiting'), work = at('tool');
+  settle(o, [idle, done, wait, work]);
+  o.first = false;
+  o.setBoss(true);
+  const p = o.people.get(idle.key);
+  assert.ok(p.rush > Date.now(), 'running');
+  o.update([idle, done, wait, work]);
+  for (const k of [idle.key, done.key, work.key]) assert.equal(o.people.get(k).mode, 'work', k);
+  assert.notEqual(o.people.get(wait.key).mode, 'work', 'waiting on you: stays in line');
+  assert.equal(o.stateOf(p).act, 'run', 'runs to the desk');
+  seat(p);
+  assert.match(o.stateOf(p).act, /^(typefast|deskread|write|type)$/);
+  assert.equal(o.stateOf(p).pose, 'sit');
+  assert.equal(o.spotQ, undefined, 'pretending is not starting work: no spotlight');
+  assert.equal(o.chore('jam') && false, false);
+  o.setBoss(false);
+  o.update([idle, done, wait, work]);
+  assert.notEqual(o.people.get(idle.key).mode, 'work');
+  assert.equal(o.people.get(work.key).mode, 'work');
+});
+
+test('the company name takes the first window on the back wall, on both floors', () => {
+  const o = load(true);
+  const before = o.plan.windows.length;
+  assert.equal(o.plan.logo, null);
+  o.setCompany('  測試公司  ');
+  assert.equal(o.company, '測試公司');
+  assert.ok(o.plan.logo && o.plan.logo.w >= 2.5);
+  const L = o.plan.logo;
+  assert.ok(o.plan.windows.every((x) => x + 1.5 < L.x || x > L.x + L.w), 'no window behind the sign');
+  assert.ok(o.plan.windows.length < before);
+  const up = loadFloor(2);
+  up.setCompany('測試公司');
+  assert.ok(up.plan.logo);
 });

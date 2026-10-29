@@ -208,6 +208,34 @@ export class Office3D extends window.Office {
     }));
   }
 
+  // The company's name, big on the back wall: gold on a dark panel, glowing.
+  logoSign(L, floor) {
+    const cv = document.createElement('canvas');
+    cv.width = 1024; cv.height = Math.round(1024 * 1.14 / L.w);
+    const c = cv.getContext('2d');
+    c.fillStyle = '#c9a24c'; c.fillRect(0, 0, cv.width, cv.height);
+    c.fillStyle = '#1f2533'; c.fillRect(20, 20, cv.width - 40, cv.height - 40);
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    let size = Math.round(cv.height * 0.5);
+    const font = (n) => `900 ${n}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`;
+    c.font = font(size);
+    const fit = c.measureText(this.company).width;
+    if (fit > cv.width * 0.84) { size = Math.floor(size * cv.width * 0.84 / fit); c.font = font(size); }
+    c.shadowColor = '#ffcf6b'; c.shadowBlur = 24;
+    c.fillStyle = '#ffd98a';
+    c.fillText(this.company, cv.width / 2, cv.height * 0.44);
+    c.shadowBlur = 0;
+    c.font = '700 40px ui-sans-serif, system-ui, sans-serif';
+    c.fillStyle = 'rgba(255,217,138,.7)';
+    c.fillText(floor === 2 ? '2F  LOUNGE' : '1F  OFFICE', cv.width / 2, cv.height * 0.44 + size * 0.6 + 22);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(L.w, 1.14), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.45, roughness: 0.6 }));
+    m.position.set(L.x + L.w / 2, 1.77, 0.015); // above the desk dividers
+    return m;
+  }
+
   textPlane(text, bg, w, h) {
     const cv = document.createElement('canvas');
     cv.width = 256; cv.height = Math.round(256 * h / w);
@@ -233,8 +261,8 @@ export class Office3D extends window.Office {
     this.screens.clear();
     this.blinkers = [];
     this.tvScreen = this.neonMat = this.liftDoors = null;
-    this.boardAt = this.jamLight = this.companySign = null;
-    this.companyShown = null; this.boardShown = -1; this.tables = [];
+    this.boardAt = this.jamLight = null;
+    this.boardShown = -1; this.tables = [];
     const { W, D, OW, MR, PY } = plan;
     const dark = this.pal.dark;
 
@@ -309,6 +337,7 @@ export class Office3D extends window.Office {
       this.room.add(wb);
       this.whiteboardScribbles(OW + 3.7);
     }
+    if (plan.logo && this.company) this.room.add(this.logoSign(plan.logo, plan.floor));
     const sign = this.textPlane(plan.floor === 2 ? 'LIBRARY' : 'MEETING', dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
     sign.position.set(OW + 1.1, 2.15, 0.005);
     this.room.add(sign);
@@ -1050,8 +1079,9 @@ export class Office3D extends window.Office {
   // centre button (or 0) puts the camera back. Turning always pivots on the
   // point in the middle of the view, so it follows wherever you slid to.
   viewControls() {
-    // Touching the camera yourself ends any spotlight (and keeps your view).
-    const mine = () => { if (this.spot || (this.spotQ && this.spotQ.length)) { this.spotCancel(); this.spotSaved = null; } };
+    // Touching the camera yourself ends any spotlight; the view still goes
+    // back to where it was before it.
+    const mine = () => { if (this.spot || (this.spotQ && this.spotQ.length)) this.spotCancel(); };
     this.canvas.addEventListener('pointerdown', mine);
     this.canvas.addEventListener('wheel', mine, { passive: true });
     this.canvas.addEventListener('wheel', (e) => {
@@ -1096,23 +1126,24 @@ export class Office3D extends window.Office {
 
   // Slides the view by screen pixels: positive x shows more of the right.
   panView(dx, dy) {
+    this.spotCancel(); this.spotRestoreNow();
     this.fly = null;
-    this.spotCancel(); this.spotSaved = null;
     this.controls._pan(-dx, -dy);
   }
 
   resetView() {
     if (!this.room) return;
-    this.spotCancel(); this.spotSaved = null;
-    this.controls._panOffset.set(0, 0, 0); // drop momentum left from earlier slides
-    const from = this.controls.target.clone();
+    this.spotCancel(); this.spotRestoreNow();
+    this.calmControls(); // drop momentum left from earlier drags
+    const from = this.controls.target.clone(), zoomFrom = this.camera.zoom;
     this.fitCamera3D(true);
-    // Glide back instead of jumping.
-    const to = this.controls.target.clone();
-    const shift = from.clone().sub(to);
-    this.camera.position.add(shift);
+    // Glide back (place and zoom) instead of jumping.
+    const to = this.controls.target.clone(), zoomTo = this.camera.zoom;
+    this.camera.position.add(from.clone().sub(to));
     this.controls.target.copy(from);
-    this.fly = { from, to, t0: performance.now() };
+    this.camera.zoom = zoomFrom;
+    this.camera.updateProjectionMatrix();
+    this.fly = { from, to, t0: performance.now(), ms: 700, inOut: true, zoomFrom, zoomTo };
   }
 
   // Where a pointer meets the floor.
@@ -1131,25 +1162,66 @@ export class Office3D extends window.Office {
     this.fly = { from, to: new THREE.Vector3(x, from.y, z), t0: performance.now() };
   }
 
+  // OrbitControls keeps easing out the last drag (damping); stop that so a
+  // spotlight or the glide back lands exactly.
+  calmControls() {
+    const c = this.controls;
+    c._panOffset.set(0, 0, 0);
+    if (c._sphericalDelta) c._sphericalDelta.set(0, 0, 0);
+    if (c._scale != null) c._scale = 1;
+  }
+
+  // Back to the view from before the spotlight, at once.
+  spotRestoreNow() {
+    const s = this.spotSaved;
+    if (!s) return;
+    const t = this.controls.target;
+    this.camera.position.add(s.target.clone().sub(t));
+    t.copy(s.target);
+    this.camera.zoom = s.zoom;
+    this.camera.updateProjectionMatrix();
+    this.spotSaved = null;
+  }
+
   // Runs after OrbitControls each frame: glides, then keeps the pivot over the room.
   steerView() {
     const t = this.controls.target;
     const move = new THREE.Vector3();
-    // Spotlight: close in on them and follow; afterwards glide back to your view.
+    const now = performance.now();
+    const dt = Math.min(0.1, Math.max(0, (now - (this.steerAt || now)) / 1000));
+    this.steerAt = now;
+    // Spotlight: close in on them so about 8 tiles fill the part of the
+    // window you can see, keep them in its middle while they walk, then
+    // glide back to exactly the view you had.
     const sp = this.spotPerson();
     if (sp) {
-      if (!this.spotSaved) this.spotSaved = { target: t.clone(), zoom: this.camera.zoom };
+      if (!this.spotSaved) { this.spotSaved = { target: t.clone(), zoom: this.camera.zoom, at: now }; this.calmControls(); }
+      // Ease in over about a second: the zoom follows an S curve, and the
+      // camera only gradually starts chasing them.
+      const ramp = glide(this.spotSaved.at, now, 1200, true);
       this.fly = null;
-      move.set((sp.x - t.x) * 0.08, 0, (sp.y - t.z) * 0.08);
-      const z = Math.min(this.controls.maxZoom, Math.max(this.spotSaved.zoom * 1.9, 2.4));
-      this.camera.zoom += (z - this.camera.zoom) * 0.08;
+      const f = this.spotFrame();
+      const fw = this.camera.right - this.camera.left, fh = this.camera.top - this.camera.bottom;
+      const want = Math.min(this.controls.maxZoom, Math.max(this.spotSaved.zoom * 1.2, Math.min(f.w * fw / (8 * this.cw), f.h * fh / (6 * this.ch))));
+      const k = 1 - Math.exp(-dt * (0.8 + 2.7 * ramp));
+      this.camera.zoom = this.spotSaved.zoom + (want - this.spotSaved.zoom) * ramp;
       this.camera.updateProjectionMatrix();
+      // Where they are on screen now, and how far that is from where they
+      // should be; slide the view by that much (eased).
+      this.camera.updateMatrixWorld(true);
+      const v = new THREE.Vector3(sp.x, 0.5, sp.y).project(this.camera);
+      const ex = (v.x + 1) / 2 * this.cw - f.x, ey = (1 - v.y) / 2 * this.ch - f.y;
+      const wpp = fw / this.camera.zoom / this.cw;
+      const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+      const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+      move.addScaledVector(right, ex * wpp * k).addScaledVector(up, -ey * wpp * k);
     } else if (this.spotSaved) {
-      this.fly = { from: t.clone(), to: this.spotSaved.target, t0: performance.now(), zoomFrom: this.camera.zoom, zoomTo: this.spotSaved.zoom };
+      this.calmControls();
+      this.fly = { from: t.clone(), to: this.spotSaved.target, t0: now, ms: 1100, inOut: true, zoomFrom: this.camera.zoom, zoomTo: this.spotSaved.zoom };
       this.spotSaved = null;
     }
     if (this.fly) {
-      const k = glide(this.fly.t0, performance.now());
+      const k = glide(this.fly.t0, now, this.fly.ms, this.fly.inOut);
       move.lerpVectors(this.fly.from, this.fly.to, k).sub(t);
       if (this.fly.zoomTo) { this.camera.zoom = this.fly.zoomFrom + (this.fly.zoomTo - this.fly.zoomFrom) * k; this.camera.updateProjectionMatrix(); }
       if (k >= 1) this.fly = null;
@@ -1371,7 +1443,7 @@ export class Office3D extends window.Office {
         pingpong: 'interact-right', vending: 'interact-right', fridge: 'interact-left', sink: 'interact-right',
         cheer: 'emote-yes', facepalm: 'emote-no', yawn: 'idle', deliver: 'pick-up', unpack: 'interact-right',
         fix: 'interact-left', refill: 'interact-right', waterplant: 'holding-right', pin: 'interact-right', peek: 'idle',
-      }[st.pose === 'walk' ? 'walk' : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
+      }[st.pose === 'walk' ? (st.act === 'run' ? 'run' : 'walk') : st.act] || (st.pose === 'sit' ? 'sit' : 'idle');
       let chosen = anim;
       if (st.act === 'station') chosen = p.s.status === 'thinking' ? 'idle' : (p.desk.anim || 'interact-right');
       else if (st.pose !== 'walk' && p.poi && p.poi.anim) chosen = p.poi.anim;
@@ -1585,33 +1657,10 @@ export class Office3D extends window.Office {
     }
   }
 
-  // The company sign, today's notes, a jammed printer, lunch and cake.
+  // Today's notes, a jammed printer, lunch and cake.
   officeLife() {
     if (this.plan.scene || !this.plan.lift) return;
     const now = Date.now();
-    const co = this.company || '';
-    if (co !== this.companyShown && this.room) {
-      if (this.companySign) { this.room.remove(this.companySign); this.companySign.geometry.dispose(); this.companySign = null; }
-      const y0 = this.plan.board ? this.plan.board.y : 6.2;
-      const w = Math.min(3.2, Math.max(1.6, co.length * 0.32 + 0.6));
-      if (co && y0 + 2 < this.plan.lift.y - 0.7) {
-        const cv = document.createElement('canvas');
-        cv.width = 512; cv.height = Math.round(512 * 0.5 / w);
-        const c = cv.getContext('2d');
-        c.fillStyle = '#2f3542'; c.fillRect(0, 0, cv.width, cv.height);
-        c.strokeStyle = '#ffd98a'; c.lineWidth = 6; c.strokeRect(6, 6, cv.width - 12, cv.height - 12);
-        c.fillStyle = '#ffd98a'; c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.font = `900 ${Math.round(cv.height * 0.58)}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`;
-        c.fillText(co, cv.width / 2, cv.height / 2 + 2, cv.width - 40);
-        const tex = new THREE.CanvasTexture(cv);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        this.companySign = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.5), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.35 }));
-        this.companySign.rotation.y = Math.PI / 2;
-        this.companySign.position.set(0.012, 2.0, y0 + w / 2);
-        this.room.add(this.companySign);
-      }
-      this.companyShown = co;
-    }
     const n = Math.min(12, this.boardNotes || 0);
     if (this.boardAt && n !== this.boardShown) {
       this.boardGroup.clear();

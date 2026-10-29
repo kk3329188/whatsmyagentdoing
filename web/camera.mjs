@@ -27,8 +27,10 @@ export function keyPan(key) {
   return { ArrowLeft: [-PAN_STEP, 0], ArrowRight: [PAN_STEP, 0], ArrowUp: [0, -PAN_STEP], ArrowDown: [0, PAN_STEP] }[key] || null;
 }
 
-// Eased position of a camera glide, 0..1 over `ms`.
-export function glide(t0, now, ms = 450) {
+// Eased position of a camera glide, 0..1 over `ms`: ease-out, or
+// ease-in-out (`inOut`) for the slower glide back from a spotlight.
+export function glide(t0, now, ms = 450, inOut = false) {
   const k = Math.min(1, Math.max(0, (now - t0) / ms));
+  if (inOut) return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
   return 1 - Math.pow(1 - k, 3);
 }

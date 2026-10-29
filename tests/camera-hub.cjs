@@ -38,3 +38,11 @@ test('a glide eases from 0 to 1 and stays there', async () => {
   assert.equal(glide(1000, 1450), 1);
   assert.equal(glide(1000, 9999), 1);
 });
+
+test('the glide back from a spotlight eases in and out', async () => {
+  const { glide } = await load();
+  assert.ok(glide(0, 100, 1000, true) < 0.01, 'starts slowly');
+  assert.equal(glide(0, 500, 1000, true), 0.5);
+  assert.ok(glide(0, 900, 1000, true) > 0.98, 'settles gently');
+  assert.equal(glide(0, 1000, 1000, true), 1);
+});

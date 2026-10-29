@@ -248,6 +248,16 @@
 
   const company = () => String(store.get('company', '') || '').trim().slice(0, 24);
 
+  // ---- the boss walks in (everyone looks busy) and leaves again
+
+  const bossIn = () => store.get('boss', false) === true;
+  function toggleBoss() {
+    store.set('boss', !bossIn());
+    toast(bossIn() ? '👔 老闆回來了：大家跑回座位假裝做事（B 鍵切換）' : '🚶 老闆走了：大家回去做自己的事');
+    renderTools();
+    if (opts.onChange) opts.onChange();
+  }
+
   // ---- experience and unlocks
 
   const xpEl = document.createElement('div');
@@ -777,11 +787,12 @@
   function renderTools() {
     const n = state.data ? state.data.sessions.filter((s) => hidden[s.key] != null && isHidden(s)).length : 0;
     const notes = boardToday().length;
-    const sig = `${n}|${PRIVATE}|${notes}`;
+    const sig = `${n}|${PRIVATE}|${notes}|${bossIn()}`;
     if (toolsEl.dataset.sig === sig) return;
     toolsEl.dataset.sig = sig;
     toolsEl.innerHTML = PRIVATE ? '' : '<button type="button" data-tool="report">📋 今日日報</button>'
       + `<button type="button" data-tool="board">📌 佈告欄 ${notes}</button>`
+      + `<button type="button" data-tool="boss" class="${bossIn() ? 'on' : ''}" title="B 鍵也能切換">${bossIn() ? '🚶 老闆走了' : '👔 老闆回來了'}</button>`
       + (n ? `<button type="button" data-tool="unhide">🚪 ${n} 個先不顯示・全部叫回來</button>` : '')
       + '<span class="hub-muted">拖到印表機＝複製報告、白板＝釘選、咖啡機＝叫它停下、門口＝先不顯示</span>';
   }
@@ -790,6 +801,7 @@
     if (!b) return;
     if (b.dataset.tool === 'report') report();
     if (b.dataset.tool === 'board') showBoard();
+    if (b.dataset.tool === 'boss') toggleBoss();
     if (b.dataset.tool === 'unhide') { hidden = {}; store.set('hidden', hidden); renderTools(); if (opts.onChange) opts.onChange(); }
   });
 
@@ -798,7 +810,7 @@
   let PRIVATE = false;
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
-    command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company,
+    command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
     get openKey() { return openKey; },

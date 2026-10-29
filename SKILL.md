@@ -97,3 +97,5 @@ log 是從尾巴讀的，所以已記錄過的 session 重啟後只算之後的�
 同一個桌面 session 的多段 log：/clear 等會以同一個 `bridge-session` 的 bridgeSessionId 開新 log；server.js `latestSegments()` 只留桌面 meta 指著的那段（沒有就最新那段），子代理改掛到現行那段。
 
 鏡頭跟拍：office.js `spotlight(key)`（update() 在開工／做完時呼叫，佇列最多 3、同人 60 秒一次、只在看得見的樓層）、`spotPerson()` 給 2D `fitCamera()` 與 3D `steerView()` 用；3D 跟拍前存下視角，結束後用 `fly` 連 zoom 一起滑回；畫布 pointerdown／wheel、方向盤、回正都會 `spotCancel()`。開關存 `wmad.follow`。
+
+v0.9：跟拍 `spotFrame()` 取畫布在視窗中看得到的那塊（中心略往下留泡泡空間）；3D 依投影後的螢幕誤差校正 target、縮放用 1.2 秒 ease-in-out（`glide(..., inOut)`），結束或被打斷都 `fly` 回存下的 target＋zoom（`calmControls()` 清 OrbitControls 殘餘慣性）。老闆模式 `setBoss()`：`bossIn` 時 atDesk＝非等待者全部（樓層照分），`rush` 2.3 倍速跑、stateOf 假裝工作、停掉 trip／coffeeRun／life；事件與跟拍用真實 zone（假裝不算開工）。存 `wmad.boss`，B 鍵／工具列切換。公司招牌改成 `plan.logo`（後牆中段、取代該處窗戶、z 1.2–2.34 高過隔板），改名會 rebuild 平面，輸入框 600ms 防抖。
