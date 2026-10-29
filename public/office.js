@@ -417,11 +417,11 @@
       const PODX = 4.6;
       const OW = 1.3 + (podCols - 1) * PODX + 3.9; // open office width
       const OD = podRows * 4.7 + 0.8;             // open office depth (pods)
-      // In front of the pods: the games corner, vending machines, the phone
-      // booth and your desk all need their room.
+      // Both floors are as deep (the lift is in the same spot). Upstairs keeps
+      // the older plan; downstairs (the refit below) is a little wider.
       const D = Math.max(OD + 7.2, 14.5);
-      const RW = 7.2;                              // right column width
-      const W = OW + RW;
+      const W = 7.6 + (podCols - 1) * PODX + 6.2;
+      const RW = W - OW;                           // right column width (upstairs)
       const MR = 5.2;                              // meeting room depth
       const PY = 9.9;                              // pantry / lounge boundary
       const grid = new Grid(W, D);
@@ -453,9 +453,9 @@
       };
 
       // ---- cubicle pods: 4 desks back to back with a divider
-      const cubicles = (count) => { for (let p = 0; p < count; p++) {
+      const cubicles = (count, x0 = 1.3) => { for (let p = 0; p < count; p++) {
         const c = p % podCols, r = Math.floor(p / podCols);
-        const px = 1.3 + c * PODX, py = 2.0 + r * 4.7;
+        const px = x0 + c * PODX, py = 2.0 + r * 4.7;
         const panel = PANEL[p % PANEL.length];
         podSpots.push({ x: px, y: py, color: panel });
         for (let k = 0; k < 2; k++) {
@@ -474,8 +474,11 @@
         prop('pendant', { x: px + 1.45, y: py + 0.86, span: 1.5 });
         prop('planter', { x: px + 0.2, y: py + 0.82, w: 2.4 });
       } };
-      const aisles = [];
-      for (let c = 0; c + 1 < Math.min(podCols, pods); c++) aisles.push({ x: 1.3 + c * PODX + 3.12, w: PODX - 3.4 });
+      const aislesFrom = (x0) => {
+        const out = [];
+        for (let c = 0; c + 1 < Math.min(podCols, pods); c++) out.push({ x: x0 + c * PODX + 3.12, w: PODX - 3.4 });
+        return out;
+      };
       // The lift on the left wall, the same spot on both floors.
       const lift = { x: 0.55, y: D - 3.0 };
       prop('lift', { y: lift.y });
@@ -484,86 +487,63 @@
         // Always a spare desk or two, as downstairs (else every update would
         // lay the floor out again and send everyone walking).
         cubicles(Math.max(1, Math.ceil((nWorking + 2) / 4)));
-        return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots, aisles };
+        return { ...this.upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots, aisles: aislesFrom(1.3) };
       }
-      cubicles(pods);
+      // ---- Downstairs (the 2026 refit). Back left: the meeting room behind
+      // glass; back right, under the windows: the work area; left middle: the
+      // play corner; across the front, one long "street": your desk by the
+      // front door, the lounge, then the cafe.
+      const WX = 6.6;                 // the work area starts here
+      const PX0 = WX + 1.0;           // first pod
+      const FY = D - 6.4;             // where the front street starts
+      const MW = 6.0, MD = 5.0;       // meeting room
+      const LX0 = WX + 0.2, LX1 = W - 5.8; // lounge
+      const CX0 = LX1 + 0.2;          // cafe
+      cubicles(pods, PX0);
+      const aisles = aislesFrom(PX0);
+      const floors = [
+        { kind: 'wood', x: 0, y: 0, w: W, d: D },
+        { kind: 'carpet', x: 0, y: 0, w: MW, d: MD },
+        { kind: 'work', x: WX, y: 0, w: W - WX, d: FY - 0.3 },
+        { kind: 'tiles', x: CX0, y: FY - 0.3, w: W - CX0, d: D - FY + 0.3 },
+      ];
 
-      // ---- open office extras
-      const rx = OW - 1.15;
+      // ---- work area extras: server rack and printer against the back wall
+      const rx = W - 1.0;
       add(rx + 0.35 + 0.5, () => this.serverRack(rx, 0.2));
       prop('rack', { x: rx, y: 0.2 });
-      prop('printer', { x: OW - 2.3, y: 0.25 });
       solid(rx, 0.2, 0.7, 0.6);
-      add(OW - 2.3 + 0.3 + 0.5, () => this.printer(OW - 2.3, 0.25));
-      solid(OW - 2.3, 0.25, 0.75, 0.55);
-      poi(OW - 1.95, 1.15, 'printer', 'back');
+      const prx = W - 2.4;
+      prop('printer', { x: prx, y: 0.25 });
+      add(prx + 0.3 + 0.5, () => this.printer(prx, 0.25));
+      solid(prx, 0.25, 0.75, 0.55);
+      poi(prx + 0.35, 1.15, 'printer', 'back');
       // Someone who hit an error stands at the server rack, scratching their head.
       poi(rx + 0.35, 1.1, 'rack', 'back', { zone: 'error' });
-      poi(OW - 1.95, 1.1, 'rack', 'back', { zone: 'error' });
-      poi(rx - 0.55, 1.05, 'rack', 'back', { zone: 'error' });
-      for (const [x, y] of [[0.45, 0.45], [0.45, OD - 0.2]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
-      // The company's name, big on the back wall over the open office
-      // (windows give way to it).
-      const logo = this.company ? { x: Math.max(0.6, OW / 2 - 1.6), w: 3.2 } : null;
+      poi(prx + 0.35, 1.1, 'rack', 'back', { zone: 'error' });
+      poi(rx - 0.4, 1.6, 'rack', 'back', { zone: 'error' });
+      for (const [x, y] of [[WX + 0.45, FY - 0.75], [W - 0.45, FY - 0.75], [W - 0.45, 2.2]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
+      // The company's name, big on the back wall over the work area.
+      const logo = this.company ? { x: Math.max(WX + 0.4, (WX + W) / 2 - 1.8), w: 3.2 } : null;
       const clearOfLogo = (x) => !logo || x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1;
       const windows = [];
-      for (let x = 1.0; x < OW - 2.6; x += 2.4) {
+      for (let x = WX + 0.3; x < W - 2.7; x += 2.4) {
         if (!clearOfLogo(x)) continue;
         windows.push(x);
         poi(x + 0.75, 0.75, 'window', 'back');
       }
-      poi(0.95, OD - 0.2, 'plant', 'back');
 
-      // ---- ping-pong corner
-      const tx = 2.4, ty = OD + 1.0;
-      add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
-      prop('pingpong', { x: tx, y: ty });
-      solid(tx, ty, 2.6, 1.4, 0.05);
-      poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
-      poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
-      const pp = { x0: tx - 0.2, x1: tx + 2.8, y: ty + 0.7 };
-
-      // ---- front corner: vending machines, foosball, phone booth
-      const fy = OD + 3.7;
-      if (D - fy >= 3.4) {
-        add(0.5 + fy + 0.4, () => this.vending(0.12, fy, '#c0392b'));
-        prop('vending', { x: 0.12, y: fy, color: '#c0392b' });
-        prop('vending', { x: 0.12, y: fy + 0.8, color: '#2f6fb0' });
-        add(0.5 + fy + 1.2, () => this.vending(0.12, fy + 0.8, '#2f6fb0'));
-        solid(0.1, fy, 0.75, 1.55);
-        poi(1.3, fy + 0.4, 'vending', 'back');
-        poi(1.3, fy + 1.2, 'vending', 'back');
-      }
-      if (D - fy >= 2.2) {
-        const fx = 3.0, fby = fy + 0.4;
-        add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
-        prop('foosball', { x: fx, y: fby });
-        solid(fx, fby, 1.6, 0.8, 0.05);
-        poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
-        poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
-        const bx = OW - 2.0, by = fy;
-        this.booth(add, bx, by);
-        prop('booth', { x: bx, y: by });
-        solid(bx - 0.05, by - 0.05, 1.4, 0.1, 0.03);
-        solid(bx - 0.05, by - 0.05, 0.1, 1.4, 0.03);
-        solid(bx + 1.25, by - 0.05, 0.1, 1.4, 0.03);
-        solid(bx + 0.85, by + 1.25, 0.5, 0.1, 0.03);
-        poi(bx + 0.65, by + 0.6, 'phone', 'front', { sit: 0.45 });
-        add(OW - 0.45 + D - 0.6, () => this.plant(OW - 0.45, D - 0.6));
-        prop('plant', { x: OW - 0.45, y: D - 0.6 });
-      }
-
-      // ---- meeting room behind glass, door at y 3.6–4.6
-      const mx = OW;
-      for (const [y, d] of [[0, 1], [1, 1], [2, 1], [3, 0.6], [4.6, MR - 4.6]]) this.glassX(add, mx, y, d);
-      for (let x = mx; x < W - 0.01; x += 1) this.glassY(add, x, MR, Math.min(1, W - x));
-      prop('glass', { x: mx, y: 0, w: 0, d: 3.6 });
-      prop('glass', { x: mx, y: 4.6, w: 0, d: MR - 4.6 });
-      prop('glass', { x: mx, y: MR, w: RW, d: 0 });
-      solid(mx - 0.05, 0, 0.1, 3.6, 0.05);
-      solid(mx - 0.05, 4.6, 0.1, MR - 4.6, 0.05);
-      solid(mx, MR - 0.05, RW, 0.1, 0.05);
-      const mtx = mx + 1.6, mty = 1.7;
+      // ---- the meeting room (glass on two sides, door at the front)
+      const mDoor = { x0: MW - 1.4, x1: MW - 0.4 };
+      for (let y = 0; y < MD - 0.01; y += 1) this.glassX(add, MW, y, Math.min(1, MD - y));
+      for (const [x0, x1] of [[0, mDoor.x0], [mDoor.x1, MW]]) for (let x = x0; x < x1 - 0.01; x += 1) this.glassY(add, x, MD, Math.min(1, x1 - x));
+      prop('glass', { x: MW, y: 0, w: 0, d: MD });
+      prop('glass', { x: 0, y: MD, w: mDoor.x0, d: 0 });
+      prop('glass', { x: mDoor.x1, y: MD, w: MW - mDoor.x1, d: 0 });
+      solid(MW - 0.05, 0, 0.1, MD, 0.05);
+      solid(0, MD - 0.05, mDoor.x0, 0.1, 0.05);
+      solid(mDoor.x1, MD - 0.05, MW - mDoor.x1, 0.1, 0.05);
+      const mtx = 1.4, mty = 1.7;
       add(mtx + 1.5 + mty + 0.7, () => this.meetingTable(mtx, mty));
       prop('meetingTable', { x: mtx, y: mty, w: 3.0, d: 1.4 });
       prop('pendant', { x: mtx + 1.5, y: mty + 0.7, span: 1.2 });
@@ -577,34 +557,71 @@
         prop('chair', { x: cx, y: mty + 1.8, face: 'back' });
         poi(cx, mty + 1.8, 'meeting', 'back', { sit: 0.42, zone: 'wait' });
       }
-      poi(mx + 3.6, 0.65, 'whiteboard', 'back', { zone: 'wait' });
+      const whiteboard = { x: 1.6 };
+      poi(whiteboard.x + 1.3, 0.65, 'whiteboard', 'back', { zone: 'wait' });
       // Waited long enough: stand at the glass door looking out for you.
-      poi(mx + 0.55, 4.1, 'peek', 'front', { zone: 'wait', restless: true });
-      poi(mx + 0.55, 3.2, 'peek', 'front', { zone: 'wait', restless: true });
-      add(W - 0.45 + 0.45, () => this.plant(W - 0.45, 0.45));
-      prop('plant', { x: W - 0.45, y: 0.45 });
-      solid(W - 0.65, 0.25, 0.4, 0.4);
+      poi((mDoor.x0 + mDoor.x1) / 2, MD - 0.5, 'peek', 'front', { zone: 'wait', restless: true });
+      poi(MW - 0.5, MD - 1.3, 'peek', 'front', { zone: 'wait', restless: true });
+      add(MW - 0.45 + 0.45, () => this.plant(MW - 0.45, 0.45));
+      prop('plant', { x: MW - 0.45, y: 0.45 });
+      solid(MW - 0.65, 0.25, 0.4, 0.4);
 
-      // ---- pantry
-      const cy = MR + 0.3;
-      longBox(mx + 1.0, cy, 0, RW - 2.3, 0.7, 0.9, pal.counter, pal.counterL, pal.counterR, { bias: -0.5 });
-      solid(mx + 1.0, cy, RW - 2.3, 0.7);
-      prop('counter', { x: mx + 1.0, y: cy, w: RW - 2.3, d: 0.7 });
-      prop('coffee', { x: mx + 2.4, y: cy + 0.12 });
-      prop('sink', { x: mx + 3.9, y: cy + 0.12 });
-      prop('fridge', { x: W - 1.15, y: cy });
-      prop('cooler', { x: mx + 0.35, y: cy + 0.05 });
-      add(mx + 2.65 + cy + 0.35, () => this.coffeeMachine(mx + 2.4, cy + 0.12));
-      add(mx + 4.15 + cy + 0.35, () => this.sink(mx + 3.9, cy + 0.12));
-      add(W - 0.75 + cy + 0.4, () => this.fridge(W - 1.15, cy));
-      solid(W - 1.15, cy, 0.85, 0.75);
-      add(mx + 0.55 + cy + 0.25, () => this.waterCooler(mx + 0.35, cy + 0.05));
-      solid(mx + 0.3, cy, 0.5, 0.5);
-      poi(mx + 2.65, cy + 1.2, 'coffee', 'back', { zone: 'done' });
-      poi(mx + 4.15, cy + 1.2, 'sink', 'back', { zone: 'done' });
-      poi(W - 0.75, cy + 1.3, 'fridge', 'back', { zone: 'done' });
-      poi(mx + 0.6, cy + 0.95, 'water', 'back', { zone: 'done' });
-      const rtx = mx + 3.6, rty = MR + 2.9;
+      // ---- the play corner: ping-pong, foosball, vending machines
+      const tx = 1.5, ty = MD + 1.1;
+      add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
+      prop('pingpong', { x: tx, y: ty });
+      solid(tx, ty, 2.6, 1.4, 0.05);
+      poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
+      poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
+      const pp = { x0: tx - 0.2, x1: tx + 2.8, y: ty + 0.7 };
+      floors.push({ kind: 'mat', x: pp.x0 - 0.6, y: pp.y - 1.4, w: pp.x1 - pp.x0 + 1.2, d: 2.7 });
+      const vy = FY - 2.1;
+      add(0.5 + vy + 0.4, () => this.vending(0.12, vy, '#c0392b'));
+      prop('vending', { x: 0.12, y: vy, color: '#c0392b' });
+      prop('vending', { x: 0.12, y: vy + 0.8, color: '#2f6fb0' });
+      add(0.5 + vy + 1.2, () => this.vending(0.12, vy + 0.8, '#2f6fb0'));
+      solid(0.1, vy, 0.75, 1.55);
+      poi(1.3, vy + 0.4, 'vending', 'back');
+      poi(1.3, vy + 1.2, 'vending', 'back');
+      const fx = 3.0, fby = vy + 0.4;
+      add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
+      prop('foosball', { x: fx, y: fby });
+      solid(fx, fby, 1.6, 0.8, 0.05);
+      poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+      poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+
+      // ---- the front street, left: the phone booth by the front door
+      const bx = WX - 1.6, by = FY + 0.3;
+      this.booth(add, bx, by);
+      prop('booth', { x: bx, y: by });
+      solid(bx - 0.05, by - 0.05, 1.4, 0.1, 0.03);
+      solid(bx - 0.05, by - 0.05, 0.1, 1.4, 0.03);
+      solid(bx + 1.25, by - 0.05, 0.1, 1.4, 0.03);
+      solid(bx + 0.85, by + 1.25, 0.5, 0.1, 0.03);
+      poi(bx + 0.65, by + 0.6, 'phone', 'front', { sit: 0.45 });
+
+      // ---- the cafe, front right: counter with its back to the work area
+      const cy = FY - 0.1;
+      const cw = W - CX0 - 2.0;
+      longBox(CX0 + 0.9, cy, 0, cw, 0.7, 0.9, pal.counter, pal.counterL, pal.counterR, { bias: -0.5 });
+      solid(CX0 + 0.9, cy, cw, 0.7);
+      prop('counter', { x: CX0 + 0.9, y: cy, w: cw, d: 0.7 });
+      const cfx = CX0 + 1.3, skx = CX0 + 0.9 + cw - 1.1;
+      prop('coffee', { x: cfx, y: cy + 0.12 });
+      prop('sink', { x: skx, y: cy + 0.12 });
+      prop('fridge', { x: W - 1.0, y: cy });
+      prop('cooler', { x: CX0 + 0.3, y: cy + 0.05 });
+      add(cfx + 0.25 + cy + 0.35, () => this.coffeeMachine(cfx, cy + 0.12));
+      add(skx + 0.25 + cy + 0.35, () => this.sink(skx, cy + 0.12));
+      add(W - 0.6 + cy + 0.4, () => this.fridge(W - 1.0, cy));
+      solid(W - 1.0, cy, 0.85, 0.75);
+      add(CX0 + 0.5 + cy + 0.25, () => this.waterCooler(CX0 + 0.3, cy + 0.05));
+      solid(CX0 + 0.25, cy, 0.5, 0.5);
+      poi(cfx + 0.25, cy + 1.2, 'coffee', 'back', { zone: 'done' });
+      poi(skx + 0.25, cy + 1.2, 'sink', 'back', { zone: 'done' });
+      poi(W - 0.6, cy + 1.3, 'fridge', 'back', { zone: 'done' });
+      poi(CX0 + 0.55, cy + 0.95, 'water', 'back', { zone: 'done' });
+      const rtx = CX0 + 2.7, rty = cy + 3.4;
       add(rtx + rty, () => this.roundTable(rtx, rty));
       prop('roundTable', { x: rtx, y: rty });
       prop('pendant', { x: rtx, y: rty, span: 0 });
@@ -614,17 +631,20 @@
         poi(sx, sy, 'stool', face, { sit: 0.47, zone: 'done' });
         prop('barStool', { x: sx, y: sy });
       }
+      add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
+      prop('plant', { x: W - 0.5, y: D - 0.5 });
+      solid(W - 0.7, D - 0.7, 0.4, 0.4);
 
-      // ---- lounge
-      const lx = mx + 0.6, ly = PY + 0.4;
-      const shelfX = mx + 3.4, shelfW = RW - 3.6;
-      longBox(shelfX, PY - 0.25, 0, shelfW, 0.45, 1.45, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR, {
-        extra: (x0, x1) => this.books(x0, x1, PY + 0.2),
+      // ---- the lounge, front middle: a bookcase screens it from the desks
+      const shelfX = LX0 + 0.3, shelfW = Math.min(3.6, LX1 - LX0 - 1.6), PYs = FY - 0.15;
+      longBox(shelfX, PYs - 0.25, 0, shelfW, 0.45, 1.45, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR, {
+        extra: (x0, x1) => this.books(x0, x1, PYs + 0.2),
       });
-      solid(shelfX, PY - 0.25, shelfW, 0.45);
-      prop('shelf', { x: shelfX, y: PY - 0.25, w: shelfW, d: 0.45 });
-      poi(mx + 4.6, PY + 0.75, 'read', 'back', { zone: 'idle' });
-      poi(mx + 5.8, PY + 0.75, 'read', 'back', { zone: 'idle' });
+      solid(shelfX, PYs - 0.25, shelfW, 0.45);
+      prop('shelf', { x: shelfX, y: PYs - 0.25, w: shelfW, d: 0.45 });
+      poi(shelfX + 1.0, PYs + 0.75, 'read', 'back', { zone: 'idle' });
+      poi(shelfX + 2.4, PYs + 0.75, 'read', 'back', { zone: 'idle' });
+      const lx = LX0 + 0.6, ly = FY + 0.8;
       add(lx + ly + 0.6, () => this.couch(lx, ly + 0.6));
       prop('couch', { x: lx, y: ly + 0.6, w: 2.8, d: 0.8 });
       prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
@@ -639,29 +659,27 @@
       add(lx + 2.6 + ly + 3.6, () => this.beanbag(lx + 2.6, ly + 3.6, '#7d93c4'));
       poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
       poi(lx + 2.6, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
-      const ax = W - 1.2, ay = ly + 1.0;
+      const ax = LX1 - 0.9, ay = FY + 0.4;
       add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
       prop('arcade', { x: ax, y: ay });
-      prop('plant', { x: W - 0.5, y: D - 0.5 });
-      prop('lamp', { x: lx - 0.2, y: D - 0.6 });
-      prop('rug', { x: OW + 0.3, y: PY + 0.6, w: 4.0, d: D - PY - 1.0 });
       solid(ax, ay, 0.7, 0.7);
       poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
-      add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
-      add(lx - 0.2 + D - 0.6, () => this.floorLamp(lx - 0.2, D - 0.6));
+      prop('lamp', { x: lx - 0.3, y: D - 0.6 });
+      add(lx - 0.3 + D - 0.6, () => this.floorLamp(lx - 0.3, D - 0.6));
+      floors.push({ kind: 'rug', x: lx - 0.3, y: ly + 0.2, w: 4.0, d: D - ly - 0.6 });
 
       // ---- unlocked by the office's experience (setProgress)
       const un = this.unlocks || new Set();
       // Only on floor nothing else stands on, so no path is cut off.
       const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
       if (un.has('plants')) {
-        for (const [x, y] of [[W - 0.45, MR - 0.55], [W - 0.45, PY - 0.9], [0.45, 1.6]]) {
+        for (const [x, y] of [[MW - 0.45, MD + 0.5], [WX + 0.45, 2.0], [LX1 - 0.4, D - 0.5]]) {
           if (!fits(x - 0.2, y - 0.2, 0.4, 0.4)) continue;
           add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4);
         }
       }
       if (un.has('tv')) {
-        const vx = mx + 4.1, vy = ly + 2.8;
+        const vx = lx + 3.2, vy = ly + 2.2;
         if (fits(vx, vy, 1.1, 0.4)) {
           add(vx + 0.55 + vy + 0.2, () => this.tv(vx, vy));
           prop('tv', { x: vx, y: vy });
@@ -669,22 +687,26 @@
           poi(vx + 0.55, Math.min(D - 0.3, vy + 1.05), 'tv', 'back', { zone: 'idle' });
         }
       }
-      if (un.has('trophy') && fits(0.1, 3.2, 0.45, 0.9)) {
-        add(0.32 + 3.65, () => this.trophyCase(0.1, 3.2));
-        prop('trophy', { x: 0.1, y: 3.2 });
-        solid(0.1, 3.2, 0.45, 0.9);
-        poi(0.95, 3.65, 'trophy', 'back', { yaw: -Math.PI / 2 });
+      if (un.has('trophy') && fits(0.1, MD + 0.3, 0.45, 0.9)) {
+        add(0.32 + MD + 0.75, () => this.trophyCase(0.1, MD + 0.3));
+        prop('trophy', { x: 0.1, y: MD + 0.3 });
+        solid(0.1, MD + 0.3, 0.45, 0.9);
+        poi(0.95, MD + 0.75, 'trophy', 'back', { yaw: -Math.PI / 2 });
       }
-      const neon = un.has('neon') ? { x: logo ? (logo.x > 2.8 ? 0.5 : logo.x + logo.w + 0.3) : Math.max(1.2, OW / 2 - 1.2), text: 'SHIP IT ✦' } : null;
+      const neon = un.has('neon') ? { x: logo && logo.x + logo.w + 2.6 < W - 2.6 ? logo.x + logo.w + 0.3 : WX + 0.4, text: 'SHIP IT ✦' } : null;
       if (neon) prop('neon', neon);
-
       // A coat rack by the front door, an armchair by the lounge lamp.
-      if (fits(0.2, D - 0.75, 0.5, 0.5)) { prop('coatRack', { x: 0.45, y: D - 0.5 }); solid(0.25, D - 0.7, 0.4, 0.4); }
-      if (fits(lx - 0.1, D - 1.95, 0.8, 0.8)) { prop('armchair', { x: lx - 0.1, y: D - 1.95 }); solid(lx - 0.1, D - 1.95, 0.8, 0.8); poi(lx + 0.3, D - 1.55, 'couch', 'front', { sit: 0.34, zone: 'idle' }); }
+      if (fits(0.2, D - 0.75, 0.5, 0.5)) { prop('coatRack', { x: 0.45, y: D - 0.5 }); add(0.45 + D - 0.5, () => this.coatRack(0.45, D - 0.5)); solid(0.25, D - 0.7, 0.4, 0.4); }
+      if (fits(lx - 1.2, D - 1.6, 0.8, 0.8)) {
+        prop('armchair', { x: lx - 1.2, y: D - 1.6 });
+        add(lx - 0.8 + D - 1.2, () => this.armchair(lx - 1.2, D - 1.6));
+        solid(lx - 1.2, D - 1.6, 0.8, 0.8);
+        poi(lx - 0.8, D - 1.2, 'couch', 'front', { sit: 0.34, zone: 'idle' });
+      }
 
       // ---- the notice board on the left wall: whoever finishes pins a note
       let board = null;
-      for (const by0 of [6.2, 5.6, 7.0]) {
+      for (const by0 of [FY + 0.2, MD + 1.6, MD + 0.4]) {
         if (by0 + 1.6 > lift.y - 0.8) continue;
         const spot = { x: 0.8, y: by0 + 0.8 };
         if (grid.blocked(spot.x, spot.y)) continue;
@@ -694,15 +716,16 @@
       if (board) prop('board', { y: board.y, w: board.w });
 
       // ---- your desk at the front (you sit on this side of the screen), the
-      // secretary's beside it, and a queue of whoever is waiting on you.
+      // secretary's beside it as the front desk, and a queue of whoever is
+      // waiting on you.
       let boss = null, sec = null;
-      const by = D - 1.45;
-      for (const bx of [OW - 2.3, OW - 4.0, OW / 2, 2.6]) {
-        const sx = bx - 1.7;
-        if (sx < 0.9 || !fits(bx, by, 1.4, 0.8) || !fits(sx, by, 1.4, 0.8)) continue;
-        if (grid.blocked(bx + 0.7, by + 1.25) || grid.blocked(sx + 0.7, by - 0.45)) continue;
-        boss = { x: bx, y: by, side: 's', seat: { x: bx + 0.7, y: by + 1.25 }, boss: true };
-        sec = { x: sx, y: by, side: 'n', seat: { x: sx + 0.7, y: by - 0.45 }, secretary: true };
+      const bdy = D - 1.45;
+      for (const bdx of [3.9, 4.4, 3.4, 2.6]) {
+        const sx = bdx - 1.7;
+        if (sx < 0.9 || !fits(bdx, bdy, 1.4, 0.8) || !fits(sx, bdy, 1.4, 0.8)) continue;
+        if (grid.blocked(bdx + 0.7, bdy + 1.25) || grid.blocked(sx + 0.7, bdy - 0.45)) continue;
+        boss = { x: bdx, y: bdy, side: 's', seat: { x: bdx + 0.7, y: bdy + 1.25 }, boss: true };
+        sec = { x: sx, y: bdy, side: 'n', seat: { x: sx + 0.7, y: bdy - 0.45 }, secretary: true };
         break;
       }
       const queue = [];
@@ -711,7 +734,7 @@
         prop('bossDesk', { x: boss.x, y: boss.y });
         // Line up in front of your desk, then along the floor if the way up is taken.
         let qx = boss.x + 0.7, qy = boss.y - 0.55;
-        const minY = OD + 0.3;
+        const minY = FY + 0.2;
         for (let k = 0; k < 40 && queue.length < 6; k++) {
           if (!grid.blocked(qx, qy) && qy >= minY && !(sec && Math.hypot(qx - sec.seat.x, qy - sec.seat.y) < 0.6)) queue.push({ x: qx, y: qy });
           else if (queue.length) { qx -= 0.7; continue; }
@@ -719,32 +742,46 @@
           if (qx < 0.8) break;
         }
       }
-      this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: { x: 0.4, y: D - 1.2 }, lift, seats: [...desks.map((d) => d.seat), boss && boss.seat, sec && sec.seat, ...queue].filter(Boolean) });
+      const spots = [[1.3, D - 2.3], [1.2, D - 0.6], [WX - 0.6, FY + 2.4], [LX1 - 0.6, D - 0.6], [2.4, D - 0.6], [W - 0.9, FY + 1.6],
+        [WX + 0.6, D - 0.6], [0.8, MD + 0.6], [WX + 0.5, 3.4], [W - 0.8, D - 1.8]];
+      this.decorate({ W, D, OW: W, PY: FY, grid, pois, prop, solid, add, spots, entry: { x: 0.4, y: D - 1.2 }, lift, seats: [...desks.map((d) => d.seat), boss && boss.seat, sec && sec.seat, ...queue].filter(Boolean) });
 
       // Drop someone on these to do something with their session.
       const targets = [
-        { id: 'printer', x: OW - 1.95, y: 1.15, hint: '印成報告（複製）' },
-        { id: 'whiteboard', x: mx + 3.6, y: 0.65, hint: '釘到白板上' },
-        { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
+        { id: 'printer', x: prx + 0.35, y: 1.15, hint: '印成報告（複製）' },
+        { id: 'whiteboard', x: whiteboard.x + 1.3, y: 0.65, hint: '釘到白板上' },
+        { id: 'coffee', x: cfx + 0.25, y: cy + 1.2, hint: '叫它停下這一輪' },
         { id: 'door', x: 0.9, y: D - 1.2, hint: '先不顯示，有事再出現' },
       ];
 
       const posters = [
-        { y: 2.2, color: '#c96442', text: 'SHIP IT' },
-        { y: 4.6, color: '#10a37f', text: 'TESTS ✓' },
-      ];
+        { y: MD + 1.4, color: '#c96442', text: 'SHIP IT' },
+        { y: MD + 2.6, color: '#10a37f', text: 'TESTS ✓' },
+      ].filter((ps) => !board || ps.y + 0.9 < board.y || ps.y > board.y + board.w);
+      const art = [];
+      {
+        let from = WX + 0.2;
+        for (const wx of [...windows, W - 2.6]) {
+          if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) });
+          from = wx + 1.5;
+        }
+      }
       const zones = {};
       for (const z of ZONE_ORDER) zones[z] = pois.filter((q) => q.zone === z);
       // Where each zone's floor sign goes.
       const zoneAt = {
-        work: { x: OW / 2 - 0.6, y: 1.0 },
+        work: { x: aisles.length ? aisles[0].x + aisles[0].w / 2 - 0.5 : PX0 + 1.0, y: 1.0 },
         wait: { x: mtx + 1.5, y: mty + 0.7 },
-        error: { x: rx - 0.1, y: 1.9 },
-        done: { x: mx + 1.7, y: MR + 2.3 },
+        error: { x: rx - 1.0, y: 1.9 },
+        done: { x: rtx - 0.3, y: rty - 1.6 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
       orientSeats(pois, props);
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, aisles, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
+      return {
+        W, D, OW: W, OD: FY - 0.3, MR: MD, PY: FY, RW: 0, grid, items, props, pois, desks, podSpots, aisles, floors, art,
+        whiteboard, wallSign: { x: 0.4, text: 'MEETING' }, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift,
+        floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true,
+      };
     }
 
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
@@ -887,7 +924,6 @@
       }
       add(W - 0.5 + D - 0.5, () => this.plant(W - 0.5, D - 0.5));
       prop('plant', { x: W - 0.5, y: D - 0.5 });
-      prop('rug', { x: OW + 0.3, y: PY + 0.6, w: 4.0, d: D - PY - 1.0 });
 
       const posters = [{ y: 2.2, color: '#7fb08a', text: 'BREAK' }, { y: 4.6, color: '#7d93c4', text: 'RECHARGE' }];
       const zones = {};
@@ -900,7 +936,17 @@
       ];
       this.decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry: lift, lift, seats: desks.map((d) => d.seat) });
       orientSeats(pois, props);
-      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
+      const floors = [
+        { kind: 'wood', x: 0, y: 0, w: W, d: D },
+        { kind: 'work', x: 0, y: 0, w: OW, d: OD + 0.2 },
+        { kind: 'carpet', x: OW, y: 0, w: W - OW, d: MR },
+        { kind: 'tiles', x: OW, y: MR, w: W - OW, d: PY - MR },
+        { kind: 'rug', x: OW + 0.3, y: PY + 0.6, w: 4.0, d: D - PY - 1.0 },
+        { kind: 'mat', x: pp.x0 - 0.6, y: pp.y - 1.4, w: pp.x1 - pp.x0 + 1.2, d: 2.7 },
+      ];
+      const art = [];
+      { let from = 0.3; for (const wx of [...windows, OW - 0.3]) { if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) }); from = wx + 1.5; } }
+      return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, floors, art, whiteboard: null, wallSign: { x: OW + 0.5, text: 'LIBRARY' }, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
 
     // The sign over your desk: how many are waiting in line.
@@ -2551,76 +2597,84 @@
 
     // ------------------------------------------------------------ room shell
 
-    drawRoom() {
-      const { W, D, OW, MR, PY, pp } = this.plan;
+    // One region of floor: wood planks, carpet, tiles, the work area's carpet
+    // tiles, the play mat or a rug.
+    floorPatch({ kind, x: fx, y: fy, w: fw, d: fd }) {
       const pal = this.pal;
       const P = (x, y, z) => this.iso(x, y, z);
-      const t = this.t / 1000;
-
-      // floors: wood office, carpet meeting room, tiled pantry, wood lounge
-      for (let x = 0; x < Math.ceil(OW); x++) {
-        for (let y = 0; y < Math.ceil(D); y++) {
-          const x1 = Math.min(OW, x + 1), y1 = Math.min(D, y + 1);
-          this.poly([P(x, y), P(x1, y), P(x1, y1), P(x, y1)], (x + y) % 2 ? pal.wood1 : pal.wood2);
+      const X1 = fx + fw, Y1 = fy + fd;
+      const rect = (x0, y0, x1, y1, fill, stroke) => this.poly([P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1)], fill, stroke);
+      const c = this.ctx;
+      if (kind === 'wood') {
+        for (let x = Math.floor(fx); x < X1; x++) for (let y = Math.floor(fy); y < Y1; y++) {
+          rect(Math.max(fx, x), Math.max(fy, y), Math.min(X1, x + 1), Math.min(Y1, y + 1), (x + y) % 2 ? pal.wood1 : pal.wood2);
         }
-      }
-      for (let y = 0.5; y < D; y += 0.5) this.poly([P(0, y), P(OW, y), P(OW, y + 0.012), P(0, y + 0.012)], pal.woodLine);
-      // The work area has carpet tiles; a runner down each aisle.
-      const wy = this.plan.OD + 0.2;
-      for (let x = 0; x < OW - 0.01; x += 0.75) for (let y = 0; y < wy - 0.01; y += 0.75) {
-        const x1 = Math.min(OW, x + 0.75), y1 = Math.min(wy, y + 0.75);
-        this.poly([P(x, y), P(x1, y), P(x1, y1), P(x, y1)], (Math.round(x / 0.75) + Math.round(y / 0.75)) % 2 ? pal.workA : pal.workB);
-      }
-      for (const a of this.plan.aisles || []) {
-        this.poly([P(a.x, 1.2), P(a.x + a.w, 1.2), P(a.x + a.w, wy - 0.3), P(a.x, wy - 0.3)], pal.runner);
-        this.poly([P(a.x + 0.08, 1.28), P(a.x + a.w - 0.08, 1.28), P(a.x + a.w - 0.08, wy - 0.38), P(a.x + 0.08, wy - 0.38)], null, pal.runnerEdge);
-      }
-      // Plank ends and wood grain.
-      {
-        const c = this.ctx;
+        for (let y = fy + 0.5; y < Y1; y += 0.5) rect(fx, y, X1, y + 0.012, pal.woodLine);
+        // Plank ends and wood grain.
         c.save(); c.strokeStyle = pal.woodLine; c.globalAlpha = 0.55; c.lineWidth = 0.7;
-        for (let y = 0; y < D; y += 0.5) {
-          for (let x = ((y * 2.7) % 1.3); x < OW; x += 1.6) { const a = P(x, y), b = P(x, Math.min(D, y + 0.5)); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
+        for (let y = fy; y < Y1; y += 0.5) {
+          for (let x = fx + ((y * 2.7) % 1.3); x < X1; x += 1.6) { const a = P(x, y), b = P(x, Math.min(Y1, y + 0.5)); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
         }
         c.globalAlpha = 0.18; c.lineWidth = 0.6;
-        for (let y = 0.17; y < D; y += 0.25) {
-          const a = P(0, y), b = P(OW, y);
-          c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-        }
+        for (let y = fy + 0.17; y < Y1; y += 0.25) { const a = P(fx, y), b = P(X1, y); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
         c.restore();
-      }
-      this.poly([P(OW, 0), P(W, 0), P(W, MR), P(OW, MR)], pal.carpet);
-      for (let x = OW + 0.5; x < W; x += 0.5) this.poly([P(x, 0), P(x + 0.015, 0), P(x + 0.015, MR), P(x, MR)], pal.carpetLine);
-      {
-        // Carpet weave: a scatter of light and dark flecks.
-        const c = this.ctx;
+      } else if (kind === 'carpet') {
+        rect(fx, fy, X1, Y1, pal.carpet);
+        for (let x = fx + 0.5; x < X1; x += 0.5) rect(x, fy, x + 0.015, Y1, pal.carpetLine);
         c.save();
-        for (let i = 0; i < 420; i++) {
-          const fx = OW + ((i * 0.618) % 1) * (W - OW), fy = ((i * 0.377 + (i % 7) * 0.13) % 1) * MR, q = P(fx, fy);
+        const n = Math.round(fw * fd * 12);
+        for (let i = 0; i < n; i++) {
+          const q = P(fx + ((i * 0.618) % 1) * fw, fy + ((i * 0.377 + (i % 7) * 0.13) % 1) * fd);
           c.fillStyle = i % 2 ? 'rgba(255,255,255,.10)' : 'rgba(0,0,0,.07)';
           c.fillRect(q.x, q.y, 1.2, 1.2);
         }
         c.restore();
-      }
-      for (let i = 0; i < Math.ceil((W - OW) * 2); i++) {
-        for (let j = 0; j < Math.ceil((PY - MR) * 2); j++) {
-          const x = OW + i / 2, y = MR + j / 2;
-          const x1 = Math.min(W, x + 0.5), y1 = Math.min(PY, y + 0.5);
-          this.poly([P(x, y), P(x1, y), P(x1, y1), P(x, y1)], (i + j) % 2 ? pal.tileA : pal.tileB);
-          // grout
-          this.poly([P(x, y), P(x1, y), P(x1, y + 0.02), P(x, y + 0.02)], 'rgba(120,120,110,.25)');
-          this.poly([P(x, y), P(x + 0.02, y), P(x + 0.02, y1), P(x, y1)], 'rgba(120,120,110,.25)');
+      } else if (kind === 'tiles') {
+        for (let i = 0; i < Math.ceil(fw * 2); i++) for (let j = 0; j < Math.ceil(fd * 2); j++) {
+          const x = fx + i / 2, y = fy + j / 2, x1 = Math.min(X1, x + 0.5), y1 = Math.min(Y1, y + 0.5);
+          rect(x, y, x1, y1, (i + j) % 2 ? pal.tileA : pal.tileB);
+          rect(x, y, x1, y + 0.02, 'rgba(120,120,110,.25)');
+          rect(x, y, x + 0.02, y1, 'rgba(120,120,110,.25)');
         }
-      }
-      for (let x = Math.floor(OW); x < W; x++) {
-        for (let y = PY; y < D; y++) {
-          const x0 = Math.max(OW, x), x1 = Math.min(W, x + 1), y1 = Math.min(D, y + 1);
-          this.poly([P(x0, y), P(x1, y), P(x1, y1), P(x0, y1)], (x + Math.floor(y)) % 2 ? pal.wood1 : pal.wood2);
+      } else if (kind === 'work') {
+        for (let x = fx; x < X1 - 0.01; x += 0.75) for (let y = fy; y < Y1 - 0.01; y += 0.75) {
+          rect(x, y, Math.min(X1, x + 0.75), Math.min(Y1, y + 0.75), (Math.round((x - fx) / 0.75) + Math.round((y - fy) / 0.75)) % 2 ? pal.workA : pal.workB);
         }
+        for (const a of this.plan.aisles || []) {
+          rect(a.x, fy + 1.2, a.x + a.w, Y1 - 0.3, pal.runner);
+          rect(a.x + 0.08, fy + 1.28, a.x + a.w - 0.08, Y1 - 0.38, null, pal.runnerEdge);
+        }
+      } else if (kind === 'mat') {
+        rect(fx, fy, X1, Y1, pal.mat);
+      } else if (kind === 'rug') {
+        rect(fx, fy, X1, Y1, pal.rug);
+        rect(fx + 0.2, fy + 0.2, X1 - 0.2, Y1 - 0.2, null, pal.rugEdge);
       }
-      this.poly([P(OW + 0.3, PY + 0.6), P(OW + 4.3, PY + 0.6), P(OW + 4.3, D - 0.4), P(OW + 0.3, D - 0.4)], pal.rug);
-      this.poly([P(OW + 0.5, PY + 0.8), P(OW + 4.1, PY + 0.8), P(OW + 4.1, D - 0.6), P(OW + 0.5, D - 0.6)], null, pal.rugEdge);
-      this.poly([P(pp.x0 - 0.6, pp.y - 1.4), P(pp.x1 + 0.6, pp.y - 1.4), P(pp.x1 + 0.6, pp.y + 1.3), P(pp.x0 - 0.6, pp.y + 1.3)], pal.mat);
+    }
+
+    // A coat rack by the door, and the lounge's armchair (2D).
+    coatRack(x, y) {
+      this.box(x - 0.15, y - 0.15, 0, 0.3, 0.3, 0.04, '#6e533b', '#5c4431', '#4c3826');
+      this.box(x - 0.03, y - 0.03, 0.04, 0.06, 0.06, 1.65, '#a8825a', '#946f4b', '#7d5c3e');
+      this.box(x - 0.12, y - 0.04, 1.45, 0.24, 0.08, 0.06, '#6e533b', '#5c4431', '#4c3826');
+    }
+
+    armchair(x, y) {
+      const col = '#cd8a68', l = this.shade(col, -12), r = this.shade(col, -24);
+      this.box(x + 0.05, y + 0.1, 0, 0.7, 0.65, 0.32, this.shade(col, 8), l, r);
+      this.box(x + 0.05, y + 0.02, 0.32, 0.7, 0.16, 0.36, this.shade(col, 8), l, r);
+      this.box(x, y + 0.1, 0.32, 0.12, 0.65, 0.16, this.shade(col, 8), l, r);
+      this.box(x + 0.68, y + 0.1, 0.32, 0.12, 0.65, 0.16, this.shade(col, 8), l, r);
+    }
+
+    drawRoom() {
+      const { W, D } = this.plan;
+      const pal = this.pal;
+      const P = (x, y, z) => this.iso(x, y, z);
+      const t = this.t / 1000;
+
+      // floors, region by region as the plan lays them out (plan.floors)
+      for (const f of this.plan.floors || []) this.floorPatch(f);
 
       // walls
       this.poly([P(0, 0, 0), P(W, 0, 0), P(W, 0, WALL_H), P(0, 0, WALL_H)], pal.wallL);
@@ -2674,13 +2728,12 @@
         this.poly([P(x, 0.05), P(x + 1.5, 0.05), P(x + 1.95, 1.2), P(x + 0.45, 1.2)], sky.night ? 'rgba(120,140,200,.06)' : 'rgba(255,250,230,.16)');
       }
       // meeting room whiteboard + sign (downstairs); a sign for the library upstairs
-      if (this.plan.floor === 2) {
-        this.onWall('y0', OW + 0.5, 2.2, (c) => {
-          c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText('LIBRARY · 2F', 0, 0);
-        });
-      }
-      const wx = OW + 2.4;
-      if (this.plan.floor !== 2) {
+      const sign = this.plan.wallSign;
+      if (sign) this.onWall('y0', sign.x, 2.2, (c) => {
+        c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText(sign.text, 0, 0);
+      });
+      if (this.plan.whiteboard) {
+      const wx = this.plan.whiteboard.x;
       this.poly([P(wx, 0, 0.8), P(wx + 2.6, 0, 0.8), P(wx + 2.6, 0, 1.95), P(wx, 0, 1.95)], '#fdfdfb', pal.trim);
       const pins = this.pins || [];
       if (pins.length) {
@@ -2702,9 +2755,6 @@
         c.beginPath(); c.moveTo(66, 4); c.lineTo(80, 12); c.stroke();
         c.strokeStyle = '#5f9a4c';
         c.beginPath(); c.moveTo(0, 22); for (let i = 0; i < 8; i++) c.lineTo(i * 8, 22 - ((i * 37) % 13)); c.stroke();
-      });
-      this.onWall('y0', OW + 0.5, 2.2, (c) => {
-        c.font = '700 9px ui-sans-serif, system-ui, sans-serif'; c.fillStyle = this.shade(pal.trim, -60); c.fillText('MEETING', 0, 0);
       });
       }
       // unlocked: a neon sign over the windows
@@ -3001,7 +3051,7 @@
 
     // Holiday decorations on free floor near the way in: a Christmas tree
     // with presents, pumpkins, or red lanterns hanging overhead.
-    decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry, lift, seats = [] }) {
+    decorate({ W, D, OW, PY, grid, pois, prop, solid, add, entry, lift, seats = [], spots: given = null }) {
       const season = this.seasonOverride !== undefined ? this.seasonOverride : seasonOf();
       this.season = season;
       if (!season) return;
@@ -3009,7 +3059,7 @@
         && pois.every((q) => Math.hypot(q.x - x, q.y - y) > 0.75)
         && seats.every((q) => Math.hypot(q.x - x, q.y - y) > 1.0)
         && Math.hypot(entry.x - x, entry.y - y) > 1.1 && Math.hypot(lift.x - x, lift.y - y) > 1.1;
-      const spots = [[1.3, D - 2.3], [1.2, D - 0.6], [OW - 0.8, D - 1.7], [OW - 3.2, D - 0.6], [2.4, D - 0.6], [W - 0.9, PY - 0.5],
+      const spots = given || [[1.3, D - 2.3], [1.2, D - 0.6], [OW - 0.8, D - 1.7], [OW - 3.2, D - 0.6], [2.4, D - 0.6], [W - 0.9, PY - 0.5],
         [OW / 2, D - 0.6], [1.2, 2.2], [OW - 0.9, 3.4], [W - 0.8, D - 1.8]];
       const pick = (n, r) => {
         const out = [];

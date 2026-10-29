@@ -288,7 +288,7 @@ export class Office3D extends window.Office {
     this.tvScreen = this.neonMat = this.liftDoors = null;
     this.boardAt = this.jamLight = null;
     this.boardShown = -1; this.tables = [];
-    const { W, D, OW, MR, PY } = plan;
+    const { W, D } = plan;
     const dark = this.pal.dark;
 
     // floors
@@ -337,15 +337,7 @@ export class Office3D extends window.Office {
         c.fillRect(x, y, 2, 2);
       }
     }, 256);
-    carpet.repeat.set((W - OW) / 1.5, MR / 1.5);
-    planks.repeat.set(OW / 3, D / 3);
-    floor(0, 0, OW, D, 0xffffff, planks);
-    floor(OW, 0, W - OW, MR, 0xffffff, carpet);
-    tiles.repeat.set((W - OW), (PY - MR));
-    floor(OW, MR, W - OW, PY - MR, 0xffffff, tiles);
-    const planks2 = planks.clone(); planks2.needsUpdate = true; planks2.repeat.set((W - OW) / 3, (D - PY) / 3);
-    floor(OW, PY, W - OW, D - PY, 0xffffff, planks2);
-    // The work area: soft carpet tiles, with a runner down each aisle.
+    // The work area's carpet tiles.
     const workTiles = this.patternTexture((c, s) => {
       const a = dark ? '#3a3d42' : '#d9d6cf', b = dark ? '#35383d' : '#cfcbc2';
       c.fillStyle = a; c.fillRect(0, 0, s, s);
@@ -354,23 +346,34 @@ export class Office3D extends window.Office {
       c.fillStyle = dark ? 'rgba(0,0,0,.3)' : 'rgba(120,110,100,.25)';
       for (const v of [0, s / 2]) { c.fillRect(v, 0, 1, s); c.fillRect(0, v, s, 1); }
     }, 256);
-    const WY = plan.OD + 0.2;
-    workTiles.repeat.set(OW / 1.5, WY / 1.5);
-    const work = new THREE.Mesh(new THREE.PlaneGeometry(OW, WY), new THREE.MeshStandardMaterial({ map: workTiles, roughness: 1 }));
-    work.rotation.x = -Math.PI / 2; work.position.set(OW / 2, 0.002, WY / 2); work.receiveShadow = true;
-    this.room.add(work);
-    for (const a of plan.aisles || []) {
-      const len = WY - 1.5;
-      const runner = new THREE.Mesh(new THREE.PlaneGeometry(a.w, len), soft(dark ? 0x7a4f3e : 0xcd8a68));
-      runner.rotation.x = -Math.PI / 2; runner.position.set(a.x + a.w / 2, 0.004, 1.2 + len / 2); runner.receiveShadow = true;
-      const edge = new THREE.Mesh(new THREE.PlaneGeometry(a.w - 0.16, len - 0.16), soft(dark ? 0x8d5c48 : 0xe0a585));
-      edge.rotation.x = -Math.PI / 2; edge.position.set(a.x + a.w / 2, 0.005, 1.2 + len / 2); edge.receiveShadow = true;
-      this.room.add(runner, edge);
-    }
-    const pp = plan.pp;
-    const mat = new THREE.Mesh(new THREE.PlaneGeometry(pp.x1 - pp.x0 + 1.2, 2.7), new THREE.MeshStandardMaterial({ color: dark ? 0x2f4a3a : 0xbfd8c4, roughness: 1 }));
-    mat.rotation.x = -Math.PI / 2; mat.position.set((pp.x0 + pp.x1) / 2, 0.005, pp.y - 0.05); mat.receiveShadow = true;
-    this.room.add(mat);
+    // Floors region by region, as the plan lays them out; each later one
+    // sits a hair above the one before.
+    const texFor = { wood: [planks, 3], carpet: [carpet, 1.5], tiles: [tiles, 1], work: [workTiles, 1.5] };
+    (plan.floors || []).forEach((f, i) => {
+      const lift = 0.0005 * i;
+      if (texFor[f.kind]) {
+        const [base, size] = texFor[f.kind];
+        const tex = base.clone(); tex.needsUpdate = true; tex.repeat.set(f.w / size, f.d / size);
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.d), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+        m.rotation.x = -Math.PI / 2; m.position.set(f.x + f.w / 2, lift, f.y + f.d / 2); m.receiveShadow = true;
+        this.room.add(m);
+      } else if (f.kind === 'mat') {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.d), new THREE.MeshStandardMaterial({ color: dark ? 0x2f4a3a : 0xbfd8c4, roughness: 1 }));
+        m.rotation.x = -Math.PI / 2; m.position.set(f.x + f.w / 2, 0.004 + lift, f.y + f.d / 2); m.receiveShadow = true;
+        this.room.add(m);
+      } else if (f.kind === 'rug') {
+        this.place('rugRectangle', f.x, f.y, f.w, f.d, { y0: 0.004, h: 0.016, stretch: true });
+      }
+      // A runner down each aisle of the work area.
+      if (f.kind === 'work') for (const a of plan.aisles || []) {
+        const len = f.d - 1.5;
+        const runner = new THREE.Mesh(new THREE.PlaneGeometry(a.w, len), soft(dark ? 0x7a4f3e : 0xcd8a68));
+        runner.rotation.x = -Math.PI / 2; runner.position.set(a.x + a.w / 2, 0.006, f.y + 1.2 + len / 2); runner.receiveShadow = true;
+        const edge = new THREE.Mesh(new THREE.PlaneGeometry(a.w - 0.16, len - 0.16), soft(dark ? 0x8d5c48 : 0xe0a585));
+        edge.rotation.x = -Math.PI / 2; edge.position.set(a.x + a.w / 2, 0.007, f.y + 1.2 + len / 2); edge.receiveShadow = true;
+        this.room.add(runner, edge);
+      }
+    });
 
     // walls: back (z=0) with windows, left (x=0) with a door
     const wallCol = dark ? 0x4a4640 : 0xf4efe6;
@@ -413,33 +416,26 @@ export class Office3D extends window.Office {
       this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
       this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
     }
-    // Framed prints in the gaps between the back windows.
-    {
-      let from = 0.3, n = 0;
-      const gaps = [];
-      for (const wx of [...plan.windows, OW - 0.3]) { if (wx - from >= 1.0) gaps.push([from, wx]); from = wx + 1.5; }
-      for (const [a, b] of gaps) {
-        if (plan.logo && a < plan.logo.x + plan.logo.w && b > plan.logo.x) continue;
-        const w = Math.min(0.8, b - a - 0.3), cx = (a + b) / 2;
-        this.room.add(this.artPrint(cx, 1.45, w, w * 1.25, n++));
-      }
-    }
+    // Framed prints between the back windows.
+    (plan.art || []).forEach((a, n) => this.room.add(this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
     for (const ps of plan.posters) {
       const m = this.textPlane(ps.text, ps.color, 0.9, 1.0);
       m.rotation.y = Math.PI / 2; m.position.set(0.005, 1.45, ps.y + 0.45);
       this.room.add(m);
     }
-    if (plan.floor !== 2) {
+    if (plan.whiteboard) {
       const wb = this.textPlane('', '#fdfdfb', 2.6, 1.15);
-      wb.position.set(OW + 3.7, 1.4, 0.005);
+      wb.position.set(plan.whiteboard.x + 1.3, 1.4, 0.005);
       this.room.add(wb);
-      this.whiteboardScribbles(OW + 3.7);
+      this.whiteboardScribbles(plan.whiteboard.x + 1.3);
     }
     if (plan.logo && this.company) this.room.add(this.logoSign(plan.logo, plan.floor));
-    const sign = this.textPlane(plan.floor === 2 ? 'LIBRARY' : 'MEETING', dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
-    sign.position.set(OW + 1.1, 2.15, 0.005);
-    this.room.add(sign);
+    if (plan.wallSign) {
+      const sign = this.textPlane(plan.wallSign.text, dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
+      sign.position.set(plan.wallSign.x + 0.65, 2.15, 0.005);
+      this.room.add(sign);
+    }
 
     // desks
     for (const dk of plan.desks) this.buildDesk(dk);
