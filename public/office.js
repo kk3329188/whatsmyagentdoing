@@ -66,6 +66,16 @@
   const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
   // Closing time: whoever is just resting goes home, the lights go down.
   const closing = () => { const h = hour(); return h >= 19 || h < 7; };
+  // Sitting somewhere off duty is not just sitting: what they get up to on
+  // each kind of seat, a new thing every 7–10 seconds.
+  const SEAT_ACTS = {
+    stool: ['eat', 'sip', 'scroll', 'chat', 'laugh', 'scroll'],
+    couch: ['scroll', 'read', 'laptop', 'laugh', 'watch', 'sip', 'game'],
+    beanbag: ['scroll', 'game', 'read', 'watch', 'laugh'],
+    read: ['read', 'laptop', 'write', 'think', 'read'],
+    meeting: ['laptop', 'write', 'scroll', 'think'],
+    tv: ['watch', 'laugh', 'watch'],
+  };
   const STANDUP_TURN_MS = 5000;  // each one talks this long
   const STANDUP_GATHER_MS = 6500; // time to walk over before the first one talks
   const night = () => { const h = new Date().getHours(); return h >= 20 || h < 7; };
@@ -127,6 +137,7 @@
     vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
     tv: '📺', trophy: '🏆', run: '🏃', yoga: '🧘',
     pin: '📌', fix: '🔧', refill: '☕', waterplant: '🌱', unpack: '🍱', deliver: '📦',
+    scroll: '📱', laptop: '💻', laugh: '😂', watch: '📺', game: '🎮', think: '💭', nap: '💤',
   };
 
   function hash(str) {
@@ -197,6 +208,12 @@
       if (i < 0 || j < 0 || i >= this.cw || j >= this.ch) return true;
       return !!this.cost[j * this.cw + i];
     }
+    // Solid furniture only (seats and chairs are not).
+    hard(x, y) {
+      const i = Math.floor(x * this.res), j = Math.floor(y * this.res);
+      if (i < 0 || j < 0 || i >= this.cw || j >= this.ch) return true;
+      return this.cost[j * this.cw + i] === 1;
+    }
     path(ax, ay, bx, by) {
       const R = this.res, cw = this.cw, ch = this.ch;
       const si = clamp(Math.floor(ax * R), 0, cw - 1), sj = clamp(Math.floor(ay * R), 0, ch - 1);
@@ -228,9 +245,11 @@
         return top;
       };
       const hfn = (i, j) => { const dx = Math.abs(i - gi), dy = Math.abs(j - gj); return Math.max(dx, dy) + 0.41 * Math.min(dx, dy); };
-      // Blocked cells are expensive, not impossible, so a path always exists
+      // Blocked cells are very expensive (walk round any furniture you can),
+      // not impossible, so a path always exists
       // (someone standing right against furniture can still step away).
-      const stepCost = (n) => (this.cost[n] ? 25 : 1);
+      // 2 = a seat: fine to walk onto when it is yours, avoided otherwise.
+      const stepCost = (n) => (this.cost[n] === 1 ? 400 : this.cost[n] === 2 ? 40 : 1);
       const start = sj * cw + si, goal = gj * cw + gi;
       g[start] = 0;
       push(hfn(si, sj), start);
@@ -559,7 +578,7 @@
       solid(lx, ly + 0.6, 2.8, 0.8);
       for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle' });
       add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
-      solid(lx + 0.6, ly + 2.0, 1.6, 0.7);
+      solid(lx + 0.6, ly + 2.0, 1.6, 0.7, 0.02); // leave a way out in front of the sofa
       add(lx + 0.4 + ly + 3.6, () => this.beanbag(lx + 0.4, ly + 3.6, '#c96442'));
       add(lx + 2.6 + ly + 3.6, () => this.beanbag(lx + 2.6, ly + 3.6, '#7d93c4'));
       poi(lx + 0.4, ly + 3.6, 'beanbag', 'front', { sit: 0.18, zone: 'idle' });
@@ -662,6 +681,7 @@
         done: { x: mx + 1.7, y: MR + 2.3 },
         idle: { x: lx + 1.4, y: ly + 2.35 },
       };
+      orientSeats(pois, props);
       return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, podSpots, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift, floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true };
     }
 
@@ -784,7 +804,7 @@
       for (let k = 0; k < 3; k++) poi(lx + 0.5 + k * 0.9, ly + 1.2, 'couch', 'front', { sit: 0.36, zone: 'idle', sleepy: true });
       add(lx + 1.4 + ly + 2.35, () => this.coffeeTable(lx + 0.6, ly + 2.0));
       prop('coffeeTable', { x: lx + 0.6, y: ly + 2.0, w: 1.6, d: 0.7 });
-      solid(lx + 0.6, ly + 2.0, 1.6, 0.7);
+      solid(lx + 0.6, ly + 2.0, 1.6, 0.7, 0.02); // leave a way out in front of the sofa
       const vx = mx + 4.1, vy = ly + 2.8;
       add(vx + 0.55 + vy + 0.2, () => this.tv(vx, vy));
       prop('tv', { x: vx, y: vy });
@@ -814,6 +834,7 @@
         { id: 'coffee', x: mx + 2.65, y: cy + 1.2, hint: '叫它停下這一輪' },
         { id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' },
       ];
+      orientSeats(pois, props);
       return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
     }
 
@@ -1515,6 +1536,21 @@
       if (what === 'cake') this.cakeUntil = wall + 40 * 60_000;
     }
 
+    // What someone sitting off duty is doing right now. Someone else sitting
+    // close by makes a chat (or a laugh) likelier; a long-idle one dozes off
+    // on the sofa now and then.
+    seatAct(p, q) {
+      const list = SEAT_ACTS[q.act];
+      const t = (this.t || 0) / 1000 + p.phase * 13;
+      const span = 7 + (p.h % 4);
+      let act = list[Math.floor(t / span + p.h) % list.length];
+      const company = [...this.people.values()].some((o) => o !== p && o.poi && o.poi.sit && !o.path.length && Math.hypot(o.x - p.x, o.y - p.y) < 2.2);
+      if (act === 'chat' && !company) act = 'scroll';
+      if (company && act === 'scroll' && (Math.floor(t / span) % 3) === 0) act = 'chat';
+      if (q.act === 'couch' && p.s && p.s.status === 'idle' && (Math.floor(t / span) % 4) === 3) act = 'nap';
+      return act;
+    }
+
     // ------------------------------------------------------------ stand-up
     //
     // Everyone (but the secretary, who keeps the minutes at their desk) walks
@@ -1678,7 +1714,7 @@
         let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
         const n = Math.hypot(vx, vy) || 1, v = SPEED * 1.3 * dt;
         vx = vx / n * v; vy = vy / n * v;
-        const ok = (x, y) => x > 0.15 && y > 0.15 && x < this.plan.W - 0.15 && y < this.plan.D - 0.08 && !grid.blocked(x, y);
+        const ok = (x, y) => x > 0.15 && y > 0.15 && x < this.plan.W - 0.15 && y < this.plan.D - 0.08 && !grid.hard(x, y);
         if (ok(me.x + vx, me.y + vy)) { me.x += vx; me.y += vy; }
         else if (ok(me.x + vx, me.y)) me.x += vx;
         else if (ok(me.x, me.y + vy)) me.y += vy;
@@ -2827,6 +2863,7 @@
       if (p.mode === 'wander' && p.poi) {
         const q = p.poi;
         let act = q.act;
+        if (q.sit && SEAT_ACTS[q.act]) act = this.seatAct(p, q);
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'chat') {
@@ -3102,6 +3139,51 @@
           c.fillRect(-2, hip - 25, 9, 2.5);
           break;
         }
+        case 'scroll': {
+          // Phone held low, thumb going.
+          const k = Math.sin(t * 6 + p.phase) > 0.4 ? 1 : 0;
+          c.fillRect(-6, hip - 11, 3, 7);
+          c.fillRect(3, hip - 11, 3, 7);
+          c.fillStyle = '#1d1f24'; c.fillRect(-2.5, hip - 9, 5, 7);
+          c.fillStyle = '#7fb3ff'; c.fillRect(-1.8, hip - 8.3 + k, 3.6, 4);
+          hand(-0.5, hip - 3 - k);
+          break;
+        }
+        case 'laptop': {
+          // A laptop on the lap, typing.
+          const k1 = Math.sin(t * 16 + p.phase) > 0 ? 1 : 0;
+          c.fillStyle = '#9aa0a8'; c.fillRect(-8, hip - 4, 16, 2.5);
+          c.fillStyle = '#3c4048'; c.fillRect(-7, hip - 13, 14, 9);
+          c.fillStyle = '#8fd0ff'; c.fillRect(-6, hip - 12, 12, 7);
+          c.fillStyle = arm;
+          c.fillRect(-9, hip - 6 - k1, 3, 4);
+          c.fillRect(6, hip - 6 - (1 - k1), 3, 4);
+          break;
+        }
+        case 'laugh': {
+          // Hands on the belly, shaking with it.
+          const k = Math.sin(t * 14 + p.phase) * 0.8;
+          c.fillRect(-8, hip - 10 + k, 3, 8);
+          c.fillRect(5, hip - 10 - k, 3, 8);
+          hand(-4, hip - 3 + k); hand(4, hip - 3 - k);
+          break;
+        }
+        case 'watch': {
+          // Leaning back, arms folded.
+          c.fillRect(-8, hip - 9, 16, 3);
+          hand(-7, hip - 8); hand(7, hip - 8);
+          break;
+        }
+        case 'game': {
+          // A handheld console, both thumbs.
+          const k = Math.sin(t * 12 + p.phase) * 0.8;
+          c.fillRect(-8, hip - 11, 3, 6);
+          c.fillRect(5, hip - 11, 3, 6);
+          c.fillStyle = '#c0392b'; this.roundRect(-6, hip - 9, 12, 5, 2, '#2c3e50');
+          c.fillStyle = '#8fd0ff'; c.fillRect(-2, hip - 8.3, 4, 3.4);
+          hand(-5, hip - 6.5 + k); hand(5, hip - 6.5 - k);
+          break;
+        }
         case 'cheer': {
           // Both arms up, bouncing.
           const k = Math.abs(Math.sin(t * 9 + p.phase)) * 3;
@@ -3221,8 +3303,9 @@
       }
 
       const napping = st.act === 'nap';
-      const lean = { lookup: -1.5, leanback: -1, deskread: 1, typefast: 0.6, peek: -0.5, stretch: -1, neck: 1.2, petcat: 2 }[st.act] || 0;
-      const hy = hip - 20 + (napping ? 7 : 0) + lean + (st.act === 'think' || st.act === 'tap' ? Math.sin(t * 1.5 + p.phase) * 0.6 : 0);
+      const lean = { lookup: -1.5, leanback: -1, deskread: 1, typefast: 0.6, peek: -0.5, stretch: -1, neck: 1.2, petcat: 2, scroll: 1.5, laptop: 1, game: 1.2, read: 0.8, watch: -1 }[st.act] || 0;
+      const hy = hip - 20 + (napping ? 7 : 0) + lean + (st.act === 'think' || st.act === 'tap' ? Math.sin(t * 1.5 + p.phase) * 0.6 : 0)
+        + (st.act === 'laugh' ? -Math.abs(Math.sin(t * 7 + p.phase)) * 1.4 : 0);
       c.fillStyle = p.skin;
       c.beginPath(); c.arc(0, hy, 7, 0, Math.PI * 2); c.fill();
       c.fillStyle = p.hair;
@@ -3238,7 +3321,20 @@
         c.fillRect(-3 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
         c.fillRect(1.6 + look, hy - 0.5, 1.6, blink || sleepy ? 0.7 : 2);
         c.strokeStyle = '#2a2018'; c.lineWidth = 1;
-        if (held || st.act === 'chat') {
+        if (st.act === 'laugh') {
+          // Eyes squeezed shut (^ ^), mouth wide open.
+          c.fillStyle = p.skin; c.fillRect(-3.5, hy - 1.2, 7.5, 3.4);
+          c.beginPath(); c.moveTo(-3, hy + 1); c.lineTo(-2.2, hy - 0.4); c.lineTo(-1.4, hy + 1); c.moveTo(1.6, hy + 1); c.lineTo(2.4, hy - 0.4); c.lineTo(3.2, hy + 1); c.stroke();
+          c.fillStyle = '#5a2a22';
+          c.beginPath(); c.arc(0, hy + 2.6, 2.2, 0, Math.PI); c.fill();
+        } else if (st.act === 'nap') {
+          c.fillStyle = p.skin; c.fillRect(-3.5, hy - 1.2, 7.5, 3.4);
+          c.beginPath(); c.moveTo(-3, hy + 0.6); c.lineTo(-1.4, hy + 0.6); c.moveTo(1.6, hy + 0.6); c.lineTo(3.2, hy + 0.6); c.stroke();
+          c.fillStyle = this.pal.text; c.font = '700 6px ui-sans-serif, system-ui, sans-serif';
+          c.fillText('z', 8 + Math.sin(t * 2) * 1, hy - 8 - ((t * 3) % 4));
+        } else if (st.act === 'scroll' || st.act === 'watch' || st.act === 'game' || st.act === 'eat') {
+          c.beginPath(); c.arc(0, hy + 2.4, 1.8, 0.1 * Math.PI, 0.9 * Math.PI); c.stroke();
+        } else if (held || st.act === 'chat') {
           // An open mouth: shouting, or talking.
           const o = held ? 1.8 : 0.6 + Math.abs(Math.sin(t * 9 + p.phase)) * 1.2;
           c.fillStyle = '#5a2a22';
@@ -3738,6 +3834,21 @@
   // already working upstairs stays there until they stop, so nobody bounces
   // between floors. `prev`: key -> { floor, zone } from the last call.
   // Returns { floors: Map key -> { floor, zone }, moved: Set of keys that changed floor }.
+  // Sitting down somewhere: face the table, coffee table or TV it belongs
+  // to (a yaw for 3D, front/back for the 2D drawing).
+  function orientSeats(pois, props) {
+    const centres = props.filter((o) => /^(roundTable|meetingTable|coffeeTable|tv)$/.test(o.t)).map((o) => (
+      o.t === 'roundTable' ? { x: o.x, y: o.y } : o.t === 'tv' ? { x: o.x + 0.55, y: o.y + 0.2 } : { x: o.x + (o.w || 0) / 2, y: o.y + (o.d || 0) / 2 }));
+    for (const q of pois) {
+      if (!q.sit || q.yaw != null || q.pair) continue;
+      let best = null, bd = 2.4;
+      for (const c of centres) { const d = Math.hypot(c.x - q.x, c.y - q.y); if (d < bd) { bd = d; best = c; } }
+      if (!best) continue;
+      q.yaw = Math.atan2(best.x - q.x, best.y - q.y);
+      q.face = best.x - q.x + best.y - q.y >= 0 ? 'front' : 'back';
+    }
+  }
+
   function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false } = {}) {
     const floors = new Map();
     const workers = [];

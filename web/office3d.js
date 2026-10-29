@@ -348,7 +348,10 @@ export class Office3D extends window.Office {
     if (plan.boss) { this.buildDesk(plan.boss); this.buildDesk(plan.sec); }
 
     for (const p of plan.props) this.buildProp(p);
-    this.fitCamera3D(true);
+    // The floor plan changes as the team grows or shrinks: keep your view
+    // (angle, zoom, where you slid to); only the very first build frames it.
+    if (this.fitted) this.fitSun(); else this.fitCamera3D(true);
+    this.collide();
   }
 
   patternTexture(paint) {
@@ -1273,7 +1276,92 @@ export class Office3D extends window.Office {
     const cxv = (minX + maxX) / 2, cyv = (minY + maxY) / 2;
     Object.assign(this.camera, { left: cxv - w / 2, right: cxv + w / 2, top: cyv + h / 2, bottom: cyv - h / 2 });
     this.camera.updateProjectionMatrix();
-    // Sun casts shadows over the whole room.
+    this.fitSun();
+  }
+
+  // Walking around the real furniture: the floor plan only knows rough
+  // boxes, so after the room is built, every piece's actual footprint (the
+  // model's bounds, skipping rugs and mats on the floor, things on the walls
+  // and lamps overhead) is marked as taken on the walking grid. Spots people
+  // go to (seats, pois, the queue, the door, the lift) stay open.
+  collide() {
+    const plan = this.plan;
+    if (plan.scene || !this.room) return 0;
+    const g = plan.grid, R = g.res, cw = g.cw, ch = g.ch;
+    // Places to stand stay open; seats (and the chair or sofa around them)
+    // become soft: whoever is going to sit there walks in, everyone else
+    // walks round.
+    const seats = [...plan.pois.filter((q) => q.sit), ...plan.desks.map((d) => d.seat), plan.boss && plan.boss.seat, plan.sec && plan.sec.seat].filter(Boolean);
+    const stands = [...plan.pois.filter((q) => !q.sit), ...(plan.queue || []), plan.door, plan.lift, plan.board && plan.board.spot, ...(plan.targets || [])].filter(Boolean);
+    const keep = [...seats, ...stands];
+    const near = (list, x, y) => list.some((k) => Math.abs(k.x - x) < 0.3 && Math.abs(k.y - y) < 0.3);
+    const added = new Set();
+    for (const f of this.footprints()) {
+      if (f.skip) continue;
+      const i0 = Math.max(0, Math.floor((f.x0 + 0.04) * R)), i1 = Math.min(cw - 1, Math.floor((f.x1 - 0.04) * R));
+      const j0 = Math.max(0, Math.floor((f.y0 + 0.04) * R)), j1 = Math.min(ch - 1, Math.floor((f.y1 - 0.04) * R));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const n = j * cw + i, x = (i + 0.5) / R, y = (j + 0.5) / R;
+        if (g.cost[n] || near(stands, x, y)) continue;
+        g.cost[n] = near(seats, x, y) ? 2 : 1;
+        added.add(n);
+      }
+    }
+    // Every spot must still be reachable from the door (or lift) over open
+    // floor; where the real furniture closed a way in, reopen the shortest one.
+    const cell = (p) => Math.min(ch - 1, Math.max(0, Math.floor(p.y * R))) * cw + Math.min(cw - 1, Math.max(0, Math.floor(p.x * R)));
+    const reach = new Uint8Array(cw * ch);
+    const flood = (from) => {
+      const q = [from];
+      reach[from] = 1;
+      while (q.length) {
+        const n = q.pop(), i = n % cw, j = (n / cw) | 0;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = i + di, nj = j + dj;
+          if (ni < 0 || nj < 0 || ni >= cw || nj >= ch) continue;
+          const m = nj * cw + ni;
+          if (!reach[m] && g.cost[m] !== 1) { reach[m] = 1; q.push(m); }
+        }
+      }
+    };
+    const entry = plan.door || plan.lift;
+    flood(cell(entry));
+    for (const k of keep) {
+      if (reach[cell(k)]) continue;
+      const way = g.path(k.x, k.y, entry.x, entry.y);
+      let prev = { x: k.x, y: k.y };
+      for (const pt of way) {
+        const steps = Math.ceil(Math.hypot(pt.x - prev.x, pt.y - prev.y) * R * 2) || 1;
+        for (let t = 0; t <= steps; t++) {
+          const n = cell({ x: prev.x + (pt.x - prev.x) * t / steps, y: prev.y + (pt.y - prev.y) * t / steps });
+          if (added.has(n)) { g.cost[n] = 0; added.delete(n); }
+        }
+        prev = pt;
+      }
+      flood(cell(k));
+    }
+    this.collided = added.size;
+    return added.size;
+  }
+
+  // The floor footprint of every standing piece of furniture (for checks).
+  footprints() {
+    const box = new THREE.Box3(), out = [];
+    if (!this.room) return out;
+    this.room.updateMatrixWorld(true);
+    for (const obj of this.room.children) {
+      box.setFromObject(obj);
+      if (box.isEmpty() || box.max.y < 0.25 || box.min.y > 1.3 || box.max.x <= 0.03 || box.max.z <= 0.03) continue;
+      if (box.max.x - box.min.x > this.plan.W * 0.7 || box.max.z - box.min.z > this.plan.D * 0.7) continue;
+      out.push({ x0: box.min.x, x1: box.max.x, y0: box.min.z, y1: box.max.z, name: obj.name || obj.type });
+    }
+    return out;
+  }
+
+  // Sun casts shadows over the whole room.
+  fitSun() {
+    const { W, D } = this.plan;
+    const center = new THREE.Vector3(W / 2, 0.6, D / 2);
     this.sun.position.set(center.x - 6, 14, center.z - 3);
     this.sun.target.position.copy(center);
     const sc = this.sun.shadow.camera;
@@ -1283,12 +1371,21 @@ export class Office3D extends window.Office {
   }
 
   resize() {
+    const was = { w: this.cw, h: this.ch };
     super.resize();
     if (!this.gl) return;
     this.gl.setSize(this.cw, this.ch, false);
     this.gl.domElement.style.width = this.cw + 'px';
     this.gl.domElement.style.height = this.ch + 'px';
-    if (this.room) this.fitCamera3D(false);
+    if (!this.room) return;
+    // Once framed, a new canvas size shows more or less of the room at the
+    // same scale instead of re-fitting it (which jumped the zoom).
+    if (this.fitted && was.w > 0 && was.h > 0) {
+      const c = this.camera, per = (c.right - c.left) / was.w;
+      const cx = (c.left + c.right) / 2, cy = (c.top + c.bottom) / 2;
+      Object.assign(c, { left: cx - per * this.cw / 2, right: cx + per * this.cw / 2, top: cy + per * this.ch / 2, bottom: cy - per * this.ch / 2 });
+      c.updateProjectionMatrix();
+    } else this.fitCamera3D(false);
   }
 
   // ------------------------------------------------------------ actors
@@ -1305,9 +1402,9 @@ export class Office3D extends window.Office {
     const mixer = new THREE.AnimationMixer(obj);
     const actions = {};
     for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
-    let head = null, armR = null, torso = null, headMesh = null, bodyMesh = null;
+    let head = null, armR = null, armL = null, torso = null, headMesh = null, bodyMesh = null;
     obj.traverse((o) => {
-      if (o.name === 'head') head = o; if (o.name === 'arm-right') armR = o; if (o.name === 'torso') torso = o;
+      if (o.name === 'head') head = o; if (o.name === 'arm-right') armR = o; if (o.name === 'arm-left') armL = o; if (o.name === 'torso') torso = o;
       if (o.name === 'head-mesh') headMesh = o; if (o.name === 'body-mesh') bodyMesh = o;
     });
     // Measured in the rest pose (at the origin, facing +z) so clothes can be
@@ -1322,9 +1419,18 @@ export class Office3D extends window.Office {
     const prop = new THREE.Group();
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 10), new THREE.MeshStandardMaterial({ color: 0xffffff }));
     const book = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.04), new THREE.MeshStandardMaterial({ color: 0xc96442 }));
-    prop.add(cup, book);
-    this.scene.add(obj, prop);
-    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, prop, cup, book, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
+    // A phone and a game console in the hand, a laptop on the lap.
+    const phone = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.11, 0.012), new THREE.MeshStandardMaterial({ color: 0x1d1f24, emissive: 0x2a4f88, emissiveIntensity: 0.4 }));
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.03), new THREE.MeshStandardMaterial({ color: 0x2c3e50 }));
+    prop.add(cup, book, phone, pad);
+    const laptop = new THREE.Group();
+    const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));
+    const lapLid = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.012), new THREE.MeshStandardMaterial({ color: 0x3c4048, emissive: 0x4a90d0, emissiveIntensity: 0.35 }));
+    lapLid.position.set(0, 0.1, -0.1); lapLid.rotation.x = -0.25;
+    laptop.add(lapBase, lapLid);
+    laptop.visible = false;
+    this.scene.add(obj, prop, laptop);
+    a = { obj, mixer, actions, current: null, head, torso, rest, headRest: head ? head.rotation.x : 0, armR, armL, prop, cup, book, phone, pad, laptop, yaw: 0, last: { x: p.x, y: p.y }, level: 1, outfit: [] };
     // A box (or the lunch bag) held out front.
     if (rest.bodyBox) {
       a.box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.22), new THREE.MeshStandardMaterial({ color: 0xc8a06a }));
@@ -1439,9 +1545,53 @@ export class Office3D extends window.Office {
     return st.face === 'back' ? Math.PI : 0;
   }
 
+  // Arms, head and body bent on top of whatever clip plays (the clips only
+  // know sitting, typing and so on): holding a phone to look at, typing on
+  // a laptop, laughing, reaching for a cup. Each bone is bent from the pose
+  // the clip gave it this frame (or, for bones the clip leaves alone, from
+  // where it was before we bent it).
+  pose(a, st, p) {
+    const t = this.t / 1000 + p.phase;
+    const wave = (f, k = 0) => Math.sin(t * f + k);
+    const up = (f) => Math.max(0, Math.sin(t * f));
+    const P = {
+      scroll: { r: [-0.95, 0, -0.35], l: [-0.85, 0, 0.35], head: 0.38 },
+      phone: { r: [-2.3, 0, -0.6], head: 0.1 },
+      laptop: { r: [-0.6 + 0.07 * wave(16), 0, -0.25], l: [-0.6 + 0.07 * wave(16, Math.PI), 0, 0.25], head: 0.32 },
+      read: { r: [-1.0, 0, -0.3], l: [-1.0, 0, 0.3], head: 0.32 },
+      game: { r: [-0.9 + 0.05 * wave(12), 0, -0.4], l: [-0.9 + 0.05 * wave(12, 2), 0, 0.4], head: 0.3 },
+      laugh: { r: [-0.45, 0, -0.15], l: [-0.45, 0, 0.15], head: -0.3 - 0.12 * Math.abs(wave(8)), torso: -0.1 * Math.abs(wave(8)) },
+      chat: { r: [-0.55 - 0.4 * up(4), 0, -0.25 + 0.15 * wave(3)], head: 0.06 * wave(5) },
+      watch: { head: -0.12, torso: -0.14 },
+      think: { r: [-1.75, 0, -0.55], head: 0.15 },
+      write: { r: [-0.65 + 0.05 * wave(10), 0, -0.2], head: 0.32 },
+      eat: { r: [-0.7 - 0.9 * up(3), 0, -0.2], head: 0.12 },
+      sip: wave(0.9) > 0.6 ? { r: [-1.9, 0, -0.35], head: -0.15 } : { r: [-0.6, 0, -0.2] },
+      yawn: { r: [-2.0, 0, -0.6], head: -0.25 },
+      facepalm: { r: [-2.2, 0, -0.8], head: 0.35 },
+      nap: { head: 0.55 },
+      pin: { r: [-2.5, 0, 0] },
+      whiteboard: { r: [-2.0 + 0.25 * wave(3), 0, 0] },
+    }[st.act];
+    const e = new THREE.Euler();
+    const q = new THREE.Quaternion();
+    const bend = (bone, key, rot) => {
+      if (!bone) return;
+      const rec = a[key] || (a[key] = { base: bone.quaternion.clone(), wrote: null });
+      if (!rec.wrote || !bone.quaternion.equals(rec.wrote)) rec.base.copy(bone.quaternion);
+      bone.quaternion.copy(rec.base);
+      if (rot) bone.quaternion.multiply(q.setFromEuler(e.set(rot[0], rot[1], rot[2])));
+      rec.wrote = bone.quaternion.clone();
+    };
+    bend(a.armR, 'poseR', P && P.r);
+    bend(a.armL, 'poseL', P && P.l);
+    bend(a.head, 'poseH', P && P.head ? [P.head, 0, 0] : null);
+    bend(a.torso, 'poseT', P && P.torso ? [P.torso, 0, 0] : null);
+  }
+
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me)) { this.scene.remove(a.obj, a.prop, a.laptop); this.actors.delete(k); }
     }
     for (const p of this.bodies()) {
       const a = this.actorFor(p);
@@ -1490,17 +1640,21 @@ export class Office3D extends window.Office {
         a.yaw += dt * 0.35;
       }
       a.obj.position.set(p.x + Math.sin(a.yaw) * fwd, seatY + lift, p.y + Math.cos(a.yaw) * fwd);
-      if (a.head) {
-        if (st.act === 'nap') { a.head.rotation.x = a.headRest + 0.55; a.napped = true; }
-        else if (a.napped) { a.head.rotation.x = a.headRest; a.napped = false; }
-      }
+      this.pose(a, st, p);
       this.dress(a, (p.s && p.s.level) || 1);
       if (a.sign) a.sign.visible = st.act === 'sign';
       // hand-held props
       a.cup.visible = st.act === 'coffee' || st.act === 'water' || st.act === 'sip' || st.act === 'waterplant' || (st.pose !== 'walk' && p.poi && p.poi.prop === 'cup');
       if (a.box) a.box.visible = st.act === 'carry' || st.act === 'deliver' || st.act === 'unpack';
       a.book.visible = st.act === 'read' || st.act === 'clipboard';
-      if (a.armR && (a.cup.visible || a.book.visible)) {
+      a.phone.visible = st.act === 'scroll' || st.act === 'phone';
+      a.pad.visible = st.act === 'game';
+      a.laptop.visible = st.act === 'laptop' && st.pose === 'sit';
+      if (a.laptop.visible) {
+        a.laptop.position.set(p.x + Math.sin(a.yaw) * 0.3, seatY + 0.3, p.y + Math.cos(a.yaw) * 0.3);
+        a.laptop.rotation.y = a.yaw + Math.PI;
+      }
+      if (a.armR && (a.cup.visible || a.book.visible || a.phone.visible || a.pad.visible)) {
         a.obj.updateMatrixWorld(true);
         const hand = new THREE.Vector3(0, -0.4, 0.15);
         a.armR.localToWorld(hand);

@@ -851,3 +851,43 @@ test("today's best gets a gold ring and a trophy in the name tag", () => {
   const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
   assert.equal(o.bestKey, p.key);
 });
+
+test('getting up from the sofa: out the front, not through the back of it', () => {
+  for (const floor of [1, 2]) {
+    const o = loadFloor(floor);
+    const seat = o.plan.pois.find((q) => q.act === 'couch');
+    const away = o.plan.pois.find((q) => q.y < seat.y - 4) || { x: seat.x, y: 1.2 };
+    const path = o.plan.grid.path(seat.x, seat.y, away.x, away.y);
+    const first = path[0];
+    assert.ok(first.y >= seat.y - 0.05, `floor ${floor}: first step goes forward or sideways, not back through the sofa (${first.x},${first.y})`);
+  }
+});
+
+test('sitting down: everyone at a table, on the sofa or a beanbag faces the table, coffee table or TV', () => {
+  for (const floor of [1, 2]) {
+    const o = loadFloor(floor);
+    const tables = o.plan.props.filter((q) => /^(roundTable|meetingTable|coffeeTable)$/.test(q.t));
+    for (const q of o.plan.pois.filter((x) => x.sit && /^(stool|meeting|couch|read)$/.test(x.act))) {
+      const c = tables.map((t) => (t.t === 'roundTable' ? { x: t.x, y: t.y } : { x: t.x + t.w / 2, y: t.y + t.d / 2 }))
+        .sort((a, b) => Math.hypot(a.x - q.x, a.y - q.y) - Math.hypot(b.x - q.x, b.y - q.y))[0];
+      if (!c || Math.hypot(c.x - q.x, c.y - q.y) > 2.4) continue;
+      assert.ok(q.yaw != null, `floor ${floor} ${q.act} has a direction`);
+      const look = { x: Math.sin(q.yaw), y: Math.cos(q.yaw) };
+      const to = { x: c.x - q.x, y: c.y - q.y };
+      const cos = (look.x * to.x + look.y * to.y) / Math.hypot(to.x, to.y);
+      assert.ok(cos > 0.9, `floor ${floor} ${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} faces the table (cos ${cos.toFixed(2)})`);
+    }
+  }
+});
+
+test('sitting off duty they do things, and change what they do', () => {
+  const o = load(true);
+  const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
+  const couch = o.plan.pois.find((q) => q.act === 'couch');
+  o.release(p); p.poi = couch; p.path = []; p.x = couch.x; p.y = couch.y; p.mode = 'wander'; p.zone = 'idle';
+  const seen = new Set();
+  for (let s = 0; s < 120; s += 3) { o.t = s * 1000; seen.add(o.stateOf(p).act); }
+  assert.ok(seen.size >= 4, `several things on the sofa: ${[...seen].join(',')}`);
+  assert.ok(![...seen].includes('couch'), 'never just "couch"');
+  for (const act of seen) assert.ok(/^(scroll|read|laptop|laugh|watch|sip|game|nap|chat)$/.test(act), act);
+});
