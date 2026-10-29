@@ -120,7 +120,7 @@ Needs Node.js 18+. Nothing to `npm install` — the repo runs as cloned. Prefer 
 
 It opens an isometric **office**. Agents that are working sit at cubicle desks: a thought bubble while thinking, typing with code scrolling on the monitor while a tool runs, standing up and waving when they need you. A handful of recently finished agents stay around off duty and wander: coffee and water in the pantry, the couch and beanbags, the bookshelf, the meeting-room whiteboard, the arcade cabinet, ping-pong and foosball (when two of them are free), the phone booth, or a nap at an empty desk. Everyone else has gone home. The windows follow your local time of day (and in Medium there's an office cat). Hover anyone to see what they're on.
 
-Two looks: **Medium** is a hand-drawn 2D canvas (zero dependencies). **High (3D)** renders the same office with real-time lighting and shadows using [Kenney](https://kenney.nl)'s CC0 *Mini Characters* (with their walk / sit / interact animations) and *Furniture Kit*; drag to rotate, scroll to zoom. The 3D bundle (three.js, ~180 KB gzipped) and models (~1.3 MB, meshopt-compressed) only load when you pick High.
+Two looks: **Medium** is a hand-drawn 2D canvas (zero dependencies). **High (3D)** renders the same office with real-time lighting and shadows; the people (big-headed chibis with thirteen hairstyles and about fifty moves) and every piece of office furniture are made in code, in one cartoon style with soft shading and outlines; drag to rotate, scroll to zoom. The 3D bundle (three.js, ~190 KB gzipped) only loads when you pick High.
 
 **Scenes (3D):** the office is built in; other scenes are small downloadable packs (Pirate Cove, Café, Space Station and Castle are 100–160 KB each), fetched only when you pick one from the scene buttons, run `--scene pirate`, or ask your agent for it. Packs are data only (a manifest plus Kenney CC0 models) and are checked against a pinned SHA-256 before they're installed into `~/.whatsmyagentdoing/scenes`.
 
@@ -195,4 +195,4 @@ Browser development checks require Node.js 20+ (the dashboard itself still runs 
 
 ## License
 
-MIT. 3D models in `assets/kenney/` are by [Kenney](https://kenney.nl), released under CC0 (see the license files there).
+MIT. The 3D models in `assets/kenney/` (used by the downloadable scene packs) are by [Kenney](https://kenney.nl), released under CC0 (see the license file there).

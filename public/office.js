@@ -166,6 +166,9 @@
     for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
     return h >>> 0;
   }
+  // Thirteen hairstyles, the same in 2D and 3D (see hair2d / chibi.js).
+  const HAIR_STYLES = 13;
+  const hairOf = (h) => (h >>> 3) % HAIR_STYLES;
   const pick = (arr, h, salt) => arr[(Math.imul(h ^ Math.imul(salt, 2654435761), 2246822519) >>> 0) % arr.length];
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -178,7 +181,7 @@
       tileA: '#3d4044', tileB: '#35383c', carpet: '#33404d', carpetLine: 'rgba(255,255,255,.04)',
       wallL: '#4a4640', wallR: '#3f3b36', wallTop: '#5a554e', trim: '#2b2926',
       deskTop: '#8a6a4c', deskL: '#6e533b', deskR: '#5c4431',
-      monitor: '#18181a', screenOff: '#26282c', chair: '#2d2d32',
+      monitor: '#18181a', screenOff: '#26282c', chair: '#a8664a', panel: '#8e8a82',
       rug: '#47544f', rugEdge: '#3a4541', couch: '#5b6b8c', couchD: '#4a587a',
       counter: '#d9d4c9', counterL: '#a9a397', counterR: '#958f84', metal: '#8d939a',
       glass: 'rgba(160,200,230,.10)', glassEdge: 'rgba(190,220,240,.35)', mat: '#2f4a3a',
@@ -189,8 +192,8 @@
       wood1: '#e6d3b6', wood2: '#dfcaab', woodLine: 'rgba(120,90,50,.12)',
       tileA: '#f4f4f1', tileB: '#e6e7e3', carpet: '#c9d3dc', carpetLine: 'rgba(0,0,0,.035)',
       wallL: '#f4efe6', wallR: '#e8e1d4', wallTop: '#fbf8f2', trim: '#cfc5b3',
-      deskTop: '#c89f72', deskL: '#a8825a', deskR: '#946f4b',
-      monitor: '#2a2a2e', screenOff: '#3a3d44', chair: '#4a4a52',
+      deskTop: '#c9a47e', deskL: '#a8825a', deskR: '#946f4b',
+      monitor: '#2a2a2e', screenOff: '#3a3d44', chair: '#cd8a68', panel: '#e9e3d7',
       rug: '#c4d4cb', rugEdge: '#a9bcb1', couch: '#7d93c4', couchD: '#6a80b0',
       counter: '#fbfaf7', counterL: '#d9d4c9', counterR: '#c9c3b6', metal: '#b5bcc4',
       glass: 'rgba(170,210,235,.16)', glassEdge: 'rgba(120,160,190,.55)', mat: '#bfd8c4',
@@ -1219,7 +1222,7 @@
         key: s.key, h, s,
         skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: pick(PANTS, h, 13),
         shirt: pick(SHIRT[s.agent] || SHIRT.claude, h, 11),
-        hairStyle: h % 4,
+        hairStyle: hairOf(h),
         phase: (h % 1000) / 1000 * Math.PI * 2,
         x: door.x, y: door.y,
         path: [], walkFace: 'front', until: 0, mode: null,
@@ -1914,7 +1917,7 @@
       const masked = !!this.masked;
       const body = {
         visitor: true, key, conv: v.conv || v.id, h, x: door.x, y: door.y, path: plan.grid.path(door.x, door.y, at.x, at.y), walkFace: 'front',
-        phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: h % 4,
+        phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: hairOf(h),
         stage: 'in', until: 0, spot: at, desk, text: masked ? '有事來找' : v.text || '有事來找',
         s: { key, agent: 'claude', status: 'idle', title: masked ? '訪客' : `訪客・${v.from}`, level: 2, visitor: true },
       };
@@ -2150,7 +2153,7 @@
     }
 
     // On leave (src/progress.js onLeave): regulars not seen today get a free
-    // desk downstairs with a sign and a layer of dust; when one of them is
+    // desk downstairs with a sign on it; when one of them is
     // back, they say so.
     setLeave(list) {
       list = this.plan.zones && this.plan.floor !== 2 && !this.compact ? list || [] : [];
@@ -3212,19 +3215,13 @@
     desk(dk, p) {
       const pal = this.pal;
       const { x, y } = dk;
-      for (const [lx, ly] of [[0.05, 0.05], [1.27, 0.05], [0.05, 0.67], [1.27, 0.67]]) {
-        this.box(x + lx, y + ly, 0, 0.08, 0.08, 0.72, pal.deskL, pal.deskL, pal.deskR);
-      }
-      this.box(x, y, 0.72, 1.4, 0.8, 0.07, pal.deskTop, pal.deskL, pal.deskR);
+      // The same desk as in 3D: an oak top on two white side panels, with a
+      // little drawer unit.
+      const panel = pal.panel, pL = this.shade(panel, -8), pR = this.shade(panel, -18);
+      for (const lx of [0.04, 1.3]) this.box(x + lx, y + 0.06, 0, 0.06, 0.68, 0.72, panel, pL, pR);
+      this.box(x + (dk.side === 's' ? 0.88 : 0.18), y + 0.12, 0.08, 0.34, 0.56, 0.5, panel, pL, pR);
+      this.box(x, y, 0.72, 1.4, 0.8, 0.07, pal.deskTop, this.shade(pal.deskTop, -16), this.shade(pal.deskTop, -26));
       const worker = p && p.mode === 'work' ? p : null;
-      const away = !p && this.leaveDesk(dk);
-      if (away) {
-        // A layer of dust.
-        const c = this.ctx;
-        c.save(); c.fillStyle = 'rgba(150,145,135,.45)';
-        for (let i = 0; i < 40; i++) { const q = this.iso(x + 0.05 + ((i * 0.37) % 1.3), y + 0.05 + ((i * 0.61) % 0.7), 0.795); c.fillRect(q.x, q.y, 1.3, 1.3); }
-        c.restore();
-      }
       if (dk.side === 's') {
         const mx = x + 0.42, my = y + 0.1, mz = 0.79;
         this.box(mx + 0.22, my + 0.04, mz, 0.1, 0.1, 0.18, pal.monitor, pal.monitor, pal.monitor);
@@ -3467,6 +3464,51 @@
       return { pose: 'stand', face: 'front', act: null, sitZ: 0 };
     }
 
+    // Hair in 2D, one of the thirteen styles. Called twice: `back` before the
+    // head is drawn (what hangs behind it), then after (what sits on top).
+    // `face`: seen from the front (otherwise the back of the head).
+    hair2d(p, hy, R, face, back) {
+      const c = this.ctx, st = p.hairStyle || 0;
+      const blob = (x, y, rx, ry, rot = 0) => { c.beginPath(); c.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); c.fill(); };
+      const tri = (x, y, a, len, w) => { c.beginPath(); c.moveTo(x + Math.cos(a + Math.PI / 2) * w, y + Math.sin(a + Math.PI / 2) * w); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.lineTo(x - Math.cos(a + Math.PI / 2) * w, y - Math.sin(a + Math.PI / 2) * w); c.fill(); };
+      c.fillStyle = p.hair;
+      if (back) {
+        if (st === 4) blob(R * 0.75, hy + R * 0.35, 3, 6.5, -0.4); // ponytail
+        if (st === 5) for (const s of [-1, 1]) blob(s * (R + 1.5), hy + 3, 3.2, 7, s * 0.3); // twin tails
+        if (st === 6) this.roundRect(-R - 1, hy - 2, R * 2 + 2, R + 7, 4, p.hair); // long hair down the back
+        return;
+      }
+      if (st === 11) { // knitted beanie with a bobble
+        const knit = this.shade(p.shirt, 28);
+        c.fillStyle = knit;
+        c.beginPath(); c.arc(0, hy - 1, R + 0.8, Math.PI, Math.PI * 2); c.fill();
+        this.roundRect(-R - 1, hy - 3.5, R * 2 + 2, 3.5, 1.5, this.shade(knit, -18));
+        c.fillStyle = '#f2ead8'; blob(0, hy - R - 2.5, 2.8, 2.8);
+        if (!face) { c.fillStyle = p.hair; c.fillRect(-R + 1.5, hy, R * 2 - 3, 4); }
+        return;
+      }
+      if (!face) { // the back of the head: all hair
+        c.beginPath(); c.arc(0, hy - 0.5, R + 0.3, 0, Math.PI * 2); c.fill();
+      } else {
+        const thin = st === 10;
+        c.beginPath(); c.arc(0, hy - 1.5, R + (thin ? 0 : 0.4), Math.PI * (thin ? 1.12 : 1.02), Math.PI * (thin ? 1.88 : 1.98)); c.fill();
+        if (!thin) { blob(-R * 0.45, hy - R * 0.38, R * 0.42, 2.2, 0.25); blob(R * 0.4, hy - R * 0.4, R * 0.45, 2.2, -0.2); } // fringe
+      }
+      switch (st) {
+        case 1: if (face) { c.fillRect(-R - 0.4, hy - 2.5, 3.2, 9); c.fillRect(R - 2.8, hy - 2.5, 3.2, 9); } else c.fillRect(-R + 0.5, hy, R * 2 - 1, 7); break; // bob
+        case 2: blob(0, hy - R - 1.5, 3.8, 3.8); break; // bun
+        case 3: for (let i = 0; i < 5; i++) tri(-6 + i * 3, hy - R + 1 + Math.abs(i - 2) * 1.2, -Math.PI / 2 + (i - 2) * 0.35, 5.5, 1.8); break; // spikes
+        case 5: c.fillStyle = '#e0525a'; for (const s of [-1, 1]) blob(s * (R - 0.5), hy - 3.5, 1.5, 1.5); break; // twin tails' ties
+        case 6: if (face) { c.fillRect(-R - 0.6, hy - 2.5, 3.4, 11); c.fillRect(R - 2.8, hy - 2.5, 3.4, 11); } break; // long
+        case 7: for (let i = 0; i < 9; i++) { const a = Math.PI * (0.92 + i * 0.145); blob(Math.cos(a) * R, hy - 1 + Math.sin(a) * R, 3.2, 3.2); } break; // curly
+        case 8: if (face) blob(-R * 0.35, hy - R * 0.55, 6.5, 3.2, -0.35); break; // side swoop
+        case 9: for (const s of [-1, 1]) blob(s * R * 0.68, hy - R * 0.82, 3.4, 3.4); break; // space buns
+        case 10: for (let i = 0; i < 5; i++) tri(0, hy - R + 2 + i * 0.2, -Math.PI / 2 + (i - 2) * 0.32, 6.5, 2); break; // mohawk
+        case 12: for (const [x, a] of [[-5, -2.2], [-1, -1.7], [3, -1.2], [6, -0.7]]) tri(x, hy - R + 2 + Math.abs(x) * 0.3, a, 4.5, 1.6); break; // messy
+        default: break;
+      }
+    }
+
     person(p) {
       const c = this.ctx;
       const t = this.t / 1000;
@@ -3530,19 +3572,19 @@
       } else {
         // Dangling legs kick when held.
         const leg = held ? Math.sin(t * 11 + p.phase) * 2 : step * 2;
-        c.fillRect(-5, -10, 4, 10 + leg);
-        c.fillRect(1, -10, 4, 10 - leg);
+        c.fillRect(-5.5, -7, 5, 7 + leg);
+        c.fillRect(0.5, -7, 5, 7 - leg);
         c.fillStyle = '#2a2a2a';
-        c.fillRect(-5, -1 + leg, 4, 2);
-        c.fillRect(1, -1 - leg, 4, 2);
+        c.fillRect(-6, -1.5 + leg, 6, 2.5);
+        c.fillRect(0, -1.5 - leg, 6, 2.5);
       }
-      const hip = seated ? -4 : -10;
+      const hip = seated ? -4 : -7;
       // Shirt with light from the upper left, and a soft outline.
       {
-        const g = c.createLinearGradient(-7, hip - 13, 7, hip + 1);
+        const g = c.createLinearGradient(-8, hip - 13, 8, hip + 1);
         g.addColorStop(0, this.shade(p.shirt, 18)); g.addColorStop(1, this.shade(p.shirt, -14));
-        this.roundRect(-7, hip - 13, 14, 14, 3, g);
-        c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 0.8; c.stroke();
+        this.roundRect(-8, hip - 13, 16, 14, 4.5, g);
+        c.strokeStyle = 'rgba(43,36,32,.5)'; c.lineWidth = 0.9; c.stroke();
         c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(-7, hip - 1.5, 14, 1.5);
       }
       // What their level lets them wear: a lanyard, then a tie.
@@ -3564,9 +3606,9 @@
         case 'held': {
           // Arms flailing.
           const k = Math.sin(t * 13 + p.phase) * 3;
-          c.fillRect(-10, hip - 24 + k, 3, 13);
-          c.fillRect(7, hip - 24 - k, 3, 13);
-          hand(-8.5, hip - 25 + k); hand(8.5, hip - 25 - k);
+          c.fillRect(-13, hip - 24 + k, 3, 13);
+          c.fillRect(10, hip - 24 - k, 3, 13);
+          hand(-11.5, hip - 25 + k); hand(11.5, hip - 25 - k);
           break;
         }
         case 'clipboard': {
@@ -3582,8 +3624,8 @@
         case 'sign': {
           // Holding up a sign over their head, bobbing it.
           const k = Math.abs(Math.sin(t * 3 + p.phase)) * 2;
-          c.fillRect(-8, hip - 30 - k, 3, 19 + k);
-          c.fillRect(5, hip - 30 - k, 3, 19 + k);
+          c.fillRect(-12, hip - 30 - k, 3, 19 + k);
+          c.fillRect(9, hip - 30 - k, 3, 19 + k);
           this.roundRect(-14, hip - 44 - k, 28, 14, 2, '#fffdf4', STATUS_COLOR.waiting);
           c.fillStyle = STATUS_COLOR.waiting;
           c.font = '800 8px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
@@ -3613,9 +3655,9 @@
         }
         case 'stretch': {
           const k = Math.sin(t * 2 + p.phase) * 1;
-          c.fillRect(-7, hip - 27 + k, 3, 15);
-          c.fillRect(4, hip - 27 - k, 3, 15);
-          hand(-5.5, hip - 28 + k); hand(5.5, hip - 28 - k);
+          c.fillRect(-12, hip - 27 + k, 3, 15);
+          c.fillRect(9, hip - 27 - k, 3, 15);
+          hand(-10.5, hip - 28 + k); hand(10.5, hip - 28 - k);
           break;
         }
         case 'sip': {
@@ -3776,9 +3818,9 @@
         case 'cheer': {
           // Both arms up, bouncing.
           const k = Math.abs(Math.sin(t * 9 + p.phase)) * 3;
-          c.fillRect(-9, hip - 27 - k, 3, 15);
-          c.fillRect(6, hip - 27 - k, 3, 15);
-          hand(-7.5, hip - 28 - k); hand(7.5, hip - 28 - k);
+          c.fillRect(-13, hip - 27 - k, 3, 15);
+          c.fillRect(10, hip - 27 - k, 3, 15);
+          hand(-11.5, hip - 28 - k); hand(11.5, hip - 28 - k);
           break;
         }
         case 'facepalm': {
@@ -3893,16 +3935,18 @@
 
       const napping = st.act === 'nap';
       const lean = { lookup: -1.5, leanback: -1, deskread: 1, typefast: 0.6, peek: -0.5, stretch: -1, neck: 1.2, petcat: 2, scroll: 1.5, laptop: 1, game: 1.2, read: 0.8, watch: -1 }[st.act] || 0;
+      const R = 9.5; // head radius: about half their height
       const hy = hip - 20 + (napping ? 7 : 0) + lean + (st.act === 'think' || st.act === 'tap' ? Math.sin(t * 1.5 + p.phase) * 0.6 : 0)
         + (st.act === 'laugh' ? -Math.abs(Math.sin(t * 7 + p.phase)) * 1.4 : 0);
+      const faceOn = front && !napping;
+      this.hair2d(p, hy, R, faceOn, true);
       c.fillStyle = p.skin;
-      c.beginPath(); c.arc(0, hy, 7, 0, Math.PI * 2); c.fill();
-      c.strokeStyle = 'rgba(0,0,0,.25)'; c.lineWidth = 0.8; c.stroke();
-      c.fillStyle = p.hair;
-      if (front && !napping) {
-        c.beginPath(); c.arc(0, hy - 1.5, 7.3, Math.PI * 1.05, Math.PI * 1.95); c.fill();
-        if (p.hairStyle === 1) { c.fillRect(-7.3, hy - 2, 2.5, 8); c.fillRect(4.8, hy - 2, 2.5, 8); }
-        if (p.hairStyle === 2) { c.beginPath(); c.arc(0, hy - 8, 3.2, 0, Math.PI * 2); c.fill(); }
+      c.beginPath(); c.arc(0, hy, R, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = 'rgba(43,36,32,.55)'; c.lineWidth = 0.9; c.stroke();
+      this.hair2d(p, hy, R, faceOn, false);
+      if (faceOn) {
+        // The face, drawn a size up to suit the big head.
+        c.save(); c.translate(0, hy + 1); c.scale(1.3, 1.3); c.translate(0, -hy);
         c.fillStyle = '#2a2018';
         const sleepy = s.status === 'idle' && !held;
         const blink = Math.sin(t * 0.7 + p.phase * 3) > 0.985;
@@ -3949,19 +3993,16 @@
         } else if (s.status === 'error' && p.mode === 'work') {
           c.beginPath(); c.arc(0, hy + 4.5, 2, 1.15 * Math.PI, 1.85 * Math.PI); c.stroke();
         }
-      } else {
-        c.beginPath(); c.arc(0, hy - 0.5, 7.2, 0, Math.PI * 2); c.fill();
-        if (p.hairStyle === 2) { c.beginPath(); c.arc(0, hy - 7, 3.2, 0, Math.PI * 2); c.fill(); }
-        if (p.hairStyle === 1) c.fillRect(-6, hy, 12, 8);
+        c.restore();
       }
       if (st.act === 'arcade' || st.act === 'beanbag' || (lv >= 3 && lv < 5)) {
         c.strokeStyle = lv >= 3 ? '#e2e2e6' : '#222'; c.lineWidth = 2;
-        c.beginPath(); c.arc(0, hy, 8, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
-        if (lv >= 3) { c.fillStyle = '#3a3a44'; c.fillRect(-9.5, hy - 2.5, 3, 5); c.fillRect(6.5, hy - 2.5, 3, 5); }
+        c.beginPath(); c.arc(0, hy, R + 1, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+        if (lv >= 3) { c.fillStyle = '#3a3a44'; c.fillRect(-R - 2.5, hy - 3, 3.5, 6); c.fillRect(R - 1, hy - 3, 3.5, 6); }
       }
       if (lv >= 5) {
         // A crown for the old hands.
-        const cy = hy - (napping ? 6 : 8.5);
+        const cy = hy - R - (napping ? -1 : 1);
         c.fillStyle = '#f2c230';
         c.beginPath(); c.moveTo(-5, cy); c.lineTo(-5, cy - 4); c.lineTo(-2.5, cy - 2); c.lineTo(0, cy - 5.5); c.lineTo(2.5, cy - 2); c.lineTo(5, cy - 4); c.lineTo(5, cy); c.closePath(); c.fill();
         c.fillStyle = '#c0392b'; c.beginPath(); c.arc(0, cy - 1.4, 0.9, 0, Math.PI * 2); c.fill();
@@ -3989,7 +4030,7 @@
       }
 
       // Bubbles go above the sign when one is held up.
-      const headTop = y + (st.act === 'sign' ? hip - 46 : hy - 8) * sc;
+      const headTop = y + (st.act === 'sign' ? hip - 46 : hy - R - 1) * sc;
       if (!p.me && !p.visitor) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
     }

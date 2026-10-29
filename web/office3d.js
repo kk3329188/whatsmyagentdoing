@@ -1,5 +1,6 @@
 // High-quality office: same floor plan and behaviour as the 2D office
-// (office.js), rendered in 3D with Kenney's CC0 models (assets/kenney).
+// (office.js), rendered in 3D; people and furniture are made in code
+// (chibi.js, furniture.js).
 // Bubbles and name tags are drawn by the 2D code on a canvas overlay.
 // Source file: `npm run build` bundles it with three.js into public/office3d.js.
 import * as THREE from 'three';
@@ -9,13 +10,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
 import { makeChibi, animateChibi, dressChibi, HAIR_STYLES } from './chibi.js';
-
-const FURNITURE = ['desk', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse', 'laptop',
-  'pottedPlant', 'plantSmall1', 'plantSmall2', 'plantSmall3', 'kitchenCabinet', 'kitchenCoffeeMachine',
-  'kitchenSink', 'kitchenFridgeLarge', 'kitchenMicrowave', 'stoolBar', 'tableRound', 'table',
-  'chairModernCushion', 'bookcaseOpen', 'books', 'loungeSofa', 'loungeChairRelax', 'tableCoffee', 'rugRectangle',
-  'lampRoundFloor', 'lampSquareTable', 'televisionModern', 'cabinetTelevision', 'trashcan',
-  'coatRackStanding', 'radio', 'speaker', 'toaster', 'cardboardBoxClosed'];
+import { makeFurniture, soft, outlineOf, roundedBox } from './furniture.js';
 
 const STATUS_COLOR = {
   thinking: 0x8b6be6, tool: 0x3b8ee0, typing: 0x22a874, waiting: 0xe09412, error: 0xde4b40,
@@ -154,9 +149,9 @@ export class Office3D extends window.Office {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
     const get = (url) => new Promise((ok, fail) => loader.load(url, ok, undefined, fail));
-    // People are made in code (chibi.js); only furniture models load here.
-    const furn = await Promise.all(FURNITURE.map((f) => get(`/assets/kenney/furniture/${f}.glb`).then((g) => [f, g.scene])));
-    this.models = Object.fromEntries(furn);
+    // People (chibi.js) and the office furniture (furniture.js) are made in
+    // code; scene packs may still bring model files of their own.
+    this.models = makeFurniture();
     if (this.sceneDef) {
       const extra = [...new Set(this.sceneDef.props.filter((p) => p.f && !this.models[p.f]).map((p) => p.f))];
       const base = await Promise.all(extra.map((f) => get(`/assets/kenney/furniture/${f}.glb`).then((g) => [f, g.scene])));
@@ -174,7 +169,7 @@ export class Office3D extends window.Office {
       m.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = true; o.receiveShadow = true;
-        if (name.startsWith('scene:')) return;
+        if (name.startsWith('scene:') || m.userData.made) return;
         for (const mat of [].concat(o.material)) {
           if (!mat || !mat.color || calmed.has(mat)) continue;
           calmed.add(mat);
@@ -218,8 +213,13 @@ export class Office3D extends window.Office {
       c.getHSL(hsl);
       color = c.setHSL(hsl.h, hsl.s * 0.75, hsl.l > 0.6 ? 0.6 + (hsl.l - 0.6) * 0.6 : hsl.l);
     }
-    const mat = opts.mat || new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.8, metalness: opts.metal ?? 0, ...(opts.emissive ? { emissive: opts.emissive, emissiveIntensity: opts.ei ?? 1 } : {}) });
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    // Plain solid pieces take the furniture's look: soft corners, cartoon
+    // shading and a thin outline. Glass, lights and metal stay as they are.
+    const drawn = !opts.mat && !opts.emissive && !((opts.metal ?? 0) > 0.3) && color != null;
+    const mat = opts.mat || (drawn ? soft(color) : new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.8, metalness: opts.metal ?? 0, ...(opts.emissive ? { emissive: opts.emissive, emissiveIntensity: opts.ei ?? 1 } : {}) }));
+    const small = Math.min(w, h, d);
+    const m = new THREE.Mesh(drawn && small >= 0.05 ? roundedBox(w, h, d, 0.018) : new THREE.BoxGeometry(w, h, d), mat);
+    if (drawn && small >= 0.03 && opts.shadow !== false) outlineOf(m);
     m.position.set(x + w / 2, z + h / 2, y + d / 2);
     m.castShadow = opts.shadow !== false;
     m.receiveShadow = true;
@@ -427,27 +427,6 @@ export class Office3D extends window.Office {
   }
 
   // Dust sheets on the desks of those on leave (made once per desk).
-  dustDesks() {
-    this.dust = this.dust || new Map();
-    const want = new Set();
-    for (const dk of this.plan.desks) if (this.leaveDesk(dk)) want.add(dk);
-    for (const [dk, m] of this.dust) if (!want.has(dk) || !this.room || m.parent !== this.room) { if (m.parent) m.parent.remove(m); this.dust.delete(dk); }
-    for (const dk of want) {
-      if (this.dust.has(dk) || !this.room) continue;
-      if (!this.dustMat) {
-        const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-        const c = cv.getContext('2d');
-        for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(160,152,140,${0.25 + (i % 5) * 0.08})`; c.fillRect((i * 37) % 64, (i * 23 + (i >> 3)) % 64, 2, 2); }
-        this.dustMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false });
-      }
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.72), this.dustMat);
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(dk.x + 0.7, DESK_H + 0.006, dk.y + 0.4);
-      this.room.add(m);
-      this.dust.set(dk, m);
-    }
-  }
-
   // Rain streaks or snowflakes over the window glass (scrolled each frame).
   weatherTexture(kind) {
     this.wxTex = this.wxTex || {};
@@ -521,7 +500,7 @@ export class Office3D extends window.Office {
     // The monitor's own screen quad lights up in the worker's status colour.
     if (mon) {
       let quad = null;
-      mon.traverse((o) => { if (o.isMesh && o.geometry.attributes.position.count === 4) quad = o; });
+      mon.traverse((o) => { if (o.isMesh && (o.userData.screen || (!quad && o.geometry.attributes.position.count === 4))) quad = o; });
       if (quad) {
         quad.material = new THREE.MeshStandardMaterial({ color: 0x1b1e24, emissive: 0x000000, roughness: 0.35 });
         this.screens.set(dk, quad);
@@ -672,7 +651,7 @@ export class Office3D extends window.Office {
         else this.boxMesh(p.x, p.y - 0.04, 0, p.w, 0.08, 0.12, dark ? 0x2b2926 : 0xcfc5b3);
         break;
       case 'meetingTable':
-        this.place('table', p.x, p.y, p.w, p.d, { h: 0.75 });
+        this.place('table', p.x, p.y, p.w, p.d, { h: 0.75, stretch: true });
         this.place('laptop', p.x + 1.2, p.y + 0.45, 0.45, 0.35, { y0: 0.75 });
         break;
       case 'chair':
@@ -767,7 +746,7 @@ export class Office3D extends window.Office {
         this.place('loungeSofa', p.x - 0.1, p.y - 0.15, p.w + 0.2, p.d + 0.2, { h: 0.8, stretch: true });
         break;
       case 'coffeeTable':
-        this.place('tableCoffee', p.x, p.y, p.w, p.d, { h: 0.35 });
+        this.place('tableCoffee', p.x, p.y, p.w, p.d, { h: 0.35, stretch: true });
         this.place('radio', p.x + 1.0, p.y + 0.2, 0.3, 0.18, { y0: 0.35, h: 0.18 });
         break;
       case 'beanbag': {
@@ -850,7 +829,7 @@ export class Office3D extends window.Office {
         break;
       }
       case 'rug':
-        this.place('rugRectangle', p.x, p.y, p.w, p.d, { y0: 0.004 });
+        this.place('rugRectangle', p.x, p.y, p.w, p.d, { y0: 0.004, h: 0.016, stretch: true });
         break;
     }
   }
@@ -1563,7 +1542,7 @@ export class Office3D extends window.Office {
     let a = this.actors.get(p.key);
     if (a) return a;
     // A chibi of their own: skin, hair and clothes from who they are.
-    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: (p.h >>> 3) % HAIR_STYLES });
+    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.hairStyle ?? (p.h >>> 3) % HAIR_STYLES }); // the same style as in 2D
     const obj = rig.root;
     if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
     rig.sign.add(this.signBoard());
@@ -1706,8 +1685,8 @@ export class Office3D extends window.Office {
     return v;
   }
 
-  // Kenney's `sit` clip is a sit-on-the-floor pose (seat at the model's
-  // origin), so lift the character to whatever surface is under the seat
+  // A seated figure has the seat of its trousers at its origin, so lift the
+  // character to whatever surface is under the seat
   // point: chair cushion, stool, sofa or beanbag. Measured once per spot.
   seatHeight(x, y, fallback) {
     const key = `${x.toFixed(2)},${y.toFixed(2)}`;
@@ -1849,7 +1828,6 @@ export class Office3D extends window.Office {
         v.set(dk.x + 0.7, DESK_H + 0.55, dk.y + 0.4).project(this.camera);
         this.leaveSign((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, who);
       }
-      this.dustDesks();
     }
     if (!this.compact) for (const d of this.podDepts()) {
       v.set(d.x, d.z, d.y).project(this.camera);

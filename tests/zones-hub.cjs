@@ -1142,7 +1142,7 @@ test('your bot answered: the secretary walks the visitor to the door, waves them
   assert.ok(host.path.length, 'back to the desk');
 });
 
-test('on leave: a free desk downstairs gets their sign and dust; back again, they say so', () => {
+test('on leave: a free desk downstairs gets their sign; back again, they say so', () => {
   const o = load(true);
   o.label = (s) => s.title;
   const w = at('tool');
