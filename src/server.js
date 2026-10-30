@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const { guessFromPrompts } = require('./lang');
@@ -189,13 +190,79 @@ function snapshot(watcher, opts) {
   return { now, lang: opts.demo ? null : promptLanguage(raw), privacy: !!(opts.privacy || opts.demo), office: opts.demo ? null : { ...progress.office(), onLeave: progress.onLeave(new Set(sessions.map((s) => s.key)), now, leaveTitle).map((x) => (opts.privacy ? { ...x, title: '員工' } : x)) }, sessions, visitors: visits, weather: opts.demo ? null : weather.tick(now) };
 }
 
+// Public mode (--public): what a stranger with the link may see. Built from a
+// whitelist, so a field added to view() later stays home until listed here.
+// Ids become salted aliases (stable while this process runs), projects become
+// "部門 A", "部門 B"…, and every bit of text is dropped.
+const SECRETARY_TITLE = /秘書|總機|secretary/i;
+const WORK_KIND = [[/^(Bash|Shell):/, 'Bash:'], [/^(Edit|Write|MultiEdit|NotebookEdit|Editing)\b/, 'Edit'], [/^Subagent:/, 'Subagent:'],
+  [/slack|send_message|SendMessage|relay/i, 'SendMessage'], [/update_plan|wrap_up|progress|TodoWrite|Updating todo/, 'TodoWrite']];
+const depts = new Map(); // repository -> letter, in order of first sight
+function publicView(snap, salt) {
+  const alias = (id) => (id == null ? null : crypto.createHmac('sha256', salt).update(String(id)).digest('hex').slice(0, 10));
+  const key = (k) => { const i = String(k).indexOf(':'); return `${String(k).slice(0, i)}:${alias(String(k).slice(i + 1))}`; };
+  const dept = (s) => {
+    const cwd = String(s.cwd || '');
+    const m = cwd.match(/^(.*?)\/\.(?:claude|codex)\/worktrees\//);
+    const repo = (m ? m[1] : cwd).split('/').filter(Boolean).pop() || s.project || '';
+    const k = `${salt}|${repo}`;
+    if (!depts.has(k)) depts.set(k, String.fromCharCode(65 + (depts.size % 26)));
+    return `部門 ${depts.get(k)}`;
+  };
+  const num = (v) => (Number.isFinite(v) ? v : null);
+  const word = (v) => (typeof v === 'string' && /^[a-z]{1,12}$/.test(v) ? v : null);
+  const kind = (a) => (a ? (WORK_KIND.find(([re]) => re.test(a)) || [null, 'Read'])[1] : null);
+  const kinds = (o) => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => word(k) && Number.isFinite(v)));
+  const badge = (b) => ({ id: word(b.id) || String(b.id).slice(0, 20), name: b.name, emoji: b.emoji, at: num(b.at) });
+  const sessions = (snap.sessions || []).map((s) => {
+    const name = dept(s);
+    return {
+      key: key(s.key), agent: s.agent, id: alias(s.id), parentId: alias(s.parentId), subagent: !!s.subagent,
+      cwd: `/${name}`, project: name, title: !s.subagent && SECRETARY_TITLE.test(s.title || '') ? '秘書' : null,
+      status: s.status, activity: kind(s.activity), task: word(s.task),
+      outcome: s.outcome ? { at: num(s.outcome.at), task: word(s.outcome.task), ok: !!s.outcome.ok } : null,
+      kinds: kinds(s.kinds), stuck: s.stuck ? true : null, ask: s.ask ? true : null, needs: s.needs ? true : null,
+      lastEventAt: num(s.lastEventAt), startedAt: num(s.startedAt), turnStartedAt: num(s.turnStartedAt),
+      level: num(s.level), xp: num(s.xp), next: num(s.next), badges: (s.badges || []).map(badge),
+      talk: (s.talk || []).map((t) => ({ key: key(t.key), dir: t.dir === 'in' ? 'in' : 'out', at: num(t.at), text: null })),
+      recent: [], controllable: false, pending: 0,
+    };
+  });
+  const o = snap.office;
+  const t = (o && o.today) || {};
+  const office = o && {
+    turns: num(o.turns), tools: num(o.tools),
+    badges: (o.badges || []).map((b) => ({ ...badge(b), desc: b.desc, holders: (b.holders || []).map((h) => ({ key: key(h.key), at: num(h.at) })) })),
+    recentBadges: (o.recentBadges || []).map((x) => ({ key: key(x.key), id: x.id, at: num(x.at) })),
+    today: {
+      date: t.date, turns: num(t.turns), tools: num(t.tools), answered: num(t.answered), avgWaitMs: num(t.avgWaitMs),
+      top: (t.top || []).map((r) => ({ key: key(r.key), turns: num(r.turns), tools: num(r.tools) })),
+      longest: (t.longest || []).map((w) => ({ key: key(w.key), ms: num(w.ms) })),
+      spans: Object.fromEntries(Object.entries(t.spans || {}).map(([k, v]) => [key(k), { title: null, s: v.s || [] }])),
+    },
+    onLeave: (o.onLeave || []).map((x) => ({ key: key(x.key), title: '員工', since: num(x.since), days: num(x.days) })),
+  };
+  const w = snap.weather;
+  return {
+    now: snap.now, lang: snap.lang, privacy: true, public: true, sessions, office,
+    visitors: (snap.visitors || []).map((v) => ({ kind: v.kind === 'reply' ? 'reply' : 'visit', id: alias(v.id), conv: alias(v.conv), from: '訪客', text: null, topic: null, at: num(v.at) })),
+    weather: w ? { code: num(w.code), temp: num(w.temp), day: !!w.day, kind: w.kind, emoji: w.emoji, at: num(w.at) } : null,
+  };
+}
+
+// Paths a public server answers; everything else (every POST included) is 404.
+const PUBLIC_OK = (p) => !!STATIC[p] || p.startsWith('/assets/') || p.startsWith('/scenes/') || p === '/api/scenes' || p === '/api/ping' || p === '/events';
+const PUBLIC_MAX_VIEWERS = 50;
+
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const shape = opts.public ? (s) => publicView(s, salt) : (s) => s;
   const clients = new Set();
   let last = '';
 
   const push = (force) => {
     let body;
-    try { body = JSON.stringify(snapshot(watcher, opts)); } catch (e) { console.error('snapshot failed:', e.message); return; }
+    try { body = JSON.stringify(shape(snapshot(watcher, opts))); } catch (e) { console.error('snapshot failed:', e.message); return; }
     // Compare without the timestamp so idle ticks don't spam clients.
     const sig = body.replace(/^\{"now":\d+,/, '{');
     if (!force && sig === last) return;
@@ -206,17 +273,29 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   // Status can flip with no new log lines (see view()), so re-check on a clock.
   setInterval(() => push(false), 5000).unref();
   setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 20000).unref();
-  if (!opts.demo) setInterval(() => progress.save(), 10000).unref();
+  // A public server is a second reader: the main one keeps the books.
+  if (!opts.demo && !opts.public) setInterval(() => progress.save(), 10000).unref();
 
   const server = http.createServer((req, res) => {
     // Refuse anything not addressed to loopback (blocks DNS-rebinding pages
     // from reading your prompts through this server).
+    // A public server sits behind a tunnel, so any host goes; it only
+    // answers reads, and the stream needs the key from the link.
     const host = String(req.headers.host || '').replace(/:\d+$/, '');
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(host)) {
+    if (!opts.public && !['localhost', '127.0.0.1', '[::1]'].includes(host)) {
       res.writeHead(403).end();
       return;
     }
     const url = new URL(req.url, 'http://localhost');
+    if (opts.public) {
+      if (req.method !== 'GET' || !PUBLIC_OK(url.pathname)) { res.writeHead(404).end(); return; }
+      if (url.pathname === '/events') {
+        const k = Buffer.from(url.searchParams.get('k') || '');
+        const want = Buffer.from(String(opts.publicKey || ''));
+        if (!want.length || k.length !== want.length || !crypto.timingSafeEqual(k, want)) { res.writeHead(403).end(); return; }
+        if (clients.size >= PUBLIC_MAX_VIEWERS) { res.writeHead(503).end(); return; }
+      }
+    }
     if (STATIC[url.pathname]) {
       const [file, type] = STATIC[url.pathname];
       res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
@@ -348,7 +427,7 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
         'cache-control': 'no-store',
         connection: 'keep-alive',
       });
-      res.write(`data: ${JSON.stringify(snapshot(watcher, opts))}\n\n`);
+      res.write(`data: ${JSON.stringify(shape(snapshot(watcher, opts)))}\n\n`);
       clients.add(res);
       req.on('close', () => clients.delete(res));
     } else {
@@ -358,4 +437,4 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   return server;
 }
 
-module.exports = { createServer, snapshot, latestSegments };
+module.exports = { createServer, snapshot, latestSegments, publicView };

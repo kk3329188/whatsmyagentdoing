@@ -2,6 +2,7 @@
 'use strict';
 
 const http = require('http');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { Watcher, CLAUDE_DIR, CODEX_DIR, GEMINI_DIR } = require('../src/watcher');
 const { DemoWatcher } = require('../src/demo');
@@ -20,6 +21,11 @@ Options:
   --hours <n>       Show sessions active in the last n hours (default 24)
   --no-open         Don't open the browser
   --private         Hide prompts, replies and titles; show status only
+  --public          A read-only view for anyone with the link (port 4546 unless -p):
+                    no text, paths or project names, no buttons; the link carries a key
+  --key <k>         The key for --public (default: a new random one each start)
+  --tunnel          With --public: open a Cloudflare quick tunnel (needs cloudflared)
+                    and print the https link to share
   --json            Print one snapshot as JSON and exit
   --demo            Show a made-up team instead of your sessions
   --stop            Stop a running dashboard
@@ -36,13 +42,18 @@ Reads (never writes):
 Override with CLAUDE_CONFIG_DIR / CODEX_HOME / GEMINI_CLI_HOME.`;
 
 function parseArgs(argv) {
-  const o = { port: 4545, hours: 24, open: true, privacy: false, json: false, demo: false, stop: false, scenes: false, scene: null, removeScene: null, update: false };
+  const o = { port: 4545, hours: 24, open: true, privacy: false, json: false, demo: false, stop: false, scenes: false, scene: null, removeScene: null, update: false, public: false, publicKey: null, tunnel: false };
+  let port = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') { console.log(HELP); process.exit(0); }
     else if (a === '-v' || a === '--version') { console.log(pkg.version); process.exit(0); }
-    else if (a === '-p' || a === '--port') o.port = Number(argv[++i]);
-    else if (a.startsWith('--port=')) o.port = Number(a.slice(7));
+    else if (a === '-p' || a === '--port') { o.port = Number(argv[++i]); port = true; }
+    else if (a.startsWith('--port=')) { o.port = Number(a.slice(7)); port = true; }
+    else if (a === '--public') o.public = true;
+    else if (a === '--key') o.publicKey = argv[++i];
+    else if (a.startsWith('--key=')) o.publicKey = a.slice(6);
+    else if (a === '--tunnel') o.tunnel = true;
     else if (a === '--hours') o.hours = Number(argv[++i]);
     else if (a.startsWith('--hours=')) o.hours = Number(a.slice(8));
     else if (a === '--no-open') o.open = false;
@@ -58,6 +69,14 @@ function parseArgs(argv) {
     else { console.error(`Unknown option: ${a}\n\n${HELP}`); process.exit(1); }
   }
   if (!Number.isFinite(o.port) || !Number.isFinite(o.hours)) { console.error(HELP); process.exit(1); }
+  if (o.tunnel && !o.public) { console.error('--tunnel needs --public'); process.exit(1); }
+  if (o.public) {
+    // Status only, on its own port, so your own full view keeps running beside it.
+    o.privacy = true;
+    if (!port) o.port = 4546;
+    o.publicKey = o.publicKey || crypto.randomBytes(12).toString('base64url');
+    if (!/^[\w-]{8,}$/.test(o.publicKey)) { console.error('--key: at least 8 letters, digits, - or _'); process.exit(1); }
+  }
   return o;
 }
 
@@ -100,6 +119,28 @@ async function printUpdateHint() {
   if (i.updateAvailable) {
     console.log(`Update available: v${i.version} → v${i.latest}. Run with --update (or /myoffice update), or click "Update" on the page.`);
   }
+}
+
+// A Cloudflare quick tunnel to the public view: no account, a fresh
+// https://….trycloudflare.com address each time. Prints the link to share.
+function openTunnel(port, key) {
+  const share = (base) => `${base}/?k=${encodeURIComponent(key)}`;
+  let p;
+  try {
+    p = spawn('cloudflared', ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch { p = null; }
+  if (!p) return null;
+  let found = false;
+  const scan = (chunk) => {
+    const m = !found && String(chunk).match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+    if (m) { found = true; console.log(`Public link (anyone with it can watch): ${share(m[0])}`); }
+  };
+  p.stdout.on('data', scan);
+  p.stderr.on('data', scan);
+  p.on('error', (e) => console.error(e.code === 'ENOENT' ? 'cloudflared not found: install it (brew install cloudflared) or run your own tunnel to this port.' : `cloudflared: ${e.message}`));
+  p.on('exit', (code) => { if (code) console.error(`cloudflared stopped (exit ${code}); the public link is down.`); });
+  for (const sig of ['SIGINT', 'SIGTERM', 'exit']) process.once(sig, () => { try { p.kill(); } catch {} if (sig !== 'exit') process.exit(0); });
+  return p;
 }
 
 async function main() {
@@ -168,7 +209,7 @@ async function main() {
   }
 
   const query = o.scene ? `/?view=office&quality=high&scene=${encodeURIComponent(o.scene)}` : '';
-  if (await alreadyRunning(o.port)) {
+  if (!o.public && await alreadyRunning(o.port)) {
     const url = `http://localhost:${o.port}${query}`;
     console.log(`Already running at ${url}`);
     await printUpdateHint();
@@ -201,6 +242,14 @@ async function main() {
       const n = watcher.sessions().length;
       const openUrl = url + query;
       const what = o.demo ? 'demo team' : `${n} session${n === 1 ? '' : 's'} in the last ${o.hours}h`;
+      if (o.public) {
+        const local = `${url}/?k=${encodeURIComponent(o.publicKey)}`;
+        console.log(`whatsmyagentdoing v${updater.localVersion()} public view → ${local}  (${what}, read-only, Ctrl+C to stop)`);
+        if (o.tunnel) openTunnel(port, o.publicKey);
+        else console.log(`Share it through a tunnel to port ${port}, adding /?k=${o.publicKey} to the address.`);
+        if (o.open) openBrowser(local);
+        return;
+      }
       console.log(`whatsmyagentdoing v${updater.localVersion()} → ${url}  (${what}, Ctrl+C to stop)`);
       printUpdateHint();
       if (o.open) openBrowser(openUrl);

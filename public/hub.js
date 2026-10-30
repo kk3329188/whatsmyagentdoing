@@ -581,6 +581,7 @@
     if (box && document.activeElement !== box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
   function open(key) {
+    if (PUBLIC) return;
     if (openKey !== key) { draft = ''; flash = ''; relayFrom = null; }
     openKey = key;
     render();
@@ -940,6 +941,7 @@
   const PIP_PAGE = new URLSearchParams(location.search).get('pip') === '1';
 
   let PRIVATE = false;
+  let PUBLIC = false;
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
@@ -954,6 +956,8 @@
     },
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
+    // A public view has nothing to show or send for one person: clicks do nothing.
+    setPublic(v) { PUBLIC = !!v; if (PUBLIC && openKey) close(); },
     get openKey() { return openKey; },
   };
 })();
