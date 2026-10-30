@@ -180,6 +180,8 @@
   const pick = (arr, h, salt) => arr[(Math.imul(h ^ Math.imul(salt, 2654435761), 2246822519) >>> 0) % arr.length];
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  // A plain {} (from any realm), not a mesh, canvas or Map.
+  const isPlain = (v) => { const p = Object.getPrototypeOf(v); return p === null || (p.constructor && p.constructor.name === 'Object' && Object.getPrototypeOf(p) === null); };
 
   function palette() {
     const dark = !!window.OFFICE_FORCE_DARK || matchMedia('(prefers-color-scheme: dark)').matches;
@@ -4696,6 +4698,9 @@
     // ------------------------------------------------------------ frame
 
     frame(now) {
+      // A cap on the frame rate (3D sets it): the office looks the same at
+      // 30 a second and the computer does half the work.
+      if (this.minFrameMs && now - this.last < this.minFrameMs) return;
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
       this.t = now;
@@ -4721,7 +4726,7 @@
     planRefs() {
       if (this.refsFor === this.plan) return this.refs;
       const byObj = new Map(), byId = new Map();
-      const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+      const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && isPlain(v);
       const put = (o, id) => { if (!byObj.has(o)) { byObj.set(o, id); byId.set(id, o); } };
       for (const [k, v] of Object.entries(this.plan)) {
         if (k === 'grid' || k === 'items') continue;
@@ -4748,7 +4753,7 @@
         if (v.key && this.people.get(v.key) === v) return { $p: v.key };
         if (d > 5) return undefined;
         if (Array.isArray(v)) return v.map((x) => { const e = enc(x, d + 1); return e === undefined ? null : e; });
-        if (Object.getPrototypeOf(v) !== Object.prototype) return undefined; // meshes, canvases, Maps
+        if (!isPlain(v)) return undefined; // meshes, canvases, Maps
         const o = {};
         for (const [k, x] of Object.entries(v)) { if (k === 's') continue; const e = enc(x, d + 1); if (e !== undefined) o[k] = e; }
         return o;
@@ -4794,7 +4799,7 @@
         if (!o || typeof o !== 'object' || d > 6) return o;
         for (const [k, x] of Object.entries(o)) {
           if (x && typeof x === 'object' && x.$p != null && Object.keys(x).length === 1) o[k] = this.people.get(x.$p) || null;
-          else if (x && typeof x === 'object' && Object.getPrototypeOf(x) === Object.prototype || Array.isArray(x)) fix(x, d + 1);
+          else if (x && typeof x === 'object' && isPlain(x) || Array.isArray(x)) fix(x, d + 1);
         }
         return o;
       };
@@ -4831,6 +4836,9 @@
         Object.assign(p, d, keep || {});
         p.worldKeys = Object.keys(d);
         delete p.sk;
+        // Kept our own spot: glide onto theirs once the walking is done (a
+        // seat, the slot stool; you, walked with the keys, have no path at all).
+        p.goal = keep && (!p.path || !p.path.length) ? { x: d.x, y: d.y } : null;
         return p;
       };
       const seen = new Set();
@@ -4862,6 +4870,11 @@
       const off = this.t - (w.t || 0) - age * 1000;
       const slot = dec(w.slot);
       if (slot) for (const k of ['spinAt', 'next', 'winUntil']) if (typeof slot[k] === 'number') slot[k] += off;
+      // The same spin as before: keep our own timing (moving it by a few ms
+      // each update made the reels stutter); take the rest (credit, a win).
+      const same = slot && this.slot && w.slot && this.slotSpinHost === w.slot.spinAt;
+      if (same) for (const k of ['spinAt', 'from', 'to', 'dur', 'pos', 'winUntil']) slot[k] = this.slot[k];
+      this.slotSpinHost = w.slot ? w.slot.spinAt : null;
       this.slot = slot;
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
       for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
@@ -4884,8 +4897,18 @@
         if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
         else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
       };
-      for (const p of this.people.values()) walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1));
-      for (const v of (this.visitors || new Map()).values()) walk(v, SPEED);
+      const glide = (p) => {
+        if (!p || !p.goal || (p.path && p.path.length)) return;
+        const dx = p.goal.x - p.x, dy = p.goal.y - p.y, d = Math.hypot(dx, dy);
+        // Quick when far, gentle when close: no stepping, no overshoot.
+        const v = Math.max(SPEED * 1.4, d * 4) * dt;
+        if (d <= v || d < 0.005) { p.x = p.goal.x; p.y = p.goal.y; p.goal = null; return; }
+        if (d > 0.05) p.walkFace = dx + dy >= 0 ? 'front' : 'back';
+        p.x += (dx / d) * v; p.y += (dy / d) * v;
+      };
+      for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1)); glide(p); }
+      for (const v of (this.visitors || new Map()).values()) { walk(v, SPEED); glide(v); }
+      if (this.me) { walk(this.me, SPEED); glide(this.me); }
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);
       const sl = this.slot;

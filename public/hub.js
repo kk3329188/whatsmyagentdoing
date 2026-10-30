@@ -1000,6 +1000,8 @@
     },
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
+    setSound(v) { Sound.set(!!v); if (v) Sound.unlock(); },
+    get soundOn() { return Sound.on; },
     // A public view has nothing to show or send for one person: clicks do nothing.
     setPublic(v, co) { PUBLIC = !!v; PUBLIC_CO = PUBLIC ? String(co || '').trim().slice(0, 24) : ''; if (PUBLIC && openKey) close(); },
     get public() { return PUBLIC; },

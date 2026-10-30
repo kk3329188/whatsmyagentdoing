@@ -69,6 +69,59 @@
       for (let i = 0; i < 3; i++) if (Math.random() < clicks / 3) this.key(now + Math.random() * 0.09);
       if (s.flash && !this.flashed) this.thunder(now + 0.4 + Math.random() * 1.2);
       this.flashed = s.flash;
+      this.slotSounds(s.slot, now);
+    }
+
+    // The slot machine: the reels whirr, each one clacks as it stops (left
+    // to right), and a win plays a jingle. `sl` is in the office's page time.
+    slotSounds(sl, now) {
+      if (!sl || !sl.dur) return;
+      if (sl.spinAt !== this.spinHeard) {
+        this.spinHeard = sl.spinAt;
+        const ago = (sl.t - sl.spinAt) / 1000;
+        const long = Math.max(...sl.dur) / 1000;
+        if (ago >= 0 && ago < long) {
+          this.whirr(now, long - ago);
+          sl.dur.forEach((d, i) => { const at = d / 1000 - ago; if (at > 0) this.clack(now + at, i); });
+        }
+      }
+      const win = sl.winUntil > sl.t;
+      if (win && this.winHeard !== sl.winUntil) { this.winHeard = sl.winUntil; this.jingle(now + 0.05, sl.winLen || 3); }
+    }
+
+    whirr(at, len) {
+      const c = this.ctx;
+      const src = c.createBufferSource();
+      src.buffer = this.noise; src.loop = true;
+      const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 4;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(0.07, at + 0.08);
+      g.gain.setValueAtTime(0.07, at + Math.max(0.1, len - 0.15));
+      g.gain.linearRampToValueAtTime(0, at + len);
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(at); src.stop(at + len + 0.05);
+    }
+
+    clack(at, i) {
+      const c = this.ctx;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = 'square'; o.frequency.setValueAtTime(320 + i * 40, at); o.frequency.exponentialRampToValueAtTime(120, at + 0.06);
+      g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.12, at + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.08);
+      o.connect(g); g.connect(this.master);
+      o.start(at); o.stop(at + 0.1);
+    }
+
+    jingle(at, n) {
+      const c = this.ctx;
+      const notes = [523, 659, 784, 1047, 1319].slice(0, Math.max(3, n));
+      notes.concat(notes.slice().reverse().slice(1)).forEach((f, i) => {
+        const o = c.createOscillator(), g = c.createGain(), t = at + i * 0.09;
+        o.type = 'triangle'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+        o.connect(g); g.connect(this.master);
+        o.start(t); o.stop(t + 0.22);
+      });
     }
 
     // One key press: a short, bright tick.
@@ -113,7 +166,9 @@
     }
     const weather = office.weatherKind ? office.weatherKind() : null;
     const t = (office.t || 0) / 1000;
-    return { typing, coffee, chat, weather, flash: weather === 'storm' && (t % 7.3) < 0.12 };
+    const sl = office.slot;
+    const slot = sl && sl.dur ? { spinAt: sl.spinAt, dur: sl.dur.slice(), winUntil: sl.winUntil, winLen: sl.winLen, t: office.t } : null;
+    return { typing, coffee, chat, weather, flash: weather === 'storm' && (t % 7.3) < 0.12, slot };
   }
 
   window.OfficeAmbient = { Ambient, sceneOf };

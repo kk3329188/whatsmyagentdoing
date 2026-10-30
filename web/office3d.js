@@ -75,7 +75,9 @@ export class Office3D extends window.Office {
       this.markReady(false);
       return;
     }
-    this.gl.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    // 1.5 at most: sharp enough on a retina screen, much less to draw.
+    this.gl.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+    this.minFrameMs = 30;
     this.gl.shadowMap.enabled = true;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
@@ -109,7 +111,7 @@ export class Office3D extends window.Office {
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 1.6);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(3072, 3072);
+    this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.radius = 3;
     this.sun.shadow.bias = -0.0006;
     this.sun.shadow.normalBias = 0.02;
@@ -1912,7 +1914,9 @@ export class Office3D extends window.Office {
     // the edge lights, flash everything on a win.
     if (this.slotRig) {
       const r = this.slotRig, sl = this.slot, win = sl && sl.winUntil > this.t;
-      if (this.t - r.drawnAt > 33) {
+      // Busy (spinning, a win): 30 a second; otherwise twice a second.
+      const busy = sl && (this.t - sl.spinAt < Math.max(...(sl.dur || [0])) + 200 || win);
+      if (this.t - r.drawnAt > (busy ? 33 : 500)) {
         r.drawnAt = this.t;
         this.slotScreen(r.cv.getContext('2d'), r.cv.width, r.cv.height); r.tex.needsUpdate = true;
         this.slotTopper(r.tcv.getContext('2d'), r.tcv.width, r.tcv.height); r.ttex.needsUpdate = true;

@@ -21,6 +21,9 @@ function load(roam = false, clock = clockAt(15)) {
   o.plan = o.buildPlan(0);
   o.cat = { x: o.plan.W - 3, y: o.plan.D - 2, path: [], until: 0, face: 1 };
   o.roam = roam;
+  // Lunch and tea follow the real clock (office.js life()): already had
+  // today, so a test run at noon or at three behaves like any other.
+  o.lunchDay = o.teaDay = new Date().toDateString();
   return o;
 }
 
@@ -606,6 +609,7 @@ test('finishing a piece of work: walk to the notice board and pin a note', () =>
 test('chores: whoever is free fixes a jammed printer, fetches lunch at noon, brings cake at three', () => {
   const o = load(true);
   o.floor = 1;
+  o.lunchDay = o.teaDay = null; // this one is about them
   const p = settle(o, [at('idle', { ago: 60 * MIN })])('claude:idle');
   o.first = false;
   assert.equal(o.chore('jam'), true);
@@ -1327,4 +1331,40 @@ test('slot machine: walk yourself up to it, stop, and you play; walk off and you
   assert.equal(q.taken, null);
   o.t = 9000; o.stepSlot(0.03);
   assert.equal(o.slot.player, null);
+});
+
+test('public replay: you (walked with the keys) glide onto where you are, seated at the slot exactly', () => {
+  const host = load(true), view = load(true);
+  settle(host, [at('idle', { ago: 5 * MIN })]);
+  const q = host.plan.pois.find((x) => x.act === 'slot');
+  const me = host.meOn();
+  me.seated = false; me.x = q.x + 0.6; me.y = q.y + 0.3;
+  const send = () => JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() }));
+  view.applyWorld(send(), new Map(), { hostNow: Date.now() });
+  // You walk 0.9 tiles before the next update: no jump, a glide.
+  me.x = q.x + 0.3; me.y = q.y + 0.2;
+  for (let i = 0; i < 10; i++) host.stepMe(0.1); // stops, sits at the slot
+  assert.equal(me.atSlot, true);
+  view.applyWorld(send(), new Map(), { hostNow: Date.now() });
+  let biggest = 0, last = { x: view.me.x, y: view.me.y };
+  for (let i = 0; i < 40; i++) { view.stepRemote(0.033); biggest = Math.max(biggest, Math.hypot(view.me.x - last.x, view.me.y - last.y)); last = { x: view.me.x, y: view.me.y }; }
+  assert.ok(Math.hypot(view.me.x - q.x, view.me.y - q.y) < 0.01, 'on the stool, not beside it');
+  assert.ok(biggest < 0.2, `smooth (largest step ${biggest.toFixed(2)})`);
+  assert.equal(view.stateOf(view.me).act, 'slot');
+});
+
+test('public replay: the same spin keeps its own timing (no stutter from late updates)', () => {
+  const host = load(true), view = load(true);
+  const p = settle(host, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = host.plan.pois.find((x) => x.act === 'slot');
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
+  host.t = 10_000; host.stepSlot(0.03);
+  const w = { ...host.worldState(), wall: Date.now() };
+  view.t = 50_000;
+  view.applyWorld(JSON.parse(JSON.stringify(w)), new Map(), { hostNow: Date.now() });
+  const first = view.slot.spinAt;
+  // The next update of the same spin arrives 120 ms later than the last one did.
+  view.t = 50_300;
+  view.applyWorld(JSON.parse(JSON.stringify({ ...w, t: w.t + 180 })), new Map(), { hostNow: Date.now() });
+  assert.equal(view.slot.spinAt, first);
 });

@@ -290,6 +290,7 @@
   body.live .live-ui { display: block; position: fixed; z-index: 20; pointer-events: none; }
   body.live .live-top { display: flex; }
   body.public .live-exit { display: none !important; }
+  body.public .live-sound:not([hidden]) { display: block; pointer-events: auto; top: 12px; right: 16px; border: 0; border-radius: 999px; padding: 6px 14px; font: 700 13px ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(12,14,24,.72); cursor: pointer; }
   body.public .view-pad { display: grid !important; position: fixed; right: 16px; bottom: 52px; z-index: 30; }
   body.public .floor-tabs:not([hidden]) { display: flex !important; flex-wrap: nowrap; position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0; max-width: calc(100vw - 32px); }
   body.public .floor-tabs > :not(button) { display: none; }
@@ -453,6 +454,7 @@
     <div class="office loading" id="office"><div class="office-loader"><div class="spin"></div><span id="loaderText"></span></div></div>
     <div class="live-ui live-top" id="liveTop"><span class="live-dot">● LIVE</span><span class="live-name" id="liveName"></span><span class="live-clock" id="liveClock"></span></div>
     <button type="button" class="live-ui live-exit" id="liveExit">離開直播（Esc）</button>
+    <button type="button" class="live-ui live-sound" id="liveSound" hidden>🔇 點我開聲音</button>
     <div class="live-ui live-ticker"><span id="liveTicker"></span></div>
     <div class="replay-bar" id="replayBar" hidden><span id="replayClock"></span><span class="replay-track"><i id="replayFill"></i></span><button type="button" id="replayStop">結束回放</button></div>
     <div class="legend" id="legend"></div>
@@ -1066,6 +1068,17 @@ function enterPublic() {
   for (const o of [office, office2]) if (o && o.setReadOnly && !o.readOnly) o.setReadOnly(true);
   if (publicOn) return;
   publicOn = true;
+  // Sound: browsers wait for a click, so it starts off, with a button.
+  const btn = document.getElementById('liveSound');
+  btn.hidden = false;
+  let on = false;
+  Hub.setSound(false);
+  btn.addEventListener('click', () => {
+    on = !on;
+    Hub.setSound(on);
+    if (on) ambient.start(); else ambient.stop();
+    btn.textContent = on ? '🔊 聲音開' : '🔇 點我開聲音';
+  });
   document.body.classList.add('public');
   if (state.view !== 'office' || state.quality !== 'high') {
     state.view = 'office'; state.quality = 'high';
