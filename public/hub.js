@@ -133,6 +133,38 @@
     peekEl.innerHTML = `<button type="button" data-x aria-label="關閉">×</button><b>${esc(name(s))}</b>`
       + peekLines(s).map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
     peekEl.style.display = 'block';
+    peekEl.style.visibility = 'hidden';
+    if (!peekRaf) peekRaf = requestAnimationFrame(peekFollow);
+  }
+  // The card sits over their head and goes where they go (and where the
+  // camera goes): each frame, from where the page drew their name tag.
+  let peekRaf = 0;
+  function peekFollow() {
+    peekRaf = 0;
+    if (!peekEl || peekEl.style.display !== 'block' || !peekKey) return;
+    const pos = peekAt(peekKey);
+    if (pos) {
+      const w = peekEl.offsetWidth, h = peekEl.offsetHeight;
+      const x = Math.max(8, Math.min(innerWidth - w - 8, pos.x - w / 2));
+      const above = pos.top - h - 12 >= 8;
+      peekEl.style.left = `${Math.round(x)}px`;
+      peekEl.style.top = `${Math.round(above ? pos.top - h - 12 : pos.bottom + 12)}px`;
+      peekEl.style.setProperty('--arrow', `${Math.round(Math.max(14, Math.min(w - 14, pos.x - x)))}px`);
+      peekEl.classList.toggle('below', !above);
+      peekEl.style.visibility = 'visible';
+    } else peekEl.style.visibility = 'hidden'; // off screen, or upstairs
+    peekRaf = requestAnimationFrame(peekFollow);
+  }
+  // Where someone's name tag is on screen now, or null.
+  function peekAt(key) {
+    for (const o of [typeof office !== 'undefined' ? office : null, typeof office2 !== 'undefined' ? office2 : null]) {
+      if (!o || !o.visible || !o.hit || !o.canvas) continue;
+      const hit = o.hit.find((b) => b.key === key);
+      if (!hit) continue;
+      const r = o.canvas.getBoundingClientRect();
+      return { x: r.left + (hit.x0 + hit.x1) / 2, top: r.top + hit.y0, bottom: r.top + hit.y1 };
+    }
+    return null;
   }
   // Keep an open card current as the data comes in.
   function peekRefresh() {
