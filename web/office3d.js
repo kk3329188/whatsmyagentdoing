@@ -464,6 +464,7 @@ export class Office3D extends window.Office {
     this.blinkers = [];
     this.tvScreen = this.neonMat = this.liftDoors = this.slotRig = null;
     this.appliances = [];
+    this.pendantLamps = [];
     this.boardAt = this.jamLight = null;
     this.boardShown = -1; this.tables = [];
     const { W, D } = plan;
@@ -1081,6 +1082,8 @@ export class Office3D extends window.Office {
           glow.rotation.x = Math.PI / 2; glow.position.y = -0.09; g.add(glow);
           g.position.set(x, 1.95, p.y);
           this.room.add(g);
+          // After hours this is the light someone works under (deskLamps).
+          this.pendantLamps.push({ x, y: p.y, glow });
         }
         break;
       }
@@ -2172,15 +2175,26 @@ export class Office3D extends window.Office {
   }
 
   // A few warm lights, moved to whoever is still at a desk after hours.
+  // After hours: the pendant over each desk still in use is on (its shade
+  // glows, the light hangs just under it), the others are off; someone with
+  // no pendant over them (your desk) gets a light over their desk.
   deskLamps(on) {
     if (!this.lamps) {
-      this.lamps = Array.from({ length: 6 }, () => { const l = new THREE.PointLight(0xffd59a, 0, 3.2, 1.6); this.scene.add(l); return l; });
+      this.lamps = Array.from({ length: 8 }, () => { const l = new THREE.PointLight(0xffd59a, 0, 3.6, 1.6); this.scene.add(l); return l; });
     }
     const at = on ? this.bodies().filter((p) => ((p.mode === 'work' && p.desk) || (p.me && p.seated)) && !p.path.length) : [];
+    const lit = new Set(), spots = [];
+    for (const p of at) {
+      let best = null, d = 2.4;
+      for (const pl of this.pendantLamps || []) { const k = Math.hypot(pl.x - p.x, pl.y - p.y); if (k < d) { d = k; best = pl; } }
+      if (best) { if (!lit.has(best)) { lit.add(best); spots.push({ x: best.x, y: 1.78, z: best.y }); } }
+      else spots.push({ x: p.x, y: 1.5, z: p.y - 0.3 });
+    }
+    for (const pl of this.pendantLamps || []) pl.glow.material.color.setHex(!on ? 0xffe7b0 : lit.has(pl) ? 0xfff3cf : 0x4a4234);
     this.lamps.forEach((l, i) => {
-      const p = at[i];
-      l.intensity = p ? 3.2 : 0;
-      if (p) l.position.set(p.x, 1.5, p.y - 0.3);
+      const sp = spots[i];
+      l.intensity = sp ? 3.6 : 0;
+      if (sp) l.position.set(sp.x, sp.y, sp.z);
     });
   }
 
