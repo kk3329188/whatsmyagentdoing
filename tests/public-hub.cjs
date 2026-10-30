@@ -304,6 +304,9 @@ test('public view: a click shows what your page shows over their head, made safe
   assert.equal(safeText('cat /Users/someone/.ssh/config'), 'cat ~/.ssh/config', 'your home folder as ~');
   assert.deepEqual({ done: d.steps.done, total: d.steps.total }, { done: 1, total: 3 });
   assert.equal(publicView(sn, 'salt').sessions[2].detail, null, 'helpers: none');
-  assert.equal(safeText('export GITHUB_TOKEN=ghp_abcdefghijklmnop1234'), 'export GITHUB_TOKEN=***');
+  // A made-up token, put together here so no scanner mistakes this file for a leak.
+  const fake = ['gh', 'p_', 'abcdefghijklmnop1234'].join('');
+  assert.equal(safeText(`export GITHUB_TOKEN=${fake}`), 'export GITHUB_TOKEN=***');
+  assert.equal(safeText(`using ${fake} here`), 'using *** here');
   assert.equal(safeText('fix the thing '.repeat(10)).length, 60, 'short');
 });
