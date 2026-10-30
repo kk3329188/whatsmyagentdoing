@@ -5,9 +5,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function load() {
+// The same "random" every run (the sounds are made up as they go).
+function seeded(seed = 7) {
+  let a = seed >>> 0;
+  const random = () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  return Object.assign(Object.create(Math), { random });
+}
+function load(seed) {
   const window = {};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), { window, Math, setInterval, clearInterval, setTimeout });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), { window, Math: seeded(seed), setInterval, clearInterval, setTimeout });
   return window.OfficeAmbient;
 }
 
