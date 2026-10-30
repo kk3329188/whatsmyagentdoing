@@ -1037,6 +1037,8 @@
 
     // `moved`: keys that just changed floors; they take the lift instead of the door.
     update(sessions, { moved = null } = {}) {
+      // Replaying another page's office: people come from applyWorld().
+      if (this.remote) return;
       const zoned = !!this.plan.zones;
       const viaLift = (k) => !!(moved && moved.has(k) && this.plan.lift);
       // The secretary keeps their own desk beside yours, whatever they are doing.
@@ -1973,6 +1975,7 @@
     // answer and leaves. `list` is the snapshot's recent visits; each shows
     // once, and only if it is fresh. Returns how many walked in.
     visitorsIn(list) {
+      if (this.remote) return 0; // the host's visitors come with its world
       this.visitors = this.visitors || new Map();
       this.visitorSeen = this.visitorSeen || new Set();
       let n = 0;
@@ -2072,6 +2075,7 @@
     screenAxes() { const k = Math.SQRT1_2; return { right: { x: k, y: -k }, up: { x: -k, y: -k } }; }
 
     meKey(key, down) {
+      if (this.readOnly || this.remote) return false;
       const me = this.meOn();
       if (!me) return false;
       const k = key.toLowerCase();
@@ -2443,7 +2447,9 @@
       if (e) this.pointer(e);
     }
 
-    canHold() { return !!this.cam; }
+    canHold() { return !!this.cam && !this.readOnly; }
+    // Look, don't touch (a public view): no picking people up, no walking yourself.
+    setReadOnly(v) { this.readOnly = !!v; if (this.meKeys) this.meKeys.clear(); }
 
     // Where a held person's feet are over the floor: dangling a little below the pointer.
     heldAt(e) { return this.toFloor(e, 28 + HOLD_Z * TH); }
@@ -4653,8 +4659,173 @@
       }
     }
 
+    // ------------------------------------------------------------ broadcast
+    //
+    // One page (yours) runs the office; a public view (--public) replays it,
+    // so everyone sees the same people in the same places. worldState() is
+    // what the host sends (src/server.js /api/world filters it before anyone
+    // else sees it); applyWorld() puts it on the viewer, whose step() then
+    // only walks people along the paths they were given.
+
+    // Plan objects by name ("pois.12", "desks.3.seat"), for references.
+    planRefs() {
+      if (this.refsFor === this.plan) return this.refs;
+      const byObj = new Map(), byId = new Map();
+      const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+      const put = (o, id) => { if (!byObj.has(o)) { byObj.set(o, id); byId.set(id, o); } };
+      for (const [k, v] of Object.entries(this.plan)) {
+        if (k === 'grid' || k === 'items') continue;
+        const list = Array.isArray(v) ? v.map((x, i) => [x, `${k}.${i}`]) : [[v, k]];
+        for (const [o, id] of list) {
+          if (!plain(o)) continue;
+          put(o, id);
+          for (const [k2, v2] of Object.entries(o)) if (plain(v2)) put(v2, `${id}.${k2}`);
+        }
+      }
+      this.refsFor = this.plan;
+      this.refs = { byObj, byId };
+      return this.refs;
+    }
+
+    worldState() {
+      const { byObj } = this.planRefs();
+      const enc = (v, d) => {
+        if (v === Infinity) return { $inf: 1 };
+        if (v == null || typeof v === 'boolean' || typeof v === 'string') return v;
+        if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+        if (typeof v !== 'object') return undefined;
+        if (byObj.has(v)) return { $ref: byObj.get(v) };
+        if (v.key && this.people.get(v.key) === v) return { $p: v.key };
+        if (d > 5) return undefined;
+        if (Array.isArray(v)) return v.map((x) => { const e = enc(x, d + 1); return e === undefined ? null : e; });
+        if (Object.getPrototypeOf(v) !== Object.prototype) return undefined; // meshes, canvases, Maps
+        const o = {};
+        for (const [k, x] of Object.entries(v)) { if (k === 's') continue; const e = enc(x, d + 1); if (e !== undefined) o[k] = e; }
+        return o;
+      };
+      const person = (p) => {
+        const o = {};
+        for (const [k, x] of Object.entries(p)) { if (k === 's') continue; const e = enc(x, 1); if (e !== undefined) o[k] = e; }
+        const s = p.s || {};
+        o.sk = { agent: s.agent || 'claude', status: s.status || 'idle', visitor: !!s.visitor, subagent: !!s.subagent };
+        return o;
+      };
+      return {
+        t: this.t, n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
+        people: [...this.people.values()].map(person), me: this.me ? person(this.me) : null,
+        visitors: [...(this.visitors || new Map()).values()].map(person),
+        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1),
+        liftOpen: this.liftOpen || 0, confetti: enc(this.confetti, 1), alarmUntil: this.alarmUntil || 0, bossIn: !!this.bossIn,
+        lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
+      };
+    }
+
+    // `sessions`: this page's sessions by key, for each person's name tag.
+    applyWorld(w, sessions = new Map()) {
+      this.remote = true;
+      this.first = false;
+      if (w.n !== this.builtFor && !this.plan.fixed) { this.builtFor = w.n; this.nWorking = w.n; this.rebuild(); }
+      const { byId } = this.planRefs();
+      const dec = (v) => {
+        if (v == null || typeof v !== 'object') return v;
+        if (Array.isArray(v)) return v.map(dec);
+        if (v.$inf) return Infinity;
+        if (v.$ref != null) return byId.get(v.$ref) || null;
+        if (v.$p != null) return { $p: v.$p }; // resolved below, once everyone exists
+        const o = {};
+        for (const [k, x] of Object.entries(v)) o[k] = dec(x);
+        return o;
+      };
+      const fix = (o, d = 0) => {
+        if (!o || typeof o !== 'object' || d > 6) return o;
+        for (const [k, x] of Object.entries(o)) {
+          if (x && typeof x === 'object' && x.$p != null && Object.keys(x).length === 1) o[k] = this.people.get(x.$p) || null;
+          else if (x && typeof x === 'object' && Object.getPrototypeOf(x) === Object.prototype || Array.isArray(x)) fix(x, d + 1);
+        }
+        return o;
+      };
+      const tagOf = (key, sk) => sessions.get(key) || { key, agent: sk.agent, status: sk.status, visitor: sk.visitor, subagent: sk.subagent, title: sk.visitor ? '訪客' : null };
+      const end = (a) => (a && a.length ? a[a.length - 1] : null);
+      const assign = (p, r) => {
+        const d = dec(r);
+        // Already walking the same way, close by: keep our own smooth position
+        // rather than jumping back to where the host was a moment ago.
+        const e1 = end(p.path), e2 = end(d.path);
+        const same = p.x != null && Math.hypot(p.x - d.x, p.y - d.y) < 1.2 && ((!e1 && !e2) || (e1 && e2 && Math.hypot(e1.x - e2.x, e1.y - e2.y) < 0.05));
+        const keep = same ? { x: p.x, y: p.y, path: p.path } : null;
+        for (const k of p.worldKeys || []) if (!(k in d)) delete p[k];
+        Object.assign(p, d, keep || {});
+        p.worldKeys = Object.keys(d);
+        delete p.sk;
+        return p;
+      };
+      const seen = new Set();
+      for (const r of w.people || []) {
+        if (!r || !r.key) continue;
+        seen.add(r.key);
+        let p = this.people.get(r.key);
+        if (!p) { p = { key: r.key, path: [] }; this.people.set(r.key, p); }
+        assign(p, r);
+        p.s = tagOf(r.key, r.sk || {});
+      }
+      for (const k of [...this.people.keys()]) if (!seen.has(k)) this.people.delete(k);
+      for (const p of this.people.values()) fix(p);
+      if (w.me) {
+        this.me = assign(this.me || { path: [] }, w.me);
+        this.me.s = { key: 'me', agent: 'claude', status: 'idle', title: '老闆', level: 4 };
+        this.meKeys = this.meKeys || new Set();
+      } else this.me = null;
+      const was = this.visitors || new Map();
+      this.visitors = new Map();
+      for (const r of w.visitors || []) {
+        if (!r || !r.key) continue;
+        const v = assign(was.get(r.key) || { key: r.key, path: [] }, r);
+        v.s = { key: r.key, agent: 'claude', status: 'idle', title: '訪客', level: 2, visitor: true };
+        this.visitors.set(r.key, fix(v));
+      }
+      this.secKey = w.secKey || null;
+      // The slot keeps time on the host's page clock: move it onto ours.
+      const off = this.t - (w.t || 0);
+      const slot = dec(w.slot);
+      if (slot) for (const k of ['spinAt', 'next', 'winUntil']) if (typeof slot[k] === 'number') slot[k] += off;
+      this.slot = slot;
+      for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
+      for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] || 0;
+      this.bossIn = !!w.bossIn;
+      this.worldAt = Date.now();
+    }
+
+    // Back to running the office here (the host went quiet).
+    leaveWorld() { this.remote = false; }
+
+    // A replaying page: walk along the given paths, nothing else is decided here.
+    stepRemote(dt) {
+      const wall = Date.now();
+      const walk = (p, speed) => {
+        if (!p || !p.path || !p.path.length) return;
+        const n = p.path[0];
+        const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy);
+        const v = speed * dt;
+        if (d > 0.001) { p.walkFace = dx + dy >= 0 ? 'front' : 'back'; if ('face' in p && typeof p.face === 'number') p.face = dx - dy >= 0 ? 1 : -1; }
+        if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
+        else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
+      };
+      for (const p of this.people.values()) walk(p, SPEED * (p.rush > wall ? 2.3 : 1));
+      for (const v of (this.visitors || new Map()).values()) walk(v, SPEED);
+      walk(this.cat, 1.2);
+      walk(this.cat2, 1.2);
+      const sl = this.slot;
+      if (sl && sl.from && sl.to && sl.dur) {
+        for (let i = 0; i < 5; i++) {
+          const k = Math.min(1, (this.t - sl.spinAt) / sl.dur[i]);
+          sl.pos[i] = sl.from[i] + (sl.to[i] - sl.from[i]) * SLOT_EASE(k);
+        }
+      }
+    }
+
     // Advance people and the cat; shared by the 2D and 3D renderers.
     step(dt) {
+      if (this.remote) { this.stepRemote(dt); return; }
       const wall = Date.now();
       for (const [k, p] of this.people) {
         if (p.held) continue;

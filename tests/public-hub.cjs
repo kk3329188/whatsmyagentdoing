@@ -13,7 +13,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wmad-public-'));
 process.env.WMAD_REMOTE_DIR = path.join(root, 'inbox');
 process.env.WMAD_DESKTOP_META_DIR = path.join(root, 'meta');
 process.env.WMAD_PROGRESS_FILE = path.join(root, 'progress.json');
-const { createServer, publicView } = require('../src/server');
+const { createServer, publicView, publicWorld } = require('../src/server');
 const { EventEmitter } = require('node:events');
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -46,7 +46,7 @@ function snap() {
 }
 
 test('public view: none of the private text leaves, the office still works', () => {
-  const out = publicView(snap(), 'salt');
+  const out = publicView(snap(), 'salt', { company: 'Acme' });
   const body = JSON.stringify(out);
   for (const s of [...SECRET, 'aaaa', 'bbbb', 'cccc', 'dddd', 'Alice', 'please look', 'secret.txt', 'hi there', 'someone', 'claude-x']) {
     assert.ok(!body.includes(s), `leaked: ${s}`);
@@ -70,13 +70,28 @@ test('public view: none of the private text leaves, the office still works', () 
   assert.equal(a.stuck, true);
   assert.equal(a.ask, true);
   assert.equal(a.controllable, false);
-  // A department per project, without its name; worktrees join their repo.
-  assert.match(a.project, /^部門 [A-Z]$/);
-  assert.equal(c.project, a.project);
-  assert.equal(b.title, '秘書');
-  assert.equal(a.title, null);
+  // A unit from what the work looks like, and a nickname: "維修部・豆豆".
+  assert.equal(a.project, '維修部');
+  assert.match(a.title, /^維修部・\S+$/);
+  assert.equal(c.project, a.project, 'a helper sits with its parent');
+  assert.equal(c.title, `${a.title.split('・')[1]}的助手`);
+  assert.match(b.title, /^總機室・/, 'the secretary keeps a title the page recognises');
+  assert.notEqual(a.title.split('・')[1], b.title.split('・')[1], 'nicknames do not repeat');
+  assert.equal(out.company, 'Acme');
   assert.equal(out.visitors[0].from, '訪客');
   assert.equal(out.weather.kind, 'rain');
+});
+
+test('public view: nicknames hold still, custom unit rules come first', () => {
+  const units = [{ match: 'rounding', unit: '會計部' }];
+  const one = publicView(snap(), 'salt-n', { units });
+  const two = publicView({ ...snap(), sessions: snap().sessions.slice().reverse() }, 'salt-n', { units });
+  assert.equal(one.sessions[0].title.split('・')[0], '會計部');
+  assert.equal(two.sessions.find((s) => s.id === one.sessions[0].id).title, one.sessions[0].title);
+  // A rule that is not a valid pattern is matched as plain text.
+  assert.equal(publicView(snap(), 'salt-m', { units: [{ match: 'Fix (', unit: 'X' }] }).sessions[0].project, '維修部');
+  // Untitled work is R&D.
+  assert.equal(publicView({ sessions: [{ key: 'claude:z', agent: 'claude', id: 'z', status: 'idle' }] }, 'salt-o').sessions[0].project, '研發部');
 });
 
 test('public view: aliases change with the salt (no lookup across restarts)', () => {
@@ -88,7 +103,7 @@ function get(port, pth, { method = 'GET', host = 'abc.trycloudflare.com', header
     const req = http.request({ host: '127.0.0.1', port, path: pth, method, headers: { host, ...headers } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; if (res.headers['content-type'] === 'text/event-stream') { req.destroy(); resolve({ status: res.statusCode, body }); } });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      res.on('end', () => resolve({ status: res.statusCode, body, etag: res.headers.etag }));
     });
     req.on('error', () => resolve({ status: 0, body: '' }));
     req.end();
@@ -105,6 +120,13 @@ test('public server: any host, key-gated stream, read-only', async () => {
     assert.equal((await get(port, '/events')).status, 403, 'no key, no stream');
     assert.equal((await get(port, '/events?k=nope')).status, 403);
     assert.equal((await get(port, '/api/sessions?k=k3y')).status, 404, 'only the stream');
+    // Polling, for tunnels that hold a stream back: same key, 304 when nothing changed.
+    assert.equal((await get(port, '/api/state')).status, 403);
+    const st = await get(port, '/api/state?k=k3y');
+    assert.equal(st.status, 200);
+    assert.match(st.body, /"public":true/);
+    assert.ok(st.etag, 'carries an etag');
+    assert.equal((await get(port, '/api/state?k=k3y', { headers: { 'if-none-match': st.etag } })).status, 304);
     const ok = await get(port, '/events?k=k3y');
     assert.equal(ok.status, 200);
     assert.match(ok.body, /"public":true/);
@@ -112,6 +134,22 @@ test('public server: any host, key-gated stream, read-only', async () => {
       assert.equal((await get(port, p, { method: 'POST', headers: { 'x-whatsmyagentdoing': h } })).status, 404, `${p} refused`);
     }
     assert.equal((await get(port, '/api/version')).status, 404);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+test('public server: units come from the real titles (privacy is applied by the whitelist, after)', async () => {
+  const now = Date.now();
+  const watcher = Object.assign(new EventEmitter(), { sessions: () => [{ agent: 'claude', id: 'unit-1', title: 'fix the crash in billing', status: 'idle', lastEventAt: now, mtime: now, cwd: '/tmp/secret-repo' }] });
+  const server = createServer(watcher, { public: true, privacy: true, publicKey: 'k3y', publicCompany: 'Acme' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const { body } = await get(server.address().port, '/events?k=k3y');
+    assert.match(body, /"title":"維修部・/);
+    assert.match(body, /"company":"Acme"/);
+    assert.ok(!/billing|secret-repo|unit-1/.test(body), 'title, folder and id stay home');
   } finally {
     server.closeAllConnections();
     server.close();
@@ -127,5 +165,81 @@ test('the normal server still refuses other hosts', async () => {
   } finally {
     server.closeAllConnections();
     server.close();
+  }
+});
+
+function world() {
+  return {
+    host: 'h1', at: 5,
+    floors: {
+      1: {
+        t: 100, n: 6, secKey: 'claude:aaaa',
+        people: [
+          { key: 'claude:aaaa', x: 1, y: 2, path: [{ x: 3, y: 4 }], mode: 'work', skin: '#f1c8a8', until: { $inf: 1 }, desk: { $ref: 'desks.3' },
+            event: { text: '去找 Fix refund rounding', at: 9, zone: 'held' }, meeting: { with: 'claude:bbbb', text: 'secret prompt', seat: { $ref: 'pois.2' } },
+            chatWith: { $p: 'claude:bbbb' }, dept: 'acme-billing', note: 'rm -rf build', sk: { agent: 'claude', status: 'tool' } },
+        ],
+        visitors: [{ key: 'visitor:conv@1', x: 0, y: 0, path: [], text: 'please look', event: { text: '你好，我是Alice', at: 1, zone: 'held' } }],
+        standup: { order: ['claude:aaaa'], lines: ['Fix refund rounding'] },
+        slot: { spinAt: 50, pos: [1, 2, 3, 4, 5] },
+      },
+    },
+  };
+}
+
+test('public world: the office moves, nothing private rides along', () => {
+  const w = publicWorld(world(), 'salt', ['/Users/someone/work/acme-billing', 'acme-billing', 'someone']);
+  const body = JSON.stringify(w);
+  for (const x of [...SECRET, 'aaaa', 'bbbb', 'Alice', 'please look', 'conv@1', 'someone']) assert.ok(!body.includes(x), `leaked: ${x}`);
+  const f = w.floors[1];
+  const view = publicView(snap(), 'salt');
+  assert.equal(f.people[0].key, view.sessions[0].key, 'same alias as the session it belongs to');
+  assert.equal(f.secKey, view.sessions[0].key);
+  assert.equal(f.people[0].chatWith.$p, view.sessions[1].key);
+  assert.equal(f.people[0].meeting.with, view.sessions[1].key);
+  assert.equal(f.standup.order[0], view.sessions[0].key);
+  assert.equal(f.people[0].event.text, '…', 'a stock line instead of the real bubble');
+  assert.deepEqual(f.people[0].desk, { $ref: 'desks.3' });
+  assert.deepEqual(f.people[0].until, { $inf: 1 });
+  assert.equal(f.people[0].skin, '#f1c8a8');
+  assert.equal(f.people[0].dept, undefined, 'a project name is dropped wherever it turns up');
+  assert.match(f.visitors[0].key, /^visitor:[0-9a-f]{10}$/);
+  assert.deepEqual(f.standup.lines, undefined);
+  assert.equal(f.slot.spinAt, 50);
+});
+
+test('public world: your page -> main server -> public server -> viewer', async () => {
+  const watcher = Object.assign(new EventEmitter(), { sessions: () => [] });
+  const main = createServer(watcher, { demo: true });
+  await new Promise((r) => main.listen(0, '127.0.0.1', r));
+  const mainPort = main.address().port;
+  const pub = createServer(watcher, { public: true, privacy: true, publicKey: 'k3y', mainPort });
+  await new Promise((r) => pub.listen(0, '127.0.0.1', r));
+  const port = pub.address().port;
+  const post = (body, header = 'world') => new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port: mainPort, path: '/api/world', method: 'POST', headers: { 'x-whatsmyagentdoing': header, 'content-type': 'application/json' } }, (res) => {
+      let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve({ status: res.statusCode, body: b }));
+    });
+    req.end(JSON.stringify(body));
+  });
+  try {
+    assert.equal((await get(port, '/api/world?k=k3y')).status, 204, 'no host page yet: viewers run their own');
+    assert.equal((await post(world(), 'nope')).status, 403);
+    const first = JSON.parse((await post(world())).body);
+    assert.equal(first.ok, true);
+    assert.equal(first.wanted, true, 'a viewer asked a moment ago');
+    // Another page cannot take over while the host is alive.
+    assert.equal(JSON.parse((await post({ ...world(), host: 'h2' })).body).ok, false);
+    await new Promise((r) => setTimeout(r, 450));
+    assert.equal((await get(port, '/api/world')).status, 403);
+    const got = await get(port, '/api/world?k=k3y');
+    assert.equal(got.status, 200);
+    assert.ok(!/Alice|secret prompt|aaaa/.test(got.body));
+    assert.match(got.body, /"desks\.3"/);
+    assert.equal((await get(port, '/api/world?k=k3y', { headers: { 'if-none-match': got.etag } })).status, 304);
+    // The main server only hands it to a caller on this machine with the header.
+    assert.equal((await get(mainPort, '/api/world', { host: '127.0.0.1' })).status, 403);
+  } finally {
+    for (const s of [main, pub]) { s.closeAllConnections(); s.close(); }
   }
 });

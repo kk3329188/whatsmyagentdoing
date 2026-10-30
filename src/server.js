@@ -192,33 +192,58 @@ function snapshot(watcher, opts) {
 
 // Public mode (--public): what a stranger with the link may see. Built from a
 // whitelist, so a field added to view() later stays home until listed here.
-// Ids become salted aliases (stable while this process runs), projects become
-// "部門 A", "部門 B"…, and every bit of text is dropped.
-const SECRETARY_TITLE = /秘書|總機|secretary/i;
+// Ids become salted aliases (stable while this process runs); each person is
+// "unit・nickname", the unit guessed from what the title looks like and the
+// nickname drawn at random; every other bit of text is dropped.
 const WORK_KIND = [[/^(Bash|Shell):/, 'Bash:'], [/^(Edit|Write|MultiEdit|NotebookEdit|Editing)\b/, 'Edit'], [/^Subagent:/, 'Subagent:'],
   [/slack|send_message|SendMessage|relay/i, 'SendMessage'], [/update_plan|wrap_up|progress|TodoWrite|Updating todo/, 'TodoWrite']];
-const depts = new Map(); // repository -> letter, in order of first sight
-function publicView(snap, salt) {
+// First match wins; your own rules ("publicUnits" in the config) go first.
+const UNITS = [
+  [/秘書|總機|secretary|reception/i, '總機室'],
+  [/排查|除錯|修正|修復|錯誤|亂碼|重啟|bug|debug|fix|crash|\blog\b/i, '維修部'],
+  [/部署|上線|串接|deploy|release|infra|redis|kafka|docker|k8s|jenkins/i, '工程部'],
+  [/進測|測試|回歸|驗證|QA\b|test|verify/i, '品管部'],
+  [/數據|分析|預測|流失|統計|data|analytics|metric/i, '數據部'],
+  [/數值|數學|規格|體驗|企劃|spec|balance/i, '企劃部'],
+  [/可視化|畫面|介面|前端|設計|\bUI\b|frontend|design/i, '設計部'],
+  [/簡報|文件|通知|進度|報告|docs?\b|slides|meeting/i, '行政部'],
+  [/覆盤|檢討|評估|機制|架構|記憶|放權|規劃|策略|retro|plan|review/i, '策略室'],
+];
+const NICKS = ['豆豆', '小芋', '阿凱', '小橘', '阿布', '米糕', '小葵', '阿傑', '湯圓', '小滿', '阿哲', '麻糬', '小柚', '阿寶', '布丁', '小安',
+  '阿德', '芝麻', '小晴', '阿樂', '饅頭', '小蘋', '阿宏', '奶茶', '小夏', '阿誠', '可樂', '小玉', '阿文', '雪球', '小鹿', '阿泰', '花生', '小雲',
+  '阿翔', '栗子', '小琪', '阿豪', '黑糖', '小星', '阿峰', '蛋捲', '小禾', '阿達', '仙草', '小莓', '阿賢', '銅鑼燒'];
+const nicks = new Map(); // `${salt}|${id}` -> nickname, kept while the process runs
+function nicknameOf(salt, id, alias) {
+  const k = `${salt}|${id}`;
+  if (nicks.has(k)) return nicks.get(k);
+  const used = new Set([...nicks].filter(([x]) => x.startsWith(`${salt}|`)).map(([, v]) => v));
+  const start = parseInt(alias.slice(0, 8), 16) % NICKS.length;
+  let n = null;
+  for (let i = 0; i < NICKS.length && !n; i++) if (!used.has(NICKS[(start + i) % NICKS.length])) n = NICKS[(start + i) % NICKS.length];
+  n = n || `${NICKS[start]}${used.size}`;
+  nicks.set(k, n);
+  return n;
+}
+const asRule = (m) => { try { return new RegExp(m, 'i'); } catch { return { test: (t) => t.toLowerCase().includes(String(m).toLowerCase()) }; } };
+function publicView(snap, salt, { units = [], company = '' } = {}) {
   const alias = (id) => (id == null ? null : crypto.createHmac('sha256', salt).update(String(id)).digest('hex').slice(0, 10));
   const key = (k) => { const i = String(k).indexOf(':'); return `${String(k).slice(0, i)}:${alias(String(k).slice(i + 1))}`; };
-  const dept = (s) => {
-    const cwd = String(s.cwd || '');
-    const m = cwd.match(/^(.*?)\/\.(?:claude|codex)\/worktrees\//);
-    const repo = (m ? m[1] : cwd).split('/').filter(Boolean).pop() || s.project || '';
-    const k = `${salt}|${repo}`;
-    if (!depts.has(k)) depts.set(k, String.fromCharCode(65 + (depts.size % 26)));
-    return `部門 ${depts.get(k)}`;
-  };
+  const rules = [...(Array.isArray(units) ? units : []).filter((u) => u && u.match && u.unit).map((u) => [asRule(u.match), String(u.unit).slice(0, 8)]), ...UNITS];
+  const unitOf = (s) => { const t = String(s.title || ''); return (t && (rules.find(([re]) => re.test(t)) || [])[1]) || '研發部'; };
   const num = (v) => (Number.isFinite(v) ? v : null);
   const word = (v) => (typeof v === 'string' && /^[a-z]{1,12}$/.test(v) ? v : null);
   const kind = (a) => (a ? (WORK_KIND.find(([re]) => re.test(a)) || [null, 'Read'])[1] : null);
   const kinds = (o) => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => word(k) && Number.isFinite(v)));
   const badge = (b) => ({ id: word(b.id) || String(b.id).slice(0, 20), name: b.name, emoji: b.emoji, at: num(b.at) });
-  const sessions = (snap.sessions || []).map((s) => {
-    const name = dept(s);
+  const raw = snap.sessions || [];
+  const byId = new Map(raw.map((s) => [s.id, s]));
+  const who = (s) => ({ unit: unitOf(s), nick: nicknameOf(salt, s.id, alias(s.id)) });
+  const sessions = raw.map((s) => {
+    const parent = s.subagent && byId.get(s.parentId);
+    const me = who(parent || s);
     return {
       key: key(s.key), agent: s.agent, id: alias(s.id), parentId: alias(s.parentId), subagent: !!s.subagent,
-      cwd: `/${name}`, project: name, title: !s.subagent && SECRETARY_TITLE.test(s.title || '') ? '秘書' : null,
+      cwd: `/${me.unit}`, project: me.unit, title: s.subagent ? `${me.nick}的助手` : `${me.unit}・${me.nick}`,
       status: s.status, activity: kind(s.activity), task: word(s.task),
       outcome: s.outcome ? { at: num(s.outcome.at), task: word(s.outcome.task), ok: !!s.outcome.ok } : null,
       kinds: kinds(s.kinds), stuck: s.stuck ? true : null, ask: s.ask ? true : null, needs: s.needs ? true : null,
@@ -244,25 +269,100 @@ function publicView(snap, salt) {
   };
   const w = snap.weather;
   return {
-    now: snap.now, lang: snap.lang, privacy: true, public: true, sessions, office,
+    now: snap.now, lang: snap.lang, privacy: true, public: true, company: String(company || '').slice(0, 24), sessions, office,
     visitors: (snap.visitors || []).map((v) => ({ kind: v.kind === 'reply' ? 'reply' : 'visit', id: alias(v.id), conv: alias(v.conv), from: '訪客', text: null, topic: null, at: num(v.at) })),
     weather: w ? { code: num(w.code), temp: num(w.temp), day: !!w.day, kind: w.kind, emoji: w.emoji, at: num(w.at) } : null,
   };
 }
 
+// The office as your page runs it (public/office.js worldState), made safe
+// for strangers: ids become the same aliases as in publicView, any field that
+// may hold words (names, bubbles, meeting lines) is dropped or replaced by a
+// stock line, and the only strings left are short ASCII tokens (colours,
+// states, plan references) that match none of your projects or folders.
+const WORLD_DROP = new Set(['s', 'text', 'say', 'title', 'label', 'name', 'from', 'topic', 'conv', 'lines', 'lineOf', 'note', 'notes', 'msg',
+  'message', 'prompt', 'reply', 'question', 'words', 'line', 'caption', 'who', 'what', 'cwd', 'project', 'branch', 'activity', 'error', 'recap']);
+const WORLD_SAY = { work: '開工！', done: '做完了 ✓', error: '出錯了…', wait: '有事問你！', level: '升等！⭐', held: '…' };
+function publicWorld(world, salt, privateWords = []) {
+  const alias = (id) => crypto.createHmac('sha256', salt).update(String(id)).digest('hex').slice(0, 10);
+  const words = [...new Set(privateWords.map((w) => String(w || '').toLowerCase()).filter((w) => w.length >= 3))];
+  const str = (v) => {
+    const m = v.match(/^(claude|codex|gemini|visitor):(.+)$/);
+    if (m) return `${m[1]}:${alias(m[2])}`;
+    if (!/^[A-Za-z0-9#._-]{1,24}$/.test(v)) return undefined;
+    const low = v.toLowerCase();
+    return words.some((w) => low.includes(w)) ? undefined : v;
+  };
+  const walk = (v, d) => {
+    if (d > 9) return undefined;
+    if (v == null || typeof v === 'boolean') return v;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'string') return str(v);
+    if (Array.isArray(v)) return v.slice(0, 400).map((x) => { const e = walk(x, d + 1); return e === undefined ? null : e; });
+    if (typeof v !== 'object') return undefined;
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (WORLD_DROP.has(k) || !/^[A-Za-z0-9_$]{1,32}$/.test(k)) continue;
+      if (k === 'event' && x && typeof x === 'object') {
+        const zone = typeof x.zone === 'string' && WORLD_SAY[x.zone] ? x.zone : 'held';
+        out.event = { at: Number.isFinite(x.at) ? x.at : 0, zone, text: WORLD_SAY[zone], ...(Number.isFinite(x.ttl) ? { ttl: x.ttl } : {}) };
+        continue;
+      }
+      const e = walk(x, d + 1);
+      if (e !== undefined) out[k] = e;
+    }
+    return out;
+  };
+  const floors = {};
+  for (const f of ['1', '2']) if (world && world.floors && world.floors[f]) floors[f] = walk(world.floors[f], 0);
+  return { at: world && world.at, floors };
+}
+// Words a public world must never carry: your projects' and folders' names.
+function privateWordsOf(snap) {
+  const out = new Set();
+  for (const s of (snap && snap.sessions) || []) {
+    for (const part of String(s.cwd || '').split('/')) if (part.length >= 3) out.add(part);
+    if (s.project) out.add(s.project);
+    if (s.branch) out.add(s.branch);
+  }
+  return [...out];
+}
+
 // Paths a public server answers; everything else (every POST included) is 404.
-const PUBLIC_OK = (p) => !!STATIC[p] || p.startsWith('/assets/') || p.startsWith('/scenes/') || p === '/api/scenes' || p === '/api/ping' || p === '/events';
+const PUBLIC_OK = (p) => !!STATIC[p] || p.startsWith('/assets/') || p.startsWith('/scenes/') || p === '/api/scenes' || p === '/api/ping' || p === '/events' || p === '/api/state' || p === '/api/world';
 const PUBLIC_MAX_VIEWERS = 50;
+
+// The public server fetches your page's office from the main one.
+function fetchHostWorld(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/world', timeout: 1500, headers: { 'x-whatsmyagentdoing': 'world' } }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); resolve(null); return; }
+      let body = '';
+      res.on('data', (c) => { body += c; if (body.length > 4 * 1024 * 1024) req.destroy(); });
+      res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   const salt = crypto.randomBytes(16).toString('hex');
-  const shape = opts.public ? (s) => publicView(s, salt) : (s) => s;
+  const shape = opts.public ? (s) => publicView(s, salt, { units: opts.publicUnits, company: opts.publicCompany }) : (s) => s;
+  // The public whitelist needs the real titles to pick each unit; it drops
+  // them itself, so the snapshot under it is the full one.
+  const snapOpts = opts.public ? { ...opts, privacy: false } : opts;
+  let polled = null; // { at, body, tag }: the last state handed to pollers
+  let worldCache = null; // public: { at, w: { body, tag } | null }
+  let privateWords = null; // public: { at, list }
+  let world = null; // your page's office: { at, host, data }
+  let worldPulled = 0; // when a public view last asked for it
   const clients = new Set();
   let last = '';
 
   const push = (force) => {
     let body;
-    try { body = JSON.stringify(shape(snapshot(watcher, opts))); } catch (e) { console.error('snapshot failed:', e.message); return; }
+    try { body = JSON.stringify(shape(snapshot(watcher, snapOpts))); } catch (e) { console.error('snapshot failed:', e.message); return; }
     // Compare without the timestamp so idle ticks don't spam clients.
     const sig = body.replace(/^\{"now":\d+,/, '{');
     if (!force && sig === last) return;
@@ -289,11 +389,47 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
     const url = new URL(req.url, 'http://localhost');
     if (opts.public) {
       if (req.method !== 'GET' || !PUBLIC_OK(url.pathname)) { res.writeHead(404).end(); return; }
-      if (url.pathname === '/events') {
+      if (url.pathname === '/events' || url.pathname === '/api/state' || url.pathname === '/api/world') {
         const k = Buffer.from(url.searchParams.get('k') || '');
         const want = Buffer.from(String(opts.publicKey || ''));
         if (!want.length || k.length !== want.length || !crypto.timingSafeEqual(k, want)) { res.writeHead(403).end(); return; }
-        if (clients.size >= PUBLIC_MAX_VIEWERS) { res.writeHead(503).end(); return; }
+        if (url.pathname === '/events' && clients.size >= PUBLIC_MAX_VIEWERS) { res.writeHead(503).end(); return; }
+      }
+      // The office as your own page runs it, filtered (see publicWorld).
+      if (url.pathname === '/api/world') {
+        const send = (w) => {
+          if (!w) { res.writeHead(204, { 'cache-control': 'no-store' }).end(); return; }
+          if (req.headers['if-none-match'] === w.tag) { res.writeHead(304, { etag: w.tag, 'cache-control': 'no-store' }).end(); return; }
+          res.writeHead(200, { 'content-type': 'application/json', etag: w.tag, 'cache-control': 'no-store' });
+          res.end(w.body);
+        };
+        if (worldCache && Date.now() - worldCache.at < 400) { send(worldCache.w); return; }
+        fetchHostWorld(opts.mainPort || 4545).then((raw) => {
+          if (!privateWords || Date.now() - privateWords.at > 60_000) privateWords = { at: Date.now(), list: privateWordsOf(snapshot(watcher, snapOpts)) };
+          let w = null;
+          if (raw) {
+            const body = JSON.stringify(publicWorld(raw, salt, privateWords.list));
+            w = { body, tag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"` };
+          }
+          worldCache = { at: Date.now(), w };
+          send(w);
+        });
+        return;
+      }
+      // Polling, for tunnels that hold an event stream back (Cloudflare quick
+      // tunnels do): the latest state, shared by every viewer for a second,
+      // and 304 when it has not changed.
+      if (url.pathname === '/api/state') {
+        const now = Date.now();
+        if (!polled || now - polled.at > 1000) {
+          const body = JSON.stringify(shape(snapshot(watcher, snapOpts)));
+          const tag = `"${crypto.createHash('sha1').update(body.replace(/^\{"now":\d+,/, '{')).digest('hex').slice(0, 16)}"`;
+          polled = { at: now, body, tag };
+        }
+        if (req.headers['if-none-match'] === polled.tag) { res.writeHead(304, { etag: polled.tag, 'cache-control': 'no-store' }).end(); return; }
+        res.writeHead(200, { 'content-type': 'application/json', etag: polled.tag, 'cache-control': 'no-store' });
+        res.end(polled.body);
+        return;
       }
     }
     if (STATIC[url.pathname]) {
@@ -418,16 +554,42 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
           reply(400, { ok: false, error: String(e.message || e) });
         }
       });
+    } else if (url.pathname === '/api/world' && req.method === 'POST') {
+      // Your page, sending the office as it runs it (public/index.html).
+      if (req.headers['x-whatsmyagentdoing'] !== 'world') { res.writeHead(403).end(); return; }
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 2 * 1024 * 1024) req.destroy(); });
+      req.on('end', () => {
+        const now = Date.now();
+        let ok = false;
+        try {
+          const w = JSON.parse(body);
+          // One page at a time is the host; another takes over when it goes quiet.
+          if (w && w.floors && (!world || world.host === w.host || now - world.at > 5000)) { world = { at: now, host: w.host, data: w }; ok = true; }
+        } catch {}
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok, wanted: now - worldPulled < 15_000 }));
+      });
+    } else if (url.pathname === '/api/world' && req.method === 'GET') {
+      // The public view's server (another process on this machine) asking.
+      if (req.headers['x-whatsmyagentdoing'] !== 'world') { res.writeHead(403).end(); return; }
+      worldPulled = Date.now();
+      if (!world || Date.now() - world.at > 10_000) { res.writeHead(204).end(); return; }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(world.data));
     } else if (url.pathname === '/api/ping') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ app: 'whatsmyagentdoing' }));
     } else if (url.pathname === '/events') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
-        'cache-control': 'no-store',
+        // no-transform: a proxy in between (a tunnel) must not gzip and hold
+        // the stream until a buffer fills.
+        'cache-control': 'no-store, no-transform',
+        'x-accel-buffering': 'no',
         connection: 'keep-alive',
       });
-      res.write(`data: ${JSON.stringify(shape(snapshot(watcher, opts)))}\n\n`);
+      res.write(`data: ${JSON.stringify(shape(snapshot(watcher, snapOpts)))}\n\n`);
       clients.add(res);
       req.on('close', () => clients.delete(res));
     } else {
@@ -437,4 +599,4 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   return server;
 }
 
-module.exports = { createServer, snapshot, latestSegments, publicView };
+module.exports = { createServer, snapshot, latestSegments, publicView, publicWorld };

@@ -3,6 +3,9 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { spawn } = require('child_process');
 const { Watcher, CLAUDE_DIR, CODEX_DIR, GEMINI_DIR } = require('../src/watcher');
 const { DemoWatcher } = require('../src/demo');
@@ -24,6 +27,9 @@ Options:
   --public          A read-only view for anyone with the link (port 4546 unless -p):
                     no text, paths or project names, no buttons; the link carries a key
   --key <k>         The key for --public (default: a new random one each start)
+  --company <name>  With --public: the name on the office sign (else "publicCompany"
+                    in ~/.whatsmyagentdoing/config.json; "publicUnits": [{ "match":
+                    "<text or pattern>", "unit": "<name>" }] adds your own unit rules)
   --tunnel          With --public: open a Cloudflare quick tunnel (needs cloudflared)
                     and print the https link to share
   --json            Print one snapshot as JSON and exit
@@ -42,7 +48,7 @@ Reads (never writes):
 Override with CLAUDE_CONFIG_DIR / CODEX_HOME / GEMINI_CLI_HOME.`;
 
 function parseArgs(argv) {
-  const o = { port: 4545, hours: 24, open: true, privacy: false, json: false, demo: false, stop: false, scenes: false, scene: null, removeScene: null, update: false, public: false, publicKey: null, tunnel: false };
+  const o = { port: 4545, hours: 24, open: true, privacy: false, json: false, demo: false, stop: false, scenes: false, scene: null, removeScene: null, update: false, public: false, publicKey: null, publicCompany: null, publicUnits: [], tunnel: false };
   let port = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -54,6 +60,8 @@ function parseArgs(argv) {
     else if (a === '--key') o.publicKey = argv[++i];
     else if (a.startsWith('--key=')) o.publicKey = a.slice(6);
     else if (a === '--tunnel') o.tunnel = true;
+    else if (a === '--company') o.publicCompany = argv[++i];
+    else if (a.startsWith('--company=')) o.publicCompany = a.slice(10);
     else if (a === '--hours') o.hours = Number(argv[++i]);
     else if (a.startsWith('--hours=')) o.hours = Number(a.slice(8));
     else if (a === '--no-open') o.open = false;
@@ -76,6 +84,10 @@ function parseArgs(argv) {
     if (!port) o.port = 4546;
     o.publicKey = o.publicKey || crypto.randomBytes(12).toString('base64url');
     if (!/^[\w-]{8,}$/.test(o.publicKey)) { console.error('--key: at least 8 letters, digits, - or _'); process.exit(1); }
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(process.env.WMAD_CONFIG || path.join(os.homedir(), '.whatsmyagentdoing', 'config.json'), 'utf8')) || {}; } catch {}
+    if (o.publicCompany == null && typeof cfg.publicCompany === 'string') o.publicCompany = cfg.publicCompany;
+    if (Array.isArray(cfg.publicUnits)) o.publicUnits = cfg.publicUnits;
   }
   return o;
 }

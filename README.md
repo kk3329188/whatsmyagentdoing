@@ -156,8 +156,10 @@ Works with Claude Code (CLI, desktop, IDE), Codex (CLI, desktop, IDE) and Gemini
 --hours <n>       Sessions active in the last n hours (default 24)
 --no-open         Don't open the browser
 --private         Hide prompts, replies and titles — status only (screen-share safe)
---public          Read-only live view for anyone with the link (port 4546): no text,
-                  paths or project names, no buttons; the link carries a random key
+--public          Read-only live view for anyone with the link (port 4546): the 3D office
+                  full window, people as "unit・nickname", no text, paths or project names,
+                  nothing to click but the floors; mirrors your own open page; keyed link
+--company <name>  With --public: the name on the office sign (or "publicCompany" in config)
 --tunnel          With --public: open a Cloudflare quick tunnel and print the https link
 --json            Print one snapshot as JSON and exit
 --demo            Show a made-up team instead of your sessions (screenshots, trying it out)

@@ -1373,7 +1373,7 @@ export class Office3D extends window.Office {
       this.panView(e.deltaX, 0);
     }, { capture: true, passive: false });
     this.onViewKey = (e) => {
-      if (!this.visible || this.compact || !this.loaded) return;
+      if (!this.visible || this.compact || !this.loaded || this.readOnly) return;
       if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
       if (e.key === '0') { this.resetView(); return; }
       const d = keyPan(e.key);
@@ -1383,6 +1383,7 @@ export class Office3D extends window.Office {
     };
     window.addEventListener('keydown', this.onViewKey);
     this.canvas.addEventListener('dblclick', (e) => {
+      if (this.readOnly) return;
       const r = this.canvas.getBoundingClientRect();
       const mx = e.clientX - r.left, my = e.clientY - r.top;
       if (this.hit.some((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1)) return;
@@ -2042,7 +2043,10 @@ export class Office3D extends window.Office {
 
   // Picking people up works here too: pressing on a person holds the camera
   // still until the button is let go; pressing anywhere else turns it.
-  canHold() { return !!this.loaded; }
+  canHold() { return !!this.loaded && !this.readOnly; }
+
+  // A public view: the camera is the broadcast's, not the viewer's.
+  setReadOnly(v) { super.setReadOnly(v); this.controls.enabled = !v; }
 
   grab(e) {
     super.grab(e);
@@ -2051,7 +2055,7 @@ export class Office3D extends window.Office {
 
   drop(e) {
     super.drop(e);
-    this.controls.enabled = true;
+    this.controls.enabled = !this.readOnly;
   }
 
   // The pointer holds them by the head: where the ray through it meets head height.

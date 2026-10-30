@@ -89,7 +89,8 @@
   }
 
   function label(s) {
-    if (LIVE) return s.key === 'me' ? '你' : s.visitor ? '訪客' : empId(s);
+    // A public view's names are already nicknames (src/server.js publicView).
+    if (LIVE && !PUBLIC) return s.key === 'me' ? '你' : s.visitor ? '訪客' : empId(s);
     const p = steps(s);
     const busy = ACTIVE.has(s.status) || s.status === 'waiting';
     return cut(name(s), 16) + (p && busy && p.done < p.total ? ` · ${p.done}/${p.total}` : '');
@@ -267,7 +268,8 @@
 
   // ---- the company's name (shown on the office wall and the page title)
 
-  const company = () => String(store.get('company', '') || '').trim().slice(0, 24);
+  // A public view shows the name its host chose (--company), not this browser's.
+  const company = () => (PUBLIC ? PUBLIC_CO : String(store.get('company', '') || '').trim().slice(0, 24));
 
   // ---- the stand-up: what each one says, and the minutes
 
@@ -942,6 +944,7 @@
 
   let PRIVATE = false;
   let PUBLIC = false;
+  let PUBLIC_CO = '';
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
     command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
@@ -952,12 +955,13 @@
     // The ticker on air: recent things, with employee numbers only.
     tickerLines() {
       const said = { done: '做完一輪 ✓', error: '卡住了 ⚠', wait: '在等老闆回覆 ✋', level: '升等了 ⭐' };
-      return eventLog.slice(-12).reverse().map((e) => { const s = byKey(e.key); return s && said[e.kind] ? `${empId(s)} ${said[e.kind]}` : null; }).filter(Boolean);
+      return eventLog.slice(-12).reverse().map((e) => { const s = byKey(e.key); return s && said[e.kind] ? `${PUBLIC ? name(s) : empId(s)} ${said[e.kind]}` : null; }).filter(Boolean);
     },
     boardCount: () => boardToday().length,
     setPrivate(v) { PRIVATE = !!v; },
     // A public view has nothing to show or send for one person: clicks do nothing.
-    setPublic(v) { PUBLIC = !!v; if (PUBLIC && openKey) close(); },
+    setPublic(v, co) { PUBLIC = !!v; PUBLIC_CO = PUBLIC ? String(co || '').trim().slice(0, 24) : ''; if (PUBLIC && openKey) close(); },
+    get public() { return PUBLIC; },
     get openKey() { return openKey; },
   };
 })();

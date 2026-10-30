@@ -50,7 +50,7 @@ Scenes are only downloaded when asked for. `--remove-scene <id>` deletes one.
 Options the user may ask for:
 
 - `--private` — hide prompts/replies, show status only (for screen sharing)
-- `--public [--tunnel] [--key <k>]` — a read-only live view for anyone with the link, on port 4546: ids become aliases, projects become 部門 A/B…, no text, no buttons, every POST refused; `--tunnel` opens a Cloudflare quick tunnel (needs `cloudflared`) and prints the https link with its key
+- `--public [--tunnel] [--key <k>] [--company <name>]` — a read-only live view for anyone with the link, on port 4546: the 3D office full window with only the floor buttons; each person is "unit・nickname" (unit guessed from the title; add your own rules as `publicUnits` in `~/.whatsmyagentdoing/config.json`, the sign's name as `publicCompany`); no other text, nothing can be moved or clicked, every POST refused. While your own page is open it hosts: viewers replay its office (same people in the same places), filtered by a whitelist on the way out. `--tunnel` opens a Cloudflare quick tunnel (needs `cloudflared`) and prints the https link with its key
 - `--hours 4` — only sessions active in the last 4 hours (default 24)
 - `--port 5000` — different port (default 4545)
 - `--stop` — stop the running dashboard
