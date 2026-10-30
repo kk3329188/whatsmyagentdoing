@@ -228,8 +228,12 @@ test('public world: your page -> main server -> public server -> viewer', async 
     const first = JSON.parse((await post(world())).body);
     assert.equal(first.ok, true);
     assert.equal(first.wanted, true, 'a viewer asked a moment ago');
-    // Another page cannot take over while the host is alive.
+    // Another page cannot take over while the host is alive and nobody touched it…
     assert.equal(JSON.parse((await post({ ...world(), host: 'h2' })).body).ok, false);
+    // …unless you are using that one now: the page you last touched is shown.
+    assert.equal(JSON.parse((await post({ ...world(), host: 'h2', input: Date.now() })).body).ok, true);
+    assert.equal(JSON.parse((await post({ ...world(), host: 'h1' })).body).ok, false, 'the old one, untouched, does not take it back');
+    assert.equal(JSON.parse((await post({ ...world(), host: 'h1', input: Date.now() + 5 })).body).ok, true, 'until you go back to it');
     await new Promise((r) => setTimeout(r, 450));
     assert.equal((await get(port, '/api/world')).status, 403);
     const got = await get(port, '/api/world?k=k3y');

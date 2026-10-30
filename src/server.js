@@ -564,8 +564,14 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
         let ok = false;
         try {
           const w = JSON.parse(body);
-          // One page at a time is the host; another takes over when it goes quiet.
-          if (w && w.floors && (!world || world.host === w.host || now - world.at > 5000)) { world = { at: now, host: w.host, data: w }; ok = true; }
+          // One page at a time is the host: the one you last touched (clicked,
+          // typed, scrolled in), else whichever keeps going when the other
+          // goes quiet.
+          const input = Number(w && w.input) || 0;
+          if (w && w.floors && (!world || world.host === w.host || now - world.at > 5000 || input > world.input)) {
+            world = { at: now, host: w.host, input: world && world.host === w.host ? Math.max(input, world.input) : input, data: w };
+            ok = true;
+          }
         } catch {}
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok, wanted: now - worldPulled < 15_000 }));

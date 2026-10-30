@@ -1040,6 +1040,9 @@ function enterPublic() {
 // sends the office twice a second, and the viewers replay it, so they see
 // the same people in the same places as you do.
 const worldHost = Math.random().toString(36).slice(2, 10);
+// With your office open in more than one tab, the one you touch is shown.
+let worldInput = 0;
+for (const ev of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(ev, () => { worldInput = Date.now(); }, { capture: true, passive: true });
 let worldWanted = false, worldSent = 0;
 const bgAt = new WeakMap(); // office -> last time it was stepped in the background
 // A hidden tab gets no animation frames and its timers are throttled (to once
@@ -1064,7 +1067,7 @@ async function sendWorld() {
   if (now - worldSent < (worldWanted ? 450 : 5000)) return;
   worldSent = now;
   try {
-    const body = JSON.stringify({ host: worldHost, at: now, floors: { 1: office.worldState(), 2: office2 && office2.worldState ? office2.worldState() : null } });
+    const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: office.worldState(), 2: office2 && office2.worldState ? office2.worldState() : null } });
     const r = await fetch('/api/world', { method: 'POST', headers: { 'x-whatsmyagentdoing': 'world', 'content-type': 'application/json' }, body });
     worldWanted = !!(await r.json()).wanted;
   } catch { worldWanted = false; }
