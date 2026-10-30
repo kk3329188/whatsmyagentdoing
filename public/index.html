@@ -971,17 +971,46 @@ function setLive(on) {
       const lines = Hub.tickerLines();
       document.getElementById('liveTicker').textContent = (lines.length ? lines : ['大家都在認真上班中…']).join('　　｜　　');
     };
-    let n = 0;
+    // The camera goes in when something happens (someone needs you, fails,
+    // finishes, levels up, a visitor, a jackpot, a merge; starting work
+    // last) and stays on the whole floor otherwise. One person at a time,
+    // not the same one again within 30 s, and nothing stale queues up.
+    const seen = new Map(); // key -> time of the last event we looked at
+    const lastShot = new Map(); // key -> when the camera last went to them
+    const RANK = { wait: 3, error: 3, done: 2, level: 2, visit: 2, win: 2, merge: 3, work: 1 };
+    const first = new Set();
     liveTimer = setInterval(() => {
       tick();
-      if (++n % 9) return; // about every 9 seconds, the next shot
       const o = state.floor === 2 && office2 ? office2 : office;
-      const ppl = [...o.people.values()].filter((p) => !p.leaving && p.s && !p.s.subagent);
-      const fresh = ppl.filter((p) => p.event && Date.now() - p.event.at < 9000);
-      const busy = ppl.filter((p) => p.mode === 'work');
-      const pool = fresh.length ? fresh : busy.length ? busy : ppl;
-      const p = pool[Math.floor(Math.random() * pool.length)];
-      if (p) o.spotlight(p.key, true);
+      if (!o || !o.people) return;
+      const now = Date.now();
+      const found = [];
+      const look = (key, at, kind) => {
+        if (!key || !at || !RANK[kind]) return;
+        const was = seen.get(key) || 0;
+        if (at <= was) return;
+        seen.set(key, at);
+        // What was already going on when we tuned in is not news.
+        if (!first.has(o) || now - at > 8000) return;
+        found.push({ key, rank: RANK[kind], at });
+      };
+      for (const p of o.people.values()) {
+        if (p.leaving || !p.s || p.s.subagent || !p.event) continue;
+        look(p.key, p.event.at, p.event.zone === 'held' ? null : p.event.zone);
+      }
+      for (const v of (o.visitors || new Map()).values()) if (v.event && v.stage === 'in') look(v.key, v.event.at, 'visit');
+      // The slot keeps page time: a win showing right now is the news (the 30 s rule stops repeats).
+      if (o.slot && o.slot.player && o.slot.winUntil > o.t) look(`slot:${o.slot.player}`, now, 'win');
+      if (o.confetti && o.confetti.key) look(`merge:${o.confetti.key}`, o.confetti.at, 'merge');
+      first.add(o);
+      const pick = found
+        .map((f) => ({ ...f, key: f.key.replace(/^(slot|merge):/, '') }))
+        .filter((f) => now - (lastShot.get(f.key) || 0) > 30_000)
+        .sort((a, b) => b.rank - a.rank || b.at - a.at)[0];
+      if (!pick) return;
+      if ((o.spotQ || []).length >= 2) o.spotQ.shift(); // keep it current, not a backlog
+      lastShot.set(pick.key, now);
+      o.spotlight(pick.key, true);
     }, 1000);
     tick();
   }
