@@ -113,6 +113,36 @@
     return '查資料';
   }
 
+  // A public view: clicking someone shows a small card with what your own
+  // page shows over their head (src/server.js publicDetail, made safe).
+  function peekLines(s) {
+    const d = s.detail || {};
+    const lines = [];
+    if (d.title) lines.push(['工作', d.title]);
+    const now = s.status === 'tool' && d.doing ? words(d.doing) || d.doing : publicDoing(s);
+    if (now) lines.push(['正在', now]);
+    if (d.steps && d.steps.total) lines.push(['進度', `${d.steps.done}/${d.steps.total} 步${d.steps.step ? `・${d.steps.step}` : ''}`]);
+    return lines;
+  }
+  let peekEl = null, peekKey = null;
+  function peek(s) {
+    if (!PUBLIC) return;
+    if (!peekEl) { peekEl = document.createElement('div'); peekEl.className = 'pub-card'; document.body.appendChild(peekEl); peekEl.addEventListener('click', (e) => { if (e.target.closest('[data-x]')) peek(null); }); }
+    if (!s || (peekKey === s.key && peekEl.style.display === 'block')) { peekKey = null; peekEl.style.display = 'none'; return; }
+    peekKey = s.key;
+    peekEl.innerHTML = `<button type="button" data-x aria-label="關閉">×</button><b>${esc(name(s))}</b>`
+      + peekLines(s).map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join('');
+    peekEl.style.display = 'block';
+  }
+  // Keep an open card current as the data comes in.
+  function peekRefresh() {
+    if (!peekKey || !peekEl || peekEl.style.display !== 'block') return;
+    const s = state.data && state.data.sessions.find((x) => x.key === peekKey);
+    if (!s) { peek(null); return; }
+    peekEl.querySelectorAll('div').forEach((el) => el.remove());
+    peekEl.insertAdjacentHTML('beforeend', peekLines(s).map(([k, v]) => `<div><span>${k}</span>${esc(v)}</div>`).join(''));
+  }
+
   function label(s) {
     // A public view's names are already nicknames (src/server.js publicView);
     // what they are doing goes after it, in plain words.
@@ -993,7 +1023,7 @@
     ding(kind) { Sound.play(kind); },
     get live() { return LIVE; },
     // The ticker on air: recent things, with employee numbers only.
-    publicDoing,
+    publicDoing, peekLines, peek, peekRefresh,
     tickerLines() {
       const said = { done: '做完一輪 ✓', error: '卡住了 ⚠', wait: '在等老闆回覆 ✋', level: '升等了 ⭐' };
       return eventLog.slice(-12).reverse().map((e) => { const s = byKey(e.key); return s && said[e.kind] ? `${PUBLIC ? name(s) : empId(s)} ${said[e.kind]}` : null; }).filter(Boolean);

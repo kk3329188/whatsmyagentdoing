@@ -13,7 +13,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wmad-public-'));
 process.env.WMAD_REMOTE_DIR = path.join(root, 'inbox');
 process.env.WMAD_DESKTOP_META_DIR = path.join(root, 'meta');
 process.env.WMAD_PROGRESS_FILE = path.join(root, 'progress.json');
-const { createServer, publicView, publicWorld } = require('../src/server');
+const { createServer, publicView, publicWorld, safeText } = require('../src/server');
 const { EventEmitter } = require('node:events');
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -47,7 +47,8 @@ function snap() {
 
 test('public view: none of the private text leaves, the office still works', () => {
   const out = publicView(snap(), 'salt', { company: 'Acme' });
-  const body = JSON.stringify(out);
+  // The card a click shows (detail) is checked on its own below.
+  const body = JSON.stringify({ ...out, sessions: out.sessions.map(({ detail, ...rest }) => rest) });
   for (const s of [...SECRET, 'aaaa', 'bbbb', 'cccc', 'dddd', 'Alice', 'please look', 'secret.txt', 'hi there', 'someone', 'claude-x']) {
     assert.ok(!body.includes(s), `leaked: ${s}`);
   }
@@ -149,7 +150,9 @@ test('public server: units come from the real titles (privacy is applied by the 
     const { body } = await get(server.address().port, '/events?k=k3y');
     assert.match(body, /"title":"維修部・/);
     assert.match(body, /"company":"Acme"/);
-    assert.ok(!/billing|secret-repo|unit-1/.test(body), 'title, folder and id stay home');
+    assert.ok(!/secret-repo|unit-1/.test(body), 'folder and id stay home');
+    const sess = JSON.parse(body.replace(/^data: /, '').split('\n')[0]).sessions;
+    assert.ok(!/billing/.test(JSON.stringify(sess.map(({ detail, ...rest }) => rest))), 'the title only on the card a click shows');
   } finally {
     server.closeAllConnections();
     server.close();
@@ -288,4 +291,19 @@ test('public view, live: a WebSocket with the key gets the sessions and the offi
   } finally {
     for (const s of [main, pub]) { s.closeAllConnections(); s.close(); }
   }
+});
+
+test('public view: a click shows what your page shows over their head, made safe', () => {
+  const sn = snap();
+  sn.sessions[0].activity = 'Bash: curl -H "Authorization: Bearer abcdef123456" https://api.example.com/x?token=zzz && cat /Users/someone/.ssh/config';
+  sn.sessions[0].plan = [{ content: 'write tests', status: 'completed' }, { content: 'fix the bug for bob@corp.com', status: 'in_progress' }, { content: 'ship', status: 'pending' }];
+  const d = publicView(sn, 'salt').sessions[0].detail;
+  assert.equal(d.title, 'Fix refund rounding', 'the real title, as your page shows it');
+  assert.match(d.doing, /^Bash: curl/);
+  for (const x of ['abcdef123456', 'token=zzz', '/Users/someone', 'bob@corp.com']) assert.ok(!JSON.stringify(d).includes(x), `hidden: ${x}`);
+  assert.equal(safeText('cat /Users/someone/.ssh/config'), 'cat ~/.ssh/config', 'your home folder as ~');
+  assert.deepEqual({ done: d.steps.done, total: d.steps.total }, { done: 1, total: 3 });
+  assert.equal(publicView(sn, 'salt').sessions[2].detail, null, 'helpers: none');
+  assert.equal(safeText('export GITHUB_TOKEN=ghp_abcdefghijklmnop1234'), 'export GITHUB_TOKEN=***');
+  assert.equal(safeText('fix the thing '.repeat(10)).length, 60, 'short');
 });

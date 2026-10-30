@@ -54,3 +54,13 @@ test('public view: what they are doing, in plain words, from the kind of work al
   assert.equal(publicDoing({ status: 'idle' }), '休息中');
   assert.equal(publicDoing({ visitor: true }), '來訪');
 });
+
+test('public view: the card says the work, what they are doing now and how far along', () => {
+  const { peekLines } = load();
+  const lines = peekLines({ status: 'tool', activity: 'Bash:', detail: { title: 'Fix the login bug', doing: 'Bash: npm test', steps: { done: 2, total: 5, step: 'run the tests' } } });
+  assert.equal(JSON.stringify(lines.map((l) => l[0])), JSON.stringify(['工作', '正在', '進度']));
+  assert.equal(lines[0][1], 'Fix the login bug');
+  assert.match(lines[1][1], /npm test/);
+  assert.equal(lines[2][1], '2/5 步・run the tests');
+  assert.equal(JSON.stringify(peekLines({ status: 'idle', detail: { title: 'Notes' } }).map((l) => l[1])), JSON.stringify(['Notes', '休息中']));
+});

@@ -290,6 +290,11 @@
   body.live .live-ui { display: block; position: fixed; z-index: 20; pointer-events: none; }
   body.live .live-top { display: flex; }
   body.public .live-exit { display: none !important; }
+  .pub-card { display: none; position: fixed; left: 16px; bottom: 52px; z-index: 40; max-width: min(340px, calc(100vw - 32px)); padding: 12px 14px 10px; border-radius: 14px; background: rgba(14,16,28,.9); color: #f2f1ec; font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.4); backdrop-filter: blur(6px); }
+  .pub-card b { display: block; font-size: 15px; margin: 0 22px 6px 0; }
+  .pub-card div { display: flex; gap: 8px; margin-top: 3px; word-break: break-word; }
+  .pub-card span { flex: none; color: #9aa3b5; }
+  .pub-card button { all: unset; position: absolute; top: 6px; right: 10px; font-size: 18px; color: #9aa3b5; cursor: pointer; }
   body.public .live-music:not([hidden]) { display: block; pointer-events: auto; top: 52px; right: 16px; border: 0; border-radius: 999px; padding: 5px 12px; font: 700 12px ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(12,14,24,.6); cursor: pointer; }
   body.public .live-sound:not([hidden]) { display: block; pointer-events: auto; top: 12px; right: 16px; border: 0; border-radius: 999px; padding: 6px 14px; font: 700 13px ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(12,14,24,.72); cursor: pointer; }
   body.public .view-pad { display: grid !important; position: fixed; right: 16px; bottom: 52px; z-index: 30; }
@@ -764,6 +769,7 @@ function onData(data) {
   render();
   Hub.setPrivate(data.privacy);
   Hub.setPublic(data.public, data.company);
+  if (data.public) Hub.peekRefresh();
   if (data.public) enterPublic();
   Hub.render();
 }
@@ -931,6 +937,8 @@ const officeOpts = {
   onCommand: (kind, s) => { if (!PIP) Hub.command(kind, s); },
   isSecretary: (s) => Hub.isSecretary(s),
   onHover(s, at, click) {
+    // A public view: a click shows that person's card (or closes it).
+    if (Hub.public) { if (click) Hub.peek(s || null); return; }
     if (Hub.live) return; // on air: no tooltips, no panels
     // The secretary came over with news: clicking them shows it again.
     if (click && s && office && office.secKey === s.key && office.people.get(s.key)?.errand) { Hub.showAway(); return; }

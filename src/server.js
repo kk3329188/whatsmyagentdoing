@@ -225,6 +225,22 @@ function nicknameOf(salt, id, alias) {
   return n;
 }
 const asRule = (m) => { try { return new RegExp(m, 'i'); } catch { return { test: (t) => t.toLowerCase().includes(String(m).toLowerCase()) }; } };
+// What a person is doing, as the page shows it over their head, made safe to
+// show anyone with the link: your home folder as ~, no tokens, passwords,
+// keys, emails or URL queries, and short.
+function safeText(v, max = 60) {
+  let t = String(v || '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  t = t.replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
+  t = t.replace(/\b(ghp|gho|ghu|ghs|github_pat|xox[abprs]|sk|pk|rk|AKIA|AIza)[-_A-Za-z0-9]{8,}/g, '***');
+  t = t.replace(/\b(bearer|basic)\s+[^\s'"]+/gi, '$1 ***');
+  t = t.replace(/\b(token|key|secret|password|passwd|pwd|auth|authorization|cookie|session)(["']?\s*[=:]\s*["']?)[^\s'"&]+/gi, '$1$2***');
+  t = t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '***@***');
+  t = t.replace(/(https?:\/\/[^\s?#]+)[?#][^\s]*/g, '$1');
+  t = t.replace(/\b[A-Za-z0-9+/_=-]{32,}\b/g, '***');
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
 function publicView(snap, salt, { units = [], company = '' } = {}) {
   const alias = (id) => (id == null ? null : crypto.createHmac('sha256', salt).update(String(id)).digest('hex').slice(0, 10));
   const key = (k) => { const i = String(k).indexOf(':'); return `${String(k).slice(0, i)}:${alias(String(k).slice(i + 1))}`; };
@@ -251,8 +267,18 @@ function publicView(snap, salt, { units = [], company = '' } = {}) {
       level: num(s.level), xp: num(s.xp), next: num(s.next), badges: (s.badges || []).map(badge),
       talk: (s.talk || []).map((t) => ({ key: key(t.key), dir: t.dir === 'in' ? 'in' : 'out', at: num(t.at), text: null })),
       recent: [], controllable: false, pending: 0,
+      // Clicking someone on the public view shows this (public/hub.js peek):
+      // what your own page shows over their head.
+      detail: s.subagent ? null : publicDetail(s),
     };
   });
+  function publicDetail(s) {
+    const plan = Array.isArray(s.plan) ? s.plan : null;
+    const cur = plan && plan.find((x) => x.status === 'in_progress');
+    const st = plan && plan.length ? { done: plan.filter((x) => x.status === 'completed').length, total: plan.length, step: safeText(cur && cur.content, 50) }
+      : s.progress ? { done: num(s.progress.done), total: num(s.progress.total), step: safeText(s.progress.step, 50) } : null;
+    return { title: safeText(s.title, 40), doing: safeText(s.activity, 60), steps: st };
+  }
   const o = snap.office;
   const t = (o && o.today) || {};
   const office = o && {
@@ -693,4 +719,4 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
   return server;
 }
 
-module.exports = { createServer, snapshot, latestSegments, publicView, publicWorld };
+module.exports = { createServer, snapshot, latestSegments, publicView, publicWorld, safeText };
