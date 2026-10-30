@@ -4945,6 +4945,8 @@
         cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1),
         liftOpen: this.liftOpen || 0, confetti: enc(this.confetti, 1), alarmUntil: this.alarmUntil || 0, bossIn: !!this.bossIn,
         lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
+        // after hours by the host's clock (a viewer may be somewhere else)
+        closedNow: !!this.closedNow,
       };
     }
 
@@ -5063,6 +5065,7 @@
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
       for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
       this.bossIn = !!w.bossIn;
+      this.closedNow = !!w.closedNow;
       this.worldAt = Date.now();
     }
 

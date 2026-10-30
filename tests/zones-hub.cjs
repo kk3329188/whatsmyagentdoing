@@ -1514,3 +1514,15 @@ test('public replay: a spin that reaches the viewer late plays from its start', 
   assert.equal(f.i, 0);
   assert.ok(f.k < 0.05, 'from the very start');
 });
+
+test('public replay: after hours on your office is after hours for the viewer (dim, desk lights), on your clock', () => {
+  const host = load(true, clockAt(21)), view = load(true, clockAt(14));
+  settle(host, [at('tool', { ago: 2 * MIN })]);
+  assert.equal(host.closedNow, true, 'nine at night: closed');
+  view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  assert.equal(view.closedNow, true, 'the viewer, at two in the afternoon where they are, sees it closed too');
+  const day = load(true, clockAt(14));
+  settle(day, [at('tool', { ago: 2 * MIN })]);
+  view.applyWorld(JSON.parse(JSON.stringify({ ...day.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  assert.equal(view.closedNow, false);
+});
