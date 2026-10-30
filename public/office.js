@@ -76,12 +76,97 @@
     meeting: ['laptop', 'write', 'scroll', 'think'],
     tv: ['watch', 'laugh', 'watch'],
   };
-  // The slot machine in the play corner: five reels of these, three rows
-  // showing, paid along the middle row (three or more alike from the left).
-  const SLOT_SYMS = ['7', '💎', '🍒', '🔔', '⭐', '🍋', '🍀', 'BAR'];
-  const SLOT_PAY = { '7': 500, '💎': 300, 'BAR': 200, '⭐': 150, '🔔': 100, '🍀': 80, '🍒': 50, '🍋': 40 };
-  // Each reel holds every symbol twice, in its own order.
-  const SLOT_STRIPS = [0, 1, 2, 3, 4].map((i) => Array.from({ length: 16 }, (_, k) => SLOT_SYMS[(k < 8 ? k * 3 + i : k * 5 + i * 3) % 8]));
+  // ---- The slot machine: a Seth-style "pay anywhere" game ------------------
+  // 6 columns x 5 rows. Eight or more of one symbol anywhere on the screen
+  // pay; they burst, everything above falls, new symbols drop in, and it goes
+  // again until nothing pays (a tumble). Multiplier orbs land now and then:
+  // when a spin paid, their values add up and multiply the win. Four or more
+  // Seth scatters start 10 free spins, where every multiplier adds to a
+  // running total (three more in a free spin add 3). One seed decides a whole
+  // spin, so a public view plays the very same spin, smoothly, by itself.
+  const SETH_COLS = 6, SETH_ROWS = 5, SETH_BET = 88;
+  // [symbol, weight, pays (times the bet) for 8-9 / 10-11 / 12 or more]
+  const SETH_SYMS = [
+    ['blue', 22, [0.21, 0.64, 1.7]], ['green', 20, [0.34, 0.77, 3.4]], ['yellow', 18, [0.42, 0.85, 4.25]], ['purple', 16, [0.68, 1.02, 6.8]], ['red', 14, [0.85, 1.27, 8.5]],
+    ['ankh', 9, [1.27, 1.7, 10.2]], ['scarab', 8, [1.7, 4.25, 12.75]], ['eye', 6, [2.12, 8.5, 21.25]], ['urn', 4, [4.25, 12.75, 34]], ['crown', 3, [8.5, 21.25, 42.5]],
+  ];
+  const SETH_SCATTER_P = 0.026, SETH_SCATTER_FREE_P = 0.018, SETH_ORB_P = 0.012;
+  const SETH_ORBS = [[2, 30], [3, 22], [4, 16], [5, 12], [8, 8], [10, 6], [15, 3], [20, 2], [25, 1.5], [50, 0.7], [100, 0.3], [250, 0.1], [500, 0.05]];
+  const SETH_FREE = 10, SETH_FREE_MORE = 3;
+  const SETH_T = { drop: 520, show: 650, burst: 320, mult: 1000, win: 2400, bonus: 2400 };
+  function sethRng(seed) {
+    let a = seed >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  function sethPick(r, list) {
+    let sum = 0;
+    for (const it of list) sum += it[1];
+    let k = r() * sum;
+    for (const it of list) { k -= it[1]; if (k <= 0) return it; }
+    return list[list.length - 1];
+  }
+  // One spin: the steps of the tumble (each a grid, where each symbol came
+  // from, what pays and bursts), the orbs left at the end, what it pays.
+  const sethCache = new Map();
+  function sethSpin(seed, free = false) {
+    const key = `${seed}|${free ? 1 : 0}`;
+    if (sethCache.has(key)) return sethCache.get(key);
+    const r = sethRng(seed);
+    const orbP = SETH_ORB_P * (free ? 0.8 : 1), scP = free ? SETH_SCATTER_FREE_P : SETH_SCATTER_P;
+    const cell = () => {
+      const u = r();
+      if (u < orbP) return { s: 'x', x: sethPick(r, SETH_ORBS)[0] };
+      if (u < orbP + scP) return { s: 'seth' };
+      return { s: sethPick(r, SETH_SYMS)[0] };
+    };
+    let grid = Array.from({ length: SETH_COLS }, () => Array.from({ length: SETH_ROWS }, cell));
+    let from = grid.map((col) => col.map((_, row) => row - SETH_ROWS));
+    const steps = [];
+    let base = 0, scatters = 0;
+    for (let n = 0; n < 40; n++) {
+      const count = new Map();
+      let sc = 0;
+      for (const col of grid) for (const q of col) { if (q.s === 'seth') sc++; else if (q.s !== 'x') count.set(q.s, (count.get(q.s) || 0) + 1); }
+      scatters = Math.max(scatters, sc);
+      const wins = [];
+      for (const [sym, k] of count) if (k >= 8) { const pays = SETH_SYMS.find((y) => y[0] === sym)[2]; wins.push({ s: sym, k, pay: pays[k >= 12 ? 2 : k >= 10 ? 1 : 0] * SETH_BET }); }
+      const won = new Set(wins.map((w) => w.s));
+      steps.push({ grid: grid.map((col) => col.map((q) => ({ ...q }))), from, wins, burst: grid.map((col) => col.map((q) => won.has(q.s))) });
+      if (!wins.length) break;
+      base += wins.reduce((a, w) => a + w.pay, 0);
+      // Burst, fall, refill from above.
+      const next = [], nfrom = [];
+      grid.forEach((col) => {
+        const keep = col.map((q, row) => ({ q, row })).filter(({ q }) => !won.has(q.s));
+        const add = SETH_ROWS - keep.length;
+        next.push([...Array.from({ length: add }, cell), ...keep.map((k) => k.q)]);
+        nfrom.push([...Array.from({ length: add }, (_, i) => i - add), ...keep.map((k) => k.row)]);
+      });
+      grid = next;
+      from = nfrom;
+    }
+    const orbs = [];
+    grid.forEach((col, c) => col.forEach((q, row) => { if (q.s === 'x') orbs.push({ c, r: row, x: q.x }); }));
+    const out = { seed, free, steps, base: Math.round(base), orbs, mult: base > 0 ? orbs.reduce((a, o) => a + o.x, 0) : 0, scatters };
+    sethCache.set(key, out);
+    if (sethCache.size > 60) sethCache.delete(sethCache.keys().next().value);
+    return out;
+  }
+  // What a spin pays, given the free-spin multiplier built up before it.
+  const sethTotal = (sp, fm = 0) => Math.round(sp.base * Math.max(1, sp.free ? fm + sp.mult : sp.mult));
+  // When each part of a spin plays: drop, show the win, burst, again; the
+  // orbs adding up, the win, the free spins starting.
+  function sethTimeline(sp) {
+    const out = [];
+    let t = 0;
+    const put = (k, i) => { out.push({ k, i, at: t, len: SETH_T[k] }); t += SETH_T[k]; };
+    sp.steps.forEach((st, i) => { put('drop', i); if (st.wins.length) { put('show', i); put('burst', i); } });
+    const last = sp.steps.length - 1;
+    if (sp.base > 0 && sp.orbs.length) put('mult', last);
+    if (sp.base > 0) put('win', last);
+    if (sp.scatters >= (sp.free ? 3 : 4)) put('bonus', last);
+    return { phases: out, len: t };
+  }
   // Appliances people use: what the machine and the person do, phase by
   // phase, from the moment they got there (p.useAt). Both come from that one
   // moment, so a public view (which gets it with the rest) shows the same.
@@ -105,7 +190,6 @@
     }
     return null;
   }
-  const SLOT_EASE = (k) => (k >= 1 ? 1 : 1 + 2.2 * Math.pow(k - 1, 3) + 1.2 * Math.pow(k - 1, 2));
 
   // Everyone has a personality or two (fixed by who they are): it decides
   // where they like to spend a break and what they do sitting down.
@@ -632,12 +716,12 @@
       poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
       // A modern video slot machine, with a stool in front of it.
       const slx = MW - 0.75, sly = MD + 2.6;
-      add(slx + 0.35 + sly + 0.35, () => this.slotMachine(slx, sly));
+      add(slx + 0.45 + sly + 0.35, () => this.slotMachine(slx, sly));
       prop('slot', { x: slx, y: sly });
-      solid(slx, sly, 0.7, 0.7);
-      add(slx + 0.35 + sly + 1.0 - 0.02, () => this.stool(slx + 0.35, sly + 1.0, 0.45, '#c0392b'));
-      prop('barStool', { x: slx + 0.35, y: sly + 1.0 });
-      poi(slx + 0.35, sly + 1.0, 'slot', 'back', { sit: 0.47, zone: 'idle', yaw: Math.PI });
+      solid(slx, sly, 0.9, 0.7);
+      add(slx + 0.45 + sly + 1.0 - 0.02, () => this.stool(slx + 0.45, sly + 1.0, 0.45, '#c0392b'));
+      prop('barStool', { x: slx + 0.45, y: sly + 1.0 });
+      poi(slx + 0.45, sly + 1.0, 'slot', 'back', { sit: 0.47, zone: 'idle', yaw: Math.PI });
 
       // ---- the front street, left: the phone booth
       const bx = WX - 1.6, by = FY + 0.3;
@@ -3103,161 +3187,220 @@
       return true;
     }
 
-    // Someone sitting at it pulls a spin every few seconds; the reels stop
-    // one by one, and three or more alike along the middle row pay out.
+    // Someone sitting at it plays: a spin every few seconds (free spins one
+    // after another), paid when its tumble has played out on the screen.
     stepSlot(dt) {
-      const q = this.plan.pois && this.plan.pois.find((o) => o.act === 'slot');
+      const q = this.slotPoi();
       if (!q) { this.slot = null; return; }
       const now = this.t;
-      const sl = this.slot || (this.slot = { pos: [0, 3, 6, 9, 12], from: [0, 0, 0, 0, 0], to: [0, 3, 6, 9, 12], dur: [1, 1, 1, 1, 1], spinAt: -1e9, next: 0, win: 0, winUntil: 0, paid: true, jackpot: 88888, credit: 12340, player: null });
+      const sl = this.slot || (this.slot = { seed: 0, isFree: false, spinAt: -1e9, len: 0, next: 0, free: 0, fm: 0, freeWin: 0, win: 0, winFrom: 0, winUntil: 0, paid: true, jackpot: 88888, credit: 12340, player: null });
       let player = null;
       for (const p of this.people.values()) if (!p.path.length && ((p.mode === 'wander' && p.poi === q) || (p.run && p.run.poi === q))) { player = p; break; }
       if (!player && this.me && this.me.atSlot && !this.me.moving) player = this.me;
       sl.player = player ? player.key : null;
-      const spinning = now - sl.spinAt < Math.max(...sl.dur);
-      if (player && !spinning && now >= sl.next) {
+      if (!sl.paid && now - sl.spinAt >= sl.len) {
+        sl.paid = true;
+        const sp = sethSpin(sl.seed, sl.isFree);
+        const total = sethTotal(sp, sl.fm);
+        sl.credit += total;
+        if (sl.isFree) {
+          if (sp.base > 0) sl.fm += sp.mult;
+          sl.freeWin += total;
+          sl.free = Math.max(0, sl.free - 1) + (sp.scatters >= 3 ? SETH_FREE_MORE : 0);
+        } else if (sp.scatters >= 4) { sl.free = SETH_FREE; sl.fm = 0; sl.freeWin = 0; }
+      }
+      if (player && sl.paid && now >= sl.next) {
+        sl.seed = (Math.random() * 2147483647) | 0;
+        sl.isFree = sl.free > 0;
+        if (!sl.isFree) { sl.fm = 0; sl.credit -= SETH_BET; }
         sl.spinAt = now;
         sl.paid = false;
-        sl.credit -= 88;
-        for (let i = 0; i < 5; i++) {
-          sl.from[i] = sl.pos[i];
-          sl.to[i] = Math.floor(sl.pos[i]) + 16 + i * 5 + Math.floor(Math.random() * 16);
-          sl.dur[i] = 1100 + i * 280;
-        }
-        // Now and then a line comes in (the rest is luck).
-        if (Math.random() < 0.25) {
-          const sym = SLOT_STRIPS[0][(sl.to[0] + 1) % 16];
-          const n = Math.random() < 0.15 ? 5 : Math.random() < 0.4 ? 4 : 3;
-          for (let i = 1; i < n; i++) {
-            for (let j = sl.to[i]; j < sl.to[i] + 16; j++) if (SLOT_STRIPS[i][(j + 1) % 16] === sym) { sl.to[i] = j; break; }
-          }
-        }
-        sl.next = now + sl.dur[4] + 2200 + Math.random() * 1800;
-      }
-      for (let i = 0; i < 5; i++) {
-        const k = Math.min(1, (now - sl.spinAt) / sl.dur[i]);
-        sl.pos[i] = sl.from[i] + (sl.to[i] - sl.from[i]) * SLOT_EASE(k);
-      }
-      if (now - sl.spinAt >= Math.max(...sl.dur) && !sl.paid) {
-        sl.paid = true;
-        const line = sl.to.map((v, i) => SLOT_STRIPS[i][(v + 1) % 16]);
-        let n = 1;
-        while (n < 5 && line[n] === line[0]) n++;
-        sl.win = n >= 3 ? SLOT_PAY[line[0]] * (n - 2) : 0;
-        if (sl.win) { sl.winUntil = now + 2600; sl.credit += sl.win; sl.winLen = n; }
+        const sp = sethSpin(sl.seed, sl.isFree), tl = sethTimeline(sp);
+        sl.len = tl.len;
+        sl.win = sethTotal(sp, sl.fm);
+        const w = tl.phases.find((ph) => ph.k === 'win');
+        sl.winFrom = w ? now + w.at : 0;
+        sl.winUntil = w ? now + w.at + w.len : 0;
+        sl.winLen = sl.win > SETH_BET * 20 ? 5 : sl.win > SETH_BET * 3 ? 4 : 3;
+        sl.next = now + tl.len + (sl.isFree || sp.scatters >= 4 ? 700 : 1600 + Math.random() * 1600);
       }
       if (player) sl.jackpot += dt * 3.7;
     }
 
-    // The slot machine's main screen on a canvas (w x h, portrait): used for
-    // the 3D screen and, small, for the 2D one.
+    // Showing a win right now (someone cheers, the lights flash).
+    slotWinning() {
+      const sl = this.slot;
+      return !!sl && sl.winUntil > this.t && this.t >= (sl.winFrom || 0);
+    }
+
+    // What the screen shows at this moment: the step, the phase, how far.
+    slotFrame() {
+      const sl = this.slot;
+      if (!sl || !sl.seed) return { sp: sethSpin(20261030), ph: null, k: 1, i: 0, idle: true };
+      const sp = sethSpin(sl.seed, sl.isFree), tl = sethTimeline(sp);
+      const e = this.t - sl.spinAt;
+      const ph = tl.phases.find((x) => e >= x.at && e < x.at + x.len) || null;
+      if (!ph) return { sp, ph: null, k: 1, i: sp.steps.length - 1, idle: e >= tl.len };
+      return { sp, ph, k: (e - ph.at) / ph.len, i: ph.i, idle: false };
+    }
+
+    // The sounds of the spin now playing, by page time (public/ambient.js).
+    slotEvents() {
+      const sl = this.slot;
+      if (!sl || !sl.seed) return null;
+      const sp = sethSpin(sl.seed, sl.isFree), tl = sethTimeline(sp);
+      return { id: `${sl.seed}@${Math.round(sl.spinAt)}`, t: this.t, list: tl.phases.map((ph) => ({ at: sl.spinAt + ph.at, k: ph.k, n: ph.k === 'burst' ? sp.steps[ph.i].wins.length : ph.k === 'win' ? sl.winLen || 3 : 0 })) };
+    }
+
+    // The slot machine's main screen on a canvas (w x h): the 6 x 5 temple
+    // grid, played from the spin's seed (slotFrame), the same on any page.
     slotScreen(c, w, h) {
-      const sl = this.slot || { pos: [0, 3, 6, 9, 12], win: 0, winUntil: 0, credit: 12340, player: null };
+      const sl = this.slot || { credit: 12340, player: null, free: 0, fm: 0 };
       const now = this.t;
+      const f = this.slotFrame();
       const g = c.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, '#2a0f4a'); g.addColorStop(0.55, '#14103a'); g.addColorStop(1, '#0a1630');
+      g.addColorStop(0, '#1b1440'); g.addColorStop(0.6, '#0d1a3a'); g.addColorStop(1, '#071022');
       c.fillStyle = g; c.fillRect(0, 0, w, h);
-      // title
-      const th = h * 0.13;
+      // header
+      const th = h * 0.1;
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.font = `900 ${th * 0.62}px ui-sans-serif, system-ui, sans-serif`;
+      c.font = `900 ${th * 0.7}px ui-sans-serif, system-ui, sans-serif`;
       const tg = c.createLinearGradient(0, 0, 0, th);
-      tg.addColorStop(0, '#fff3b0'); tg.addColorStop(1, '#e0a020');
-      c.fillStyle = tg; c.fillText('★ LUCKY STAR ★', w / 2, th * 0.6);
-      // the reels
-      const top = th * 1.1, cols = 5, rows = 3, pad = w * 0.035;
-      const cw = (w - pad * 2) / cols, ch = Math.min(cw * 1.35, (h - top - h * 0.17) / rows);
-      const rh = ch * rows;
-      c.fillStyle = '#d9a52b'; this.ctxRound(c, pad - 4, top - 4, w - pad * 2 + 8, rh + 8, 8); c.fill();
-      c.fillStyle = '#0b0b1a'; this.ctxRound(c, pad - 1, top - 1, w - pad * 2 + 2, rh + 2, 6); c.fill();
+      tg.addColorStop(0, '#fff3b0'); tg.addColorStop(1, '#d99a1e');
+      c.fillStyle = tg;
+      c.fillText(sl.free > 0 || (f.sp.free && !f.idle) ? `⚡ 免費遊戲 剩 ${sl.free} 次 ⚡` : '⚡ SETH 神殿 ⚡', w / 2, th * 0.6);
+      // the grid
+      const pad = w * 0.03, top = th * 1.15, bottomBar = h * 0.11;
+      const cw = (w - pad * 2) / SETH_COLS, ch = (h - top - bottomBar - 6) / SETH_ROWS;
+      const gw = cw * SETH_COLS, gh = ch * SETH_ROWS;
+      c.fillStyle = '#c9971f'; this.ctxRound(c, pad - 3, top - 3, gw + 6, gh + 6, 7); c.fill();
+      c.fillStyle = '#0a0c1c'; this.ctxRound(c, pad - 1, top - 1, gw + 2, gh + 2, 6); c.fill();
       c.save();
-      c.beginPath(); c.rect(pad, top, w - pad * 2, rh); c.clip();
-      for (let i = 0; i < cols; i++) {
-        const x0 = pad + i * cw;
-        c.fillStyle = i % 2 ? '#fbf6ea' : '#f3ecdc';
-        c.fillRect(x0 + 1, top, cw - 2, rh);
-        const pos = sl.pos[i], base = Math.floor(pos), frac = pos - base;
-        const moving = sl.spinAt != null && now - sl.spinAt < (sl.dur ? sl.dur[i] : 0);
-        for (let r = -1; r <= rows; r++) {
-          const sym = SLOT_STRIPS[i][(((base + r) % 16) + 16) % 16];
-          const cy = top + (r - frac + 0.5) * ch;
-          this.slotSymbol(c, sym, x0 + cw / 2, cy, ch * 0.62, moving);
+      c.beginPath(); c.rect(pad, top, gw, gh); c.clip();
+      for (let col = 0; col < SETH_COLS; col++) { c.fillStyle = col % 2 ? '#151a33' : '#121630'; c.fillRect(pad + col * cw, top, cw, gh); }
+      const st = f.sp.steps[Math.min(f.i, f.sp.steps.length - 1)];
+      const ease = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), 3);
+      const ph = f.ph ? f.ph.k : null;
+      for (let col = 0; col < SETH_COLS; col++) {
+        for (let row = 0; row < SETH_ROWS; row++) {
+          const q = st.grid[col][row];
+          let y = row;
+          if (ph === 'drop') {
+            const from = st.from[col][row];
+            const k = f.i === 0 ? ease(f.k * 1.4 - col * 0.07) : ease(f.k * 1.15);
+            y = from + (row - from) * k;
+          }
+          const bursting = st.burst[col][row] && (ph === 'show' || ph === 'burst');
+          let scale = 1, alpha = 1;
+          if (bursting && ph === 'burst') { scale = 1 + f.k * 0.5; alpha = 1 - f.k; }
+          const cx = pad + (col + 0.5) * cw, cy = top + (y + 0.5) * ch;
+          if (bursting && ph === 'show') {
+            c.fillStyle = `rgba(255,214,90,${0.25 + 0.2 * Math.sin(now / 70)})`;
+            this.ctxRound(c, cx - cw * 0.46, cy - ch * 0.46, cw * 0.92, ch * 0.92, 6); c.fill();
+          }
+          c.globalAlpha = alpha;
+          this.sethSymbol(c, q, cx, cy, Math.min(cw, ch) * 0.78 * scale, ph === 'mult' && q.s === 'x');
+          c.globalAlpha = 1;
+          if (bursting && ph === 'burst') {
+            for (let k = 0; k < 6; k++) {
+              const a = k * 1.05 + col + row, d = f.k * cw * 0.6;
+              c.fillStyle = `rgba(255,240,170,${1 - f.k})`;
+              c.beginPath(); c.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 2.2, 0, Math.PI * 2); c.fill();
+            }
+          }
         }
-        if (moving) { c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(x0 + 1, top, cw - 2, rh); }
       }
-      // shade at the top and bottom of the window, like a curved reel
-      const sh = c.createLinearGradient(0, top, 0, top + rh);
-      sh.addColorStop(0, 'rgba(0,0,0,.45)'); sh.addColorStop(0.22, 'rgba(0,0,0,0)'); sh.addColorStop(0.78, 'rgba(0,0,0,0)'); sh.addColorStop(1, 'rgba(0,0,0,.45)');
-      c.fillStyle = sh; c.fillRect(pad, top, w - pad * 2, rh);
       c.restore();
-      // the middle line, lit up on a win
-      const win = sl.winUntil > now;
-      const ly = top + ch * 1.5;
-      c.strokeStyle = win ? `hsl(${(now / 4) % 360},100%,60%)` : 'rgba(255,90,90,.55)';
-      c.lineWidth = win ? 5 : 2;
-      c.beginPath(); c.moveTo(pad - 6, ly); c.lineTo(w - pad + 6, ly); c.stroke();
-      if (win) {
-        for (let i = 0; i < (sl.winLen || 3); i++) {
-          c.strokeStyle = '#ffe14d'; c.lineWidth = 4;
-          this.ctxRound(c, pad + i * cw + 4, top + ch + 3, cw - 8, ch - 6, 6); c.stroke();
-        }
-      }
-      // the bottom bar: credit, bet, win; or the call to play
-      const by = top + rh + 8, bh = h - by - 4;
-      if (win) {
-        const pulse = 1 + 0.08 * Math.sin(now / 90);
-        c.font = `900 ${Math.min(bh * 0.62, w * 0.14) * pulse}px ui-sans-serif, system-ui, sans-serif`;
-        c.fillStyle = '#ffe14d'; c.fillText(`WIN ${sl.win.toLocaleString()}`, w / 2, by + bh / 2);
-      } else if (!sl.player) {
-        c.font = `800 ${Math.min(bh * 0.45, w * 0.1)}px ui-sans-serif, system-ui, sans-serif`;
+      // over the grid: the orbs adding up, the win, free spins starting
+      const mid = top + gh / 2;
+      const banner = (text, size, color) => {
+        c.fillStyle = 'rgba(5,6,18,.62)'; c.fillRect(pad, mid - size * 0.85, gw, size * 1.7);
+        c.font = `900 ${size}px ui-sans-serif, system-ui, sans-serif`;
+        c.lineWidth = size * 0.12; c.strokeStyle = '#3a1500'; c.strokeText(text, w / 2, mid);
+        c.fillStyle = color; c.fillText(text, w / 2, mid);
+      };
+      const pulse = 1 + 0.06 * Math.sin(now / 90);
+      if (ph === 'mult') banner(`倍數 x${f.sp.free ? (sl.fm || 0) + f.sp.mult : f.sp.mult}`, w * 0.11 * pulse, '#9ff3ff');
+      else if (ph === 'win') banner(`WIN ${sethTotal(f.sp, sl.fm || 0).toLocaleString()}`, w * 0.12 * pulse, '#ffe14d');
+      else if (ph === 'bonus') banner(f.sp.free ? `+${SETH_FREE_MORE} 次免費遊戲` : `免費遊戲 ×${SETH_FREE}`, w * 0.1 * pulse, '#ffb3f0');
+      // the bottom bar
+      const by = h - bottomBar / 2 - 2;
+      c.font = `700 ${bottomBar * 0.45}px ui-sans-serif, system-ui, sans-serif`;
+      if (!sl.player && f.idle) {
         c.fillStyle = Math.sin(now / 300) > 0 ? '#ffffff' : '#8fd3ff';
-        c.fillText('PRESS SPIN', w / 2, by + bh / 2);
+        c.fillText('坐下來轉一把', w / 2, by);
       } else {
-        c.font = `700 ${Math.min(bh * 0.32, w * 0.065)}px ui-sans-serif, system-ui, sans-serif`;
         c.fillStyle = '#9fe8ff';
-        c.textAlign = 'left'; c.fillText(`CREDIT ${Math.round(sl.credit).toLocaleString()}`, pad, by + bh / 2);
-        c.textAlign = 'right'; c.fillText('BET 88', w - pad, by + bh / 2);
+        c.textAlign = 'left'; c.fillText(`CREDIT ${Math.round(sl.credit).toLocaleString()}`, pad, by);
+        c.textAlign = 'right'; c.fillText(sl.free > 0 || sl.fm ? `總倍數 x${sl.fm || 0}` : `BET ${SETH_BET}`, w - pad, by);
         c.textAlign = 'center';
       }
     }
 
-    // The topper over the main screen: the progressive jackpot.
+    // The topper: the game's name and the biggest orb there is.
     slotTopper(c, w, h) {
-      const sl = this.slot || { jackpot: 88888, winUntil: 0 };
+      const sl = this.slot || { jackpot: 88888, free: 0 };
       const now = this.t;
       const g = c.createLinearGradient(0, 0, w, 0);
-      g.addColorStop(0, '#5a0f2e'); g.addColorStop(0.5, '#a3123a'); g.addColorStop(1, '#5a0f2e');
+      g.addColorStop(0, '#2a1250'); g.addColorStop(0.5, '#5b23a6'); g.addColorStop(1, '#2a1250');
       c.fillStyle = g; c.fillRect(0, 0, w, h);
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.font = `900 ${h * 0.26}px ui-sans-serif, system-ui, sans-serif`;
-      c.fillStyle = '#ffd86b'; c.fillText('GRAND JACKPOT', w / 2, h * 0.27);
       c.font = `900 ${h * 0.42}px ui-sans-serif, system-ui, sans-serif`;
-      c.fillStyle = sl.winUntil > now && Math.sin(now / 80) > 0 ? '#ffffff' : '#fff3b0';
-      c.fillText(`$${Math.floor(sl.jackpot).toLocaleString()}`, w / 2, h * 0.68);
-      // chasing lights along the edge
-      for (let i = 0; i < 18; i++) {
+      const hot = this.slotWinning() && Math.sin(now / 80) > 0;
+      c.fillStyle = hot ? '#ffffff' : '#ffd86b';
+      c.fillText('SETH ⚡ 6×5', w / 2, h * 0.38);
+      c.font = `800 ${h * 0.24}px ui-sans-serif, system-ui, sans-serif`;
+      c.fillStyle = '#ffe9a8';
+      c.fillText(sl.free > 0 ? `免費遊戲 ${sl.free} 次・總倍數 x${sl.fm || 0}` : '倍數球最高 x500', w / 2, h * 0.76);
+      for (let i = 0; i < 20; i++) {
         const on = (Math.floor(now / 120) + i) % 3 === 0;
-        c.fillStyle = on ? '#fff6c8' : '#7a3a10';
-        const x = (i + 0.5) * w / 18;
+        c.fillStyle = on ? '#fff6c8' : '#5a2a90';
+        const x = (i + 0.5) * w / 20;
         c.beginPath(); c.arc(x, 3, 2.2, 0, Math.PI * 2); c.arc(x, h - 3, 2.2, 0, Math.PI * 2); c.fill();
       }
     }
 
-    slotSymbol(c, sym, x, y, size, blur) {
+    // One symbol: gems drawn as cut stones, the treasures as pictures on a
+    // gold disc, Seth (the scatter) in purple, orbs glowing with their value.
+    sethSymbol(c, q, x, y, size, hot = false) {
+      const GEM = { blue: ['#5fb4ff', '#1d4fa8', 6], green: ['#6ef0a0', '#178a4a', 4], yellow: ['#ffe36b', '#b08a12', 3], purple: ['#d79bff', '#6a2aa8', 8], red: ['#ff7a7a', '#a51c2a', 5] };
+      const PIC = { ankh: '☥', scarab: '🪲', eye: '👁️', urn: '🏺', crown: '👑' };
+      const r = size / 2;
       c.save();
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      if (blur) c.globalAlpha = 0.75;
-      if (sym === '7') {
-        c.font = `900 ${size * 1.05}px ui-sans-serif, system-ui, sans-serif`;
-        c.lineWidth = size * 0.1; c.strokeStyle = '#5a0a0a'; c.strokeText('7', x, y);
-        c.fillStyle = '#e8262b'; c.fillText('7', x, y);
-      } else if (sym === 'BAR') {
-        c.fillStyle = '#1d1d24'; this.ctxRound(c, x - size * 0.55, y - size * 0.26, size * 1.1, size * 0.52, size * 0.1); c.fill();
-        c.font = `900 ${size * 0.38}px ui-sans-serif, system-ui, sans-serif`;
-        c.fillStyle = '#ffd34d'; c.fillText('BAR', x, y + 1);
-      } else {
-        c.font = `${size * 0.85}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-        c.fillText(sym, x, y + size * 0.05);
+      if (GEM[q.s]) {
+        const [hi, lo, n] = GEM[q.s];
+        const gr = c.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r);
+        gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.25, hi); gr.addColorStop(1, lo);
+        c.fillStyle = gr;
+        c.beginPath();
+        for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + (i / n) * Math.PI * 2; const rr = n === 4 ? r * 0.92 : r * 0.82; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * (n === 4 ? 1.1 : 1)); }
+        c.closePath(); c.fill();
+        c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = 1.2; c.stroke();
+      } else if (PIC[q.s]) {
+        const gr = c.createRadialGradient(x, y - r * 0.3, r * 0.1, x, y, r);
+        gr.addColorStop(0, '#fff1b8'); gr.addColorStop(1, '#b8801a');
+        c.fillStyle = gr; c.beginPath(); c.arc(x, y, r * 0.9, 0, Math.PI * 2); c.fill();
+        c.font = q.s === 'ankh' ? `900 ${size * 0.72}px ui-serif, serif` : `${size * 0.6}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+        c.fillStyle = '#5a2a00';
+        c.fillText(PIC[q.s], x, y + size * 0.04);
+      } else if (q.s === 'seth') {
+        const gr = c.createRadialGradient(x, y, r * 0.1, x, y, r);
+        gr.addColorStop(0, '#f6c3ff'); gr.addColorStop(1, '#5b1a9e');
+        c.fillStyle = gr; c.beginPath(); c.arc(x, y, r * 0.95, 0, Math.PI * 2); c.fill();
+        c.font = `${size * 0.5}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+        c.fillText('⚡', x, y - size * 0.08);
+        c.font = `900 ${size * 0.2}px ui-sans-serif, system-ui, sans-serif`;
+        c.fillStyle = '#fff3b0'; c.fillText('SETH', x, y + size * 0.3);
+      } else if (q.s === 'x') {
+        const col = q.x >= 100 ? '#ffd23a' : q.x >= 25 ? '#ff5a6a' : q.x >= 10 ? '#c06bff' : q.x >= 5 ? '#4fb0ff' : '#4fe08a';
+        const glow = hot ? 1.15 + 0.1 * Math.sin(this.t / 60) : 1;
+        const gr = c.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.05, x, y, r * glow);
+        gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.35, col); gr.addColorStop(1, 'rgba(0,0,0,.2)');
+        c.fillStyle = gr; c.beginPath(); c.arc(x, y, r * 0.9 * glow, 0, Math.PI * 2); c.fill();
+        c.font = `900 ${size * (q.x >= 100 ? 0.3 : 0.36)}px ui-sans-serif, system-ui, sans-serif`;
+        c.lineWidth = 3; c.strokeStyle = '#1a0a00'; c.strokeText(`x${q.x}`, x, y + 1);
+        c.fillStyle = '#ffffff'; c.fillText(`x${q.x}`, x, y + 1);
       }
       c.restore();
     }
@@ -3279,22 +3422,24 @@
     // in 3D), lit edges and the button deck.
     slotMachine(x, y) {
       const P = (a, b, c) => this.iso(a, b, c);
-      this.box(x, y, 0, 0.7, 0.7, 0.85, '#2a2d36', '#22242c', '#1b1d23');
-      this.box(x, y, 0.85, 0.7, 0.45, 1.05, '#2a2d36', '#22242c', '#1b1d23');
-      this.box(x + 0.02, y + 0.45, 0.85, 0.66, 0.25, 0.07, '#3a3e48', '#30333c', '#262830');
-      this.box(x, y + 0.05, 1.9, 0.7, 0.35, 0.3, '#2a2d36', '#22242c', '#1b1d23');
-      const cv = this.slotCanvas || (this.slotCanvas = Object.assign(document.createElement('canvas'), { width: 128, height: 160 }));
-      const tv = this.slotTopCanvas || (this.slotTopCanvas = Object.assign(document.createElement('canvas'), { width: 128, height: 48 }));
-      if (!this.slotDrawnAt || this.t - this.slotDrawnAt > 60) {
+      const W = 0.9;
+      this.box(x, y, 0, W, 0.7, 0.85, '#2a2d36', '#22242c', '#1b1d23');
+      this.box(x, y, 0.85, W, 0.45, 1.05, '#2a2d36', '#22242c', '#1b1d23');
+      this.box(x + 0.02, y + 0.45, 0.85, W - 0.04, 0.25, 0.07, '#3a3e48', '#30333c', '#262830');
+      this.box(x, y + 0.05, 1.9, W, 0.35, 0.3, '#2a2d36', '#22242c', '#1b1d23');
+      const cv = this.slotCanvas || (this.slotCanvas = Object.assign(document.createElement('canvas'), { width: 192, height: 160 }));
+      const tv = this.slotTopCanvas || (this.slotTopCanvas = Object.assign(document.createElement('canvas'), { width: 192, height: 48 }));
+      const sl = this.slot, busy = sl && this.t - sl.spinAt < (sl.len || 0) + 200;
+      if (!this.slotDrawnAt || this.t - this.slotDrawnAt > (busy ? 60 : 500)) {
         this.slotDrawnAt = this.t;
         this.slotScreen(cv.getContext('2d'), cv.width, cv.height);
         this.slotTopper(tv.getContext('2d'), tv.width, tv.height);
       }
-      this.onFront(x + 0.07, y + 0.45, 1.0, (c) => c.drawImage(cv, 0, -0.85 * TH, 0.56 * TH, 0.85 * TH));
-      this.onFront(x + 0.05, y + 0.4, 1.93, (c) => c.drawImage(tv, 0, -0.24 * TH, 0.6 * TH, 0.24 * TH));
-      const sl = this.slot, hue = sl && sl.winUntil > this.t ? (this.t / 3) % 360 : (this.t / 25) % 360;
-      for (const ex of [x, x + 0.67]) this.poly([P(ex, y + 0.46, 0.88), P(ex + 0.03, y + 0.46, 0.88), P(ex + 0.03, y + 0.46, 1.9), P(ex, y + 0.46, 1.9)], `hsl(${hue},90%,62%)`);
-      const b = this.iso(x + 0.5, y + 0.6, 0.93);
+      this.onFront(x + 0.06, y + 0.45, 1.02, (c) => c.drawImage(cv, 0, -0.68 * TH, 0.78 * TH, 0.68 * TH));
+      this.onFront(x + 0.05, y + 0.4, 1.93, (c) => c.drawImage(tv, 0, -0.24 * TH, 0.8 * TH, 0.24 * TH));
+      const hue = this.slotWinning() ? (this.t / 3) % 360 : (this.t / 25) % 360;
+      for (const ex of [x, x + W - 0.03]) this.poly([P(ex, y + 0.46, 0.88), P(ex + 0.03, y + 0.46, 0.88), P(ex + 0.03, y + 0.46, 1.9), P(ex, y + 0.46, 1.9)], `hsl(${hue},90%,62%)`);
+      const b = this.iso(x + 0.65, y + 0.6, 0.93);
       this.ctx.fillStyle = sl && sl.player && Math.sin(this.t / 200) > 0 ? '#ff5a3c' : '#c0392b';
       this.ctx.beginPath(); this.ctx.ellipse(b.x, b.y, 3.2, 1.8, 0, 0, Math.PI * 2); this.ctx.fill();
     }
@@ -3757,7 +3902,7 @@
         if (p.moving) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
         if (p.atSlot) {
           const q = this.slotPoi();
-          const won = this.slot && this.slot.player === 'me' && this.slot.winUntil > this.t;
+          const won = this.slot && this.slot.player === 'me' && this.slotWinning();
           return { pose: 'sit', face: 'back', act: won ? 'cheer' : 'slot', sitZ: (q && q.sit) || 0.47 };
         }
         if (p.seated) return { pose: 'sit', face: 'back', act: 'type', sitZ: 0.34 };
@@ -3827,7 +3972,7 @@
         if (q.sit && SEAT_ACTS[q.act]) act = this.seatAct(p, q);
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
-        if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slot.winUntil > this.t) act = 'cheer';
+        if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slotWinning()) act = 'cheer';
         const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
         if (use) act = use.act;
         if (q.act === 'chat') {
@@ -4897,11 +5042,22 @@
       // The slot keeps time on the host's page clock: move it onto ours.
       const off = this.t - (w.t || 0) - age * 1000;
       const slot = dec(w.slot);
-      if (slot) for (const k of ['spinAt', 'next', 'winUntil']) if (typeof slot[k] === 'number') slot[k] += off;
+      if (slot) for (const k of ['spinAt', 'next', 'winUntil', 'winFrom']) if (typeof slot[k] === 'number') slot[k] += off;
       // The same spin as before: keep our own timing (moving it by a few ms
       // each update made the reels stutter); take the rest (credit, a win).
       const same = slot && this.slot && w.slot && this.slotSpinHost === w.slot.spinAt;
-      if (same) for (const k of ['spinAt', 'from', 'to', 'dur', 'pos', 'winUntil']) slot[k] = this.slot[k];
+      if (same) for (const k of ['spinAt', 'winUntil', 'winFrom']) slot[k] = this.slot[k];
+      else if (slot && slot.seed && this.t - slot.spinAt > 0 && this.t - slot.spinAt < (slot.len || 0)) {
+        // A new spin that reached us late: play it from the start (after the
+        // last one has finished), a moment behind the host, rather than
+        // joining it half way. More than 5 s behind: catch up instead.
+        const prev = this.slot && this.slot.seed ? this.slot.spinAt + (this.slot.len || 0) + 300 : 0;
+        const start = Math.max(this.t, prev);
+        if (start - slot.spinAt < 5000) {
+          const d = start - slot.spinAt;
+          for (const k of ['spinAt', 'winUntil', 'winFrom', 'next']) if (slot[k]) slot[k] += d;
+        }
+      }
       this.slotSpinHost = w.slot ? w.slot.spinAt : null;
       this.slot = slot;
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
@@ -4975,13 +5131,6 @@
       if (this.me) { walk(this.me, SPEED); glide(this.me); }
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);
-      const sl = this.slot;
-      if (sl && sl.from && sl.to && sl.dur) {
-        for (let i = 0; i < 5; i++) {
-          const k = Math.min(1, (this.t - sl.spinAt) / sl.dur[i]);
-          sl.pos[i] = sl.from[i] + (sl.to[i] - sl.from[i]) * SLOT_EASE(k);
-        }
-      }
     }
 
     // Advance people and the cat; shared by the 2D and 3D renderers.
@@ -5198,6 +5347,7 @@
   }
 
   Office.usePhase = usePhase;
+  Office.seth = { spin: sethSpin, timeline: sethTimeline, total: sethTotal, BET: SETH_BET, COLS: SETH_COLS, ROWS: SETH_ROWS, FREE: SETH_FREE, FREE_MORE: SETH_FREE_MORE };
   window.Office = Office;
   window.OfficeFloors = { split: splitFloors, zoneOf };
   window.OfficeSeason = seasonOf;

@@ -38,3 +38,21 @@ test('one person typing pauses between bursts (not an even drizzle)', () => {
   assert.ok(gaps.some((g) => g < 0.17), 'quick keys inside a word');
   assert.ok(gaps.some((g) => g > 0.33), 'a pause between words');
 });
+
+test('background music: a bar at a time, scheduled ahead; off means no new notes', () => {
+  const { Ambient } = load();
+  const a = new Ambient();
+  const bars = [];
+  a.playBar = (at, n) => bars.push({ at, n });
+  a.music = {};
+  a.musicAt = 0.5; a.bar = 0;
+  for (let t = 0; t < 10; t += 0.09) a.musicTick(t);
+  assert.ok(bars.length >= 3 && bars.length <= 5, `${bars.length} bars in 10 s at 72 bpm`);
+  assert.deepEqual(bars.map((b) => b.n), bars.map((_, i) => i), 'one chord after another');
+  const gaps = bars.slice(1).map((b, i) => +(b.at - bars[i].at).toFixed(3));
+  assert.ok(gaps.every((g) => g === gaps[0]), 'steady');
+  a.musicOn = false;
+  const n = bars.length;
+  for (let t = 10; t < 20; t += 0.09) a.musicTick(t);
+  assert.equal(bars.length, n);
+});

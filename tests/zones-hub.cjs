@@ -1196,6 +1196,7 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
   o.setWeather({ kind: 'rain' });
   assert.equal(sceneOf(o).weather, 'rain');
   const a = new Ambient();
+  a.setMusic(false); // the music has its own test (ambient-hub.cjs)
   a.start();
   const loops = made.started;
   assert.equal(loops, 4, 'room tone, coffee machine, rain, voices');
@@ -1246,32 +1247,89 @@ test('a meeting only runs with both in their chairs; pulled away, they go back; 
   assert.equal(qa.meeting, null);
 });
 
-test('slot machine: someone at it spins, the reels stop left to right, a line pays and they cheer', () => {
+test('slot machine: someone at it plays the temple game; it pays when the tumble has played out, and they cheer', () => {
   const o = load(true);
   const q = o.plan.pois.find((x) => x.act === 'slot');
   assert.ok(q && o.plan.props.some((x) => x.t === 'slot'), 'a slot machine downstairs');
   assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length, 'reachable');
   const p = settle(o, [at('idle', { ago: 5 * MIN })])('claude:idle');
-  // Nobody there: the screen just waits.
   p.poi = null; p.path = [];
   o.t = 1000; o.stepSlot(0.03);
   assert.equal(o.slot.player, null);
-  assert.equal(o.slot.paid, true, 'no spin');
+  assert.equal(o.slot.paid, true, 'nobody there: no spin');
   p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y;
-  // A spin that has to come in: every reel ends on the same symbol in the middle row.
+  // A seed that pays: the spin starts, the bet comes off.
+  const S = o.constructor.seth;
+  let seed = 1;
+  while (!(S.spin(seed).base > 0 && S.spin(seed).scatters < 4)) seed++;
   const real = Math.random;
-  Math.random = () => 0.01;
+  Math.random = () => seed / 2147483647 + 1e-12;
+  const credit = o.slot.credit;
   try { o.t = 2000; o.stepSlot(0.03); } finally { Math.random = real; }
   assert.equal(o.slot.player, p.key);
-  const stops = o.slot.dur.slice();
-  assert.ok(stops.every((d, i) => i === 0 || d > stops[i - 1]), 'reels stop one after another');
-  o.t = 2000 + stops[0] + 1; o.stepSlot(0.03);
-  assert.equal(o.slot.paid, false, 'still spinning');
-  o.t = 2000 + stops[4] + 1; o.stepSlot(0.03);
-  assert.ok(o.slot.win > 0, 'paid out');
-  assert.equal(o.stateOf(p).act, 'cheer');
-  o.t += 3000; o.stepSlot(0.03);
+  assert.equal(o.slot.seed, seed);
+  assert.equal(o.slot.credit, credit - S.BET);
+  // It plays out: drops, the win shown, bursts, then pays.
+  assert.ok(o.slot.len > 0);
+  o.t = 2000 + o.slot.len / 2; o.stepSlot(0.03);
+  assert.equal(o.slot.paid, false, 'still playing');
+  o.t = o.slot.winFrom + 10;
+  assert.equal(o.stateOf(p).act, 'cheer', 'cheers while the win shows');
+  o.t = 2000 + o.slot.len + 1; o.stepSlot(0.03);
+  assert.equal(o.slot.credit, credit - S.BET + S.total(S.spin(seed)), 'paid what the spin won');
+  o.t = o.slot.winUntil + 1;
   assert.equal(o.stateOf(p).act, 'slot');
+});
+
+test('the temple game: one seed, one spin; eight or more pay, burst and refill until nothing pays', () => {
+  const o = load(true);
+  const S = o.constructor.seth;
+  assert.equal(JSON.stringify(S.spin(777)), JSON.stringify(S.spin(777)), 'the same seed plays the same spin');
+  let checked = 0;
+  for (let seed = 1; seed < 400; seed++) {
+    const sp = S.spin(seed);
+    for (const [i, st] of sp.steps.entries()) {
+      assert.equal(st.grid.length, S.COLS); assert.ok(st.grid.every((col) => col.length === S.ROWS));
+      const count = new Map();
+      st.grid.flat().forEach((c) => { if (c.s !== 'x' && c.s !== 'seth') count.set(c.s, (count.get(c.s) || 0) + 1); });
+      const should = [...count].filter(([, k]) => k >= 8).map(([s]) => s).sort();
+      assert.equal(JSON.stringify(st.wins.map((w) => w.s).sort()), JSON.stringify(should), 'what pays is exactly what shows 8 or more times');
+      if (i === sp.steps.length - 1) assert.equal(st.wins.length, 0, 'it stops when nothing pays');
+      else checked++;
+      // Every symbol that burst is gone after the fall.
+      if (i < sp.steps.length - 1) {
+        const won = new Set(st.wins.map((w) => w.s));
+        const left = st.grid.flat().filter((c) => !won.has(c.s)).length;
+        const kept = sp.steps[i + 1].from.flat().filter((r) => r >= 0).length;
+        assert.equal(kept, left, 'only the burst ones are replaced');
+      }
+    }
+    if (!sp.base) assert.equal(S.total(sp), 0);
+    if (sp.base && sp.mult) assert.equal(S.total(sp), Math.round(sp.base * sp.mult), 'orbs multiply the win');
+  }
+  assert.ok(checked > 50, 'plenty of tumbles seen');
+});
+
+test('the temple game: four seths start free spins; free spins cost nothing and build up the multiplier', () => {
+  const o = load(true);
+  const S = o.constructor.seth;
+  const p = settle(o, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = o.plan.pois.find((x) => x.act === 'slot');
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
+  let seed = 1;
+  while (S.spin(seed).scatters < 4) seed++;
+  const real = Math.random;
+  try {
+    Math.random = () => seed / 2147483647 + 1e-12;
+    o.t = 1000; o.stepSlot(0.03);
+    o.t = 1000 + o.slot.len + 1; o.stepSlot(0.03);
+    assert.equal(o.slot.free, S.FREE, 'free spins');
+    const credit = o.slot.credit;
+    Math.random = () => 0.5;
+    o.t = o.slot.next + 1; o.stepSlot(0.03);
+    assert.equal(o.slot.isFree, true);
+    assert.equal(o.slot.credit, credit, 'no bet taken');
+  } finally { Math.random = real; }
 });
 
 test('slot machine: drop someone on it and they play a while, then carry on', () => {
@@ -1361,6 +1419,7 @@ test('public replay: the same spin keeps its own timing (no stutter from late up
   const q = host.plan.pois.find((x) => x.act === 'slot');
   p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
   host.t = 10_000; host.stepSlot(0.03);
+  assert.ok(host.slot.seed, 'a spin going');
   const w = { ...host.worldState(), wall: Date.now() };
   view.t = 50_000;
   view.applyWorld(JSON.parse(JSON.stringify(w)), new Map(), { hostNow: Date.now() });
@@ -1417,4 +1476,40 @@ test('appliances on a public view: the same moment of use comes across, so the s
   const vq = view.plan.pois.find((x) => x.act === 'fridge');
   assert.equal(view.applianceAt(vq).phase, host.applianceAt(q).phase);
   assert.equal(view.applianceAt(vq).phase, 'reach');
+});
+
+test('public replay: the temple game plays the same frame from the seed on the viewer', () => {
+  const host = load(true), view = load(true);
+  const p = settle(host, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = host.plan.pois.find((x) => x.act === 'slot');
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
+  host.t = 10_000; host.stepSlot(0.03);
+  host.t = 10_700;
+  view.t = 50_700;
+  view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  const a = host.slotFrame(), b = view.slotFrame();
+  assert.equal(b.sp.seed, a.sp.seed);
+  assert.equal(b.ph && b.ph.k, a.ph && a.ph.k);
+  assert.ok(Math.abs(b.k - a.k) < 0.05, 'the same moment of the same spin');
+});
+
+test('public replay: a spin that reaches the viewer late plays from its start', () => {
+  const host = load(true), view = load(true);
+  const p = settle(host, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = host.plan.pois.find((x) => x.act === 'slot');
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
+  const S = host.constructor.seth;
+  let seed = 1;
+  while (S.timeline(S.spin(seed)).len < 3000) seed++;
+  const real = Math.random;
+  Math.random = () => seed / 2147483647 + 1e-12;
+  try { host.t = 10_000; host.stepSlot(0.03); } finally { Math.random = real; }
+  // It arrives 1.5 s into the spin.
+  host.t = 11_500;
+  view.t = 80_000;
+  view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  const f = view.slotFrame();
+  assert.equal(f.ph && f.ph.k, 'drop');
+  assert.equal(f.i, 0);
+  assert.ok(f.k < 0.05, 'from the very start');
 });

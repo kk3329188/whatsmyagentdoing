@@ -1103,38 +1103,40 @@ export class Office3D extends window.Office {
       // screen with five spinning reels (drawn by the shared simulation), a
       // jackpot topper, lit edges and a button deck with a big SPIN button.
       case 'slot': {
+        // A wide cabinet for the 6 x 5 temple game.
+        const W = 0.9;
         const g = new THREE.Group();
-        const body = soft(0x2a2d36), trim = soft(0x9aa1ab);
+        const body = soft(0x2a2d36), trim = soft(0xc9a24c);
         const part = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
-        outlineOf(part(roundedBox(0.7, 0.86, 0.66, 0.04), body, 0, 0.43, 0));
-        outlineOf(part(roundedBox(0.7, 1.08, 0.42, 0.05), body, 0, 1.4, -0.12));
-        outlineOf(part(roundedBox(0.7, 0.34, 0.36, 0.05), body, 0, 2.07, -0.1));
+        outlineOf(part(roundedBox(W, 0.86, 0.66, 0.04), body, 0, 0.43, 0));
+        outlineOf(part(roundedBox(W, 1.08, 0.42, 0.05), body, 0, 1.4, -0.12));
+        outlineOf(part(roundedBox(W, 0.36, 0.36, 0.05), body, 0, 2.08, -0.1));
         // button deck, tilted toward the player
-        outlineOf(part(roundedBox(0.66, 0.06, 0.3, 0.02), soft(0x3a3e48), 0, 0.9, 0.2, 0.22));
-        const spin = part(new THREE.CylinderGeometry(0.055, 0.06, 0.03, 20), new THREE.MeshStandardMaterial({ color: 0xff5a3c, emissive: 0xff3b1c, emissiveIntensity: 0.6 }), 0.17, 0.95, 0.22, 0.22);
-        const btns = [-0.22, -0.12, -0.02].map((bx, i) => part(roundedBox(0.07, 0.025, 0.05, 0.008), new THREE.MeshStandardMaterial({ color: [0x3b8ee0, 0x22a874, 0xe09412][i], emissive: [0x3b8ee0, 0x22a874, 0xe09412][i], emissiveIntensity: 0.4 }), bx, 0.95, 0.24, 0.22));
+        outlineOf(part(roundedBox(W - 0.04, 0.06, 0.3, 0.02), soft(0x3a3e48), 0, 0.9, 0.2, 0.22));
+        const spin = part(new THREE.CylinderGeometry(0.06, 0.065, 0.03, 20), new THREE.MeshStandardMaterial({ color: 0xff5a3c, emissive: 0xff3b1c, emissiveIntensity: 0.6 }), 0.24, 0.95, 0.22, 0.22);
+        const btns = [-0.3, -0.19, -0.08].map((bx, i) => part(roundedBox(0.08, 0.025, 0.05, 0.008), new THREE.MeshStandardMaterial({ color: [0x3b8ee0, 0x22a874, 0xe09412][i], emissive: [0x3b8ee0, 0x22a874, 0xe09412][i], emissiveIntensity: 0.4 }), bx, 0.95, 0.24, 0.22));
         // the screens
-        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 320;
+        const cv = document.createElement('canvas'); cv.width = 384; cv.height = 336;
         const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-        const screen = part(new THREE.PlaneGeometry(0.58, 0.725), new THREE.MeshBasicMaterial({ map: tex }), 0, 1.38, 0.105);
+        const screen = part(new THREE.PlaneGeometry(0.8, 0.7), new THREE.MeshBasicMaterial({ map: tex }), 0, 1.38, 0.105);
         screen.castShadow = false;
-        const tcv = document.createElement('canvas'); tcv.width = 256; tcv.height = 96;
+        const tcv = document.createElement('canvas'); tcv.width = 384; tcv.height = 112;
         const ttex = new THREE.CanvasTexture(tcv); ttex.colorSpace = THREE.SRGBColorSpace;
-        const topper = part(new THREE.PlaneGeometry(0.62, 0.232), new THREE.MeshBasicMaterial({ map: ttex }), 0, 2.07, 0.081);
+        const topper = part(new THREE.PlaneGeometry(0.82, 0.24), new THREE.MeshBasicMaterial({ map: ttex }), 0, 2.08, 0.081);
         topper.castShadow = false;
-        // chrome frame around the main screen
-        for (const [w, h, x, y] of [[0.64, 0.03, 0, 1.76], [0.64, 0.03, 0, 1.0], [0.03, 0.78, -0.31, 1.38], [0.03, 0.78, 0.31, 1.38]]) part(roundedBox(w, h, 0.03, 0.01), trim, x, y, 0.105);
+        // gold frame around the main screen
+        for (const [w, h, x, y] of [[0.86, 0.03, 0, 1.745], [0.86, 0.03, 0, 1.015], [0.03, 0.76, -0.415, 1.38], [0.03, 0.76, 0.415, 1.38]]) part(roundedBox(w, h, 0.03, 0.01), trim, x, y, 0.105);
         // lit edges down both sides, and a glowing arch on top
-        const ledMat = new THREE.MeshBasicMaterial({ color: 0xff44aa });
-        for (const x of [-0.355, 0.355]) part(new THREE.BoxGeometry(0.025, 1.4, 0.025), ledMat, x, 1.55, 0.09).castShadow = false;
-        const arch = part(new THREE.TorusGeometry(0.3, 0.025, 8, 24, Math.PI), ledMat, 0, 2.24, -0.1);
+        const ledMat = new THREE.MeshBasicMaterial({ color: 0xb06bff });
+        for (const x of [-0.455, 0.455]) part(new THREE.BoxGeometry(0.025, 1.4, 0.025), ledMat, x, 1.55, 0.09).castShadow = false;
+        const arch = part(new THREE.TorusGeometry(0.4, 0.025, 8, 28, Math.PI), ledMat, 0, 2.26, -0.1);
         arch.castShadow = false;
         // a coin tray
-        part(roundedBox(0.4, 0.06, 0.1, 0.02), trim, 0, 0.32, 0.36);
-        g.position.set(p.x + 0.35, 0, p.y + 0.35);
+        part(roundedBox(0.5, 0.06, 0.1, 0.02), trim, 0, 0.32, 0.36);
+        g.position.set(p.x + W / 2, 0, p.y + 0.35);
         this.room.add(g);
-        const light = new THREE.PointLight(0xff66cc, 0.6, 2.2, 1.5);
-        light.position.set(p.x + 0.35, 1.4, p.y + 1.0);
+        const light = new THREE.PointLight(0xb06bff, 0.6, 2.4, 1.5);
+        light.position.set(p.x + W / 2, 1.4, p.y + 1.0);
         this.room.add(light);
         this.slotRig = { cv, tex, tcv, ttex, ledMat, spin, btns, light, drawnAt: 0 };
         break;
@@ -2093,9 +2095,9 @@ export class Office3D extends window.Office {
     // The slot machine: repaint its screens (about 30 times a second), cycle
     // the edge lights, flash everything on a win.
     if (this.slotRig) {
-      const r = this.slotRig, sl = this.slot, win = sl && sl.winUntil > this.t;
+      const r = this.slotRig, sl = this.slot, win = this.slotWinning();
       // Busy (spinning, a win): 30 a second; otherwise twice a second.
-      const busy = sl && (this.t - sl.spinAt < Math.max(...(sl.dur || [0])) + 200 || win);
+      const busy = sl && (this.t - sl.spinAt < (sl.len || 0) + 200 || win);
       if (this.t - r.drawnAt > (busy ? 33 : 500)) {
         r.drawnAt = this.t;
         this.slotScreen(r.cv.getContext('2d'), r.cv.width, r.cv.height); r.tex.needsUpdate = true;

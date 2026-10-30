@@ -290,6 +290,7 @@
   body.live .live-ui { display: block; position: fixed; z-index: 20; pointer-events: none; }
   body.live .live-top { display: flex; }
   body.public .live-exit { display: none !important; }
+  body.public .live-music:not([hidden]) { display: block; pointer-events: auto; top: 52px; right: 16px; border: 0; border-radius: 999px; padding: 5px 12px; font: 700 12px ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(12,14,24,.6); cursor: pointer; }
   body.public .live-sound:not([hidden]) { display: block; pointer-events: auto; top: 12px; right: 16px; border: 0; border-radius: 999px; padding: 6px 14px; font: 700 13px ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(12,14,24,.72); cursor: pointer; }
   body.public .view-pad { display: grid !important; position: fixed; right: 16px; bottom: 52px; z-index: 30; }
   body.public .floor-tabs:not([hidden]) { display: flex !important; flex-wrap: nowrap; position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0; max-width: calc(100vw - 32px); }
@@ -426,6 +427,7 @@
               <label class="tog"><input type="checkbox" id="followCam"> <span>開工／做完時鏡頭跟拍</span></label>
               <label class="tog"><input type="checkbox" id="autoStandup"> <span>每天 10:00 自動開晨會</span></label>
               <label class="tog"><input type="checkbox" id="ambientOn"> <span>辦公室環境音</span></label>
+              <label class="tog"><input type="checkbox" id="musicOn"> <span>背景音樂（開環境音時）</span></label>
             </div>
           </div>
           <div class="setting-group">
@@ -455,6 +457,7 @@
     <div class="live-ui live-top" id="liveTop"><span class="live-dot">● LIVE</span><span class="live-name" id="liveName"></span><span class="live-clock" id="liveClock"></span></div>
     <button type="button" class="live-ui live-exit" id="liveExit">離開直播（Esc）</button>
     <button type="button" class="live-ui live-sound" id="liveSound" hidden>🔇 點我開聲音</button>
+    <button type="button" class="live-ui live-music" id="liveMusic" hidden>🎵 音樂開</button>
     <div class="live-ui live-ticker"><span id="liveTicker"></span></div>
     <div class="replay-bar" id="replayBar" hidden><span id="replayClock"></span><span class="replay-track"><i id="replayFill"></i></span><button type="button" id="replayStop">結束回放</button></div>
     <div class="legend" id="legend"></div>
@@ -827,6 +830,10 @@ const ambient = new OfficeAmbient.Ambient();
 const ambientOn = document.getElementById('ambientOn');
 ambientOn.checked = store.get('ambient', false) === true;
 ambientOn.addEventListener('change', () => { store.set('ambient', ambientOn.checked); if (ambientOn.checked) ambient.start(); else ambient.stop(); });
+const musicOn = document.getElementById('musicOn');
+musicOn.checked = store.get('music', true) !== false;
+ambient.setMusic(musicOn.checked);
+musicOn.addEventListener('change', () => { store.set('music', musicOn.checked); ambient.setMusic(musicOn.checked); });
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { if (ambientOn.checked && !PIP) ambient.start(); }, { once: true, capture: true });
 setInterval(() => {
   if (!ambient.on) return;
@@ -1042,7 +1049,7 @@ function setLive(on) {
       }
       for (const v of (o.visitors || new Map()).values()) if (v.event && v.stage === 'in') look(v.key, v.event.at, 'visit');
       // The slot keeps page time: a win showing right now is the news (the 30 s rule stops repeats).
-      if (o.slot && o.slot.player && o.slot.winUntil > o.t) look(`slot:${o.slot.player}`, now, 'win');
+      if (o.slot && o.slot.player && o.slotWinning && o.slotWinning()) look(`slot:${o.slot.player}`, now, 'win');
       if (o.confetti && o.confetti.key) look(`merge:${o.confetti.key}`, o.confetti.at, 'merge');
       first.add(o);
       const pick = found
@@ -1078,6 +1085,12 @@ function enterPublic() {
     Hub.setSound(on);
     if (on) ambient.start(); else ambient.stop();
     btn.textContent = on ? '🔊 聲音開' : '🔇 點我開聲音';
+    music.hidden = !on;
+  });
+  const music = document.getElementById('liveMusic');
+  music.addEventListener('click', () => {
+    ambient.setMusic(!ambient.musicOn);
+    music.textContent = ambient.musicOn ? '🎵 音樂開' : '🎵 音樂關';
   });
   document.body.classList.add('public');
   if (state.view !== 'office' || state.quality !== 'high') {
