@@ -88,9 +88,36 @@
     return { done: '做完了', error: '卡住了', idle: '休息中' }[s.status] || '';
   }
 
+  // A public view: what they are doing, told from the kind of work alone
+  // (no titles, commands or files ever reach it).
+  const PUBLIC_TASK = { test: '跑測試', build: '建置中', push: '上傳程式', commit: '存進度', merge: '合併程式', ci: '等檢查結果',
+    lookup: '查資料', web: '上網查資料', browser: '看網頁', doc: '寫文件', plan: '排計畫', edit: '寫程式', shell: '下指令', agent: '派小幫手', chat: '聯絡同事' };
+  function publicDoing(s) {
+    if (s.visitor) return '來訪';
+    if (s.key === 'me') return '';
+    if (s.subagent) return '幫忙中';
+    if (s.status === 'thinking') return '思考中';
+    if (s.status === 'typing') return '寫回覆';
+    if (s.status === 'waiting') return '等老闆回覆';
+    if (s.status === 'error') return '卡關了';
+    if (s.status === 'interrupted') return '被叫停';
+    if (s.status === 'done') return s.ask || s.needs ? '等老闆決定' : '剛完成一輪';
+    if (s.status !== 'tool') return '休息中';
+    if (s.task && PUBLIC_TASK[s.task]) return PUBLIC_TASK[s.task];
+    const a = s.activity || '';
+    if (a.startsWith('Edit')) return '寫程式';
+    if (a.startsWith('Bash')) return '下指令';
+    if (a.startsWith('Subagent')) return '派小幫手';
+    if (a.startsWith('SendMessage')) return '聯絡同事';
+    if (a.startsWith('TodoWrite')) return '排進度';
+    return '查資料';
+  }
+
   function label(s) {
-    // A public view's names are already nicknames (src/server.js publicView).
-    if (LIVE && !PUBLIC) return s.key === 'me' ? '你' : s.visitor ? '訪客' : empId(s);
+    // A public view's names are already nicknames (src/server.js publicView);
+    // what they are doing goes after it, in plain words.
+    if (PUBLIC) { const d = publicDoing(s); return cut(name(s), 12) + (d ? `｜${d}` : ''); }
+    if (LIVE) return s.key === 'me' ? '你' : s.visitor ? '訪客' : empId(s);
     const p = steps(s);
     const busy = ACTIVE.has(s.status) || s.status === 'waiting';
     return cut(name(s), 16) + (p && busy && p.done < p.total ? ` · ${p.done}/${p.total}` : '');
@@ -602,8 +629,13 @@
     let r;
     if (kind !== 'open' && kind !== 'unrelay' && kind !== 'secretary') { flash = '送出中…（這個瀏覽器第一次用要按 Touch ID）'; updateLive(s); }
     if (kind === 'secretary') {
-      if (isSecretary(s)) { store.set('secretary', '\u0000'); toast('已取消秘書'); }
-      else { const pat = secretaryPattern(s); store.set('secretary', pat); toast(`標題含「${cut(pat, 20)}」的 session 會當你的秘書`); }
+      if (isSecretary(s)) { store.set('secretary', '\u0000'); store.set('secretaryKey', null); toast('已取消秘書'); }
+      else {
+        const pat = secretaryPattern(s);
+        store.set('secretary', pat);
+        store.set('secretaryKey', s.key);
+        toast(`「${cut(name(s), 20)}」當你的秘書（之後同名、只差日期的也算）`);
+      }
       if (opts.onChange) opts.onChange();
       render();
       return;
@@ -793,14 +825,22 @@
 
   // ---- the secretary: which session it is, and the welcome-back summary
 
-  // The secretary: sessions whose title contains what you picked with
-  // 「設為秘書」 (dates left out, so tomorrow's one with the same name counts
-  // too), or by default one titled secretary.
+  // The secretary: the very session you picked with 「設為秘書」 while it is
+  // around; after that, one with the same title but for the date (so
+  // tomorrow's "2026-10-31 值班" takes over from "2026-10-30 值班", but
+  // "值班 handover notes" does not); by default one titled secretary.
   const SECRETARY = /秘書|總機|secretary/i;
+  function pickSecretary(sessions, key, pat) {
+    const ok = (s) => s.agent === 'claude' && !s.subagent;
+    const list = (sessions || []).filter(ok);
+    if (key && list.some((s) => s.key === key)) return (s) => s.key === key;
+    if (pat === '\u0000') return () => false;
+    if (pat) return (s) => ok(s) && secretaryPattern(s) === pat;
+    return (s) => ok(s) && SECRETARY.test(s.title || '');
+  }
   function isSecretary(s) {
-    if (s.agent !== 'claude' || s.subagent) return false;
-    const pat = store.get('secretary', null);
-    return pat ? (s.title || '').includes(pat) : SECRETARY.test(s.title || '');
+    const sessions = (typeof state !== 'undefined' && state.data && state.data.sessions) || [];
+    return pickSecretary(sessions, store.get('secretaryKey', null), store.get('secretary', null))(s);
   }
   const secretaryPattern = (s) => name(s).replace(/\d{2,4}[-/.]\d{1,2}[-/.]\d{1,2}/g, '').trim() || name(s);
 
@@ -947,12 +987,13 @@
   let PUBLIC_CO = '';
   window.Hub = {
     mount, render, open, close, label, doing, words, steps, name, relay, chime, progress, toast,
-    command, isHidden, isSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
+    command, isHidden, isSecretary, pickSecretary, pinNames, report, showAway, welcome, showBoard, company, bossIn, toggleBoss,
     standupLine, showMinutes, bestKey, showBadges, announceBadges,
     setLive(v) { LIVE = !!v; },
     ding(kind) { Sound.play(kind); },
     get live() { return LIVE; },
     // The ticker on air: recent things, with employee numbers only.
+    publicDoing,
     tickerLines() {
       const said = { done: '做完一輪 ✓', error: '卡住了 ⚠', wait: '在等老闆回覆 ✋', level: '升等了 ⭐' };
       return eventLog.slice(-12).reverse().map((e) => { const s = byKey(e.key); return s && said[e.kind] ? `${PUBLIC ? name(s) : empId(s)} ${said[e.kind]}` : null; }).filter(Boolean);

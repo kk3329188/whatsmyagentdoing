@@ -43,6 +43,23 @@
       --shadow: none;
     }
   }
+  /* A public view (--public) is always dark, like the office it shows. */
+  :root[data-theme="dark"] {
+      --bg: #141413;
+      --panel: #1e1e1c;
+      --ink: #ecebe6;
+      --muted: #a09f99;
+      --faint: #6b6a65;
+      --line: #2e2d2a;
+      --thinking: #a48bf0;
+      --tool: #5ea4ee;
+      --typing: #3fc48f;
+      --waiting: #f0a93a;
+      --done: #86b872;
+      --error: #f0675d;
+      --idle: #6b6a65;
+      --shadow: none;
+    }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { margin: 0; background: var(--bg); color: var(--ink); }
@@ -273,6 +290,7 @@
   body.live .live-ui { display: block; position: fixed; z-index: 20; pointer-events: none; }
   body.live .live-top { display: flex; }
   body.public .live-exit { display: none !important; }
+  body.public .view-pad { display: grid !important; position: fixed; right: 16px; bottom: 52px; z-index: 30; }
   body.public .floor-tabs:not([hidden]) { display: flex !important; flex-wrap: nowrap; position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0; max-width: calc(100vw - 32px); }
   body.public .floor-tabs > :not(button) { display: none; }
   body.public .floor-tabs button { background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(6px); }
@@ -445,6 +463,7 @@
 <div class="conn" id="conn" data-t="disconnected"></div>
 <div class="tip" id="tip"></div>
 <div class="ver" id="ver"></div>
+<script>if (new URLSearchParams(location.search).get('k')) { document.documentElement.dataset.theme = 'dark'; window.OFFICE_FORCE_DARK = true; }</script>
 <script src="/i18n.js"></script>
 <script src="/office.js"></script>
 <script src="/popout.js"></script>
@@ -749,10 +768,26 @@ function connect() {
   const key = new URLSearchParams(location.search).get('k');
   const conn = document.getElementById('conn');
   if (key) {
-    // Through a tunnel an event stream can be held back (Cloudflare quick
-    // tunnels do), so a public view asks every two seconds instead.
+    // A public view: live over a WebSocket (the office about three times a
+    // second, the sessions every two); asking every two seconds instead
+    // while that is down (a tunnel can hold an event stream back, so no
+    // event stream here).
     let tag = null;
+    const live = () => {
+      let ws;
+      try { ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?k=${encodeURIComponent(key)}`); } catch { setTimeout(live, 5000); return; }
+      ws.onopen = () => { wsLive = true; conn.classList.remove('on'); };
+      ws.onmessage = (e) => {
+        let m;
+        try { m = JSON.parse(e.data); } catch { return; }
+        if (m.t === 'state') onData(m.data);
+        else if (m.t === 'world') takeWorld(m.world, m.now);
+      };
+      ws.onclose = () => { wsLive = false; setTimeout(live, 3000); };
+    };
+    live();
     const poll = async () => {
+      if (wsLive) { setTimeout(poll, 2000); return; }
       try {
         const r = await fetch(`/api/state?k=${encodeURIComponent(key)}`, { cache: 'no-store', headers: tag ? { 'if-none-match': tag } : {} });
         if (r.status === 200) { tag = r.headers.get('etag'); conn.classList.remove('on'); onData(await r.json()); }
@@ -979,8 +1014,13 @@ function setLive(on) {
     const lastShot = new Map(); // key -> when the camera last went to them
     const RANK = { wait: 3, error: 3, done: 2, level: 2, visit: 2, win: 2, merge: 3, work: 1 };
     const first = new Set();
+    // You moved the camera yourself: leave it with you for 30 s.
+    let mineAt = 0;
+    const officeBox = document.getElementById('office');
+    for (const ev of ['pointerdown', 'wheel', 'touchstart']) officeBox.addEventListener(ev, () => { mineAt = Date.now(); }, { capture: true, passive: true });
     liveTimer = setInterval(() => {
       tick();
+      if (Date.now() - mineAt < 30_000) return;
       const o = state.floor === 2 && office2 ? office2 : office;
       if (!o || !o.people) return;
       const now = Date.now();
@@ -1064,7 +1104,7 @@ function bgStep() {
 async function sendWorld() {
   if (!office || !state.loaded || !office.worldState) return;
   const now = Date.now();
-  if (now - worldSent < (worldWanted ? 450 : 5000)) return;
+  if (now - worldSent < (worldWanted ? 280 : 5000)) return;
   worldSent = now;
   try {
     const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: office.worldState(), 2: office2 && office2.worldState ? office2.worldState() : null } });
@@ -1086,18 +1126,25 @@ else setInterval(worldTick, 250);
 
 // The viewer's side: the host's office when there is one, else our own.
 let worldTag = null, worldOk = 0;
+let wsLive = false;
+// The host's office into ours. `hostNow`: the host machine's clock when it
+// was sent, so a viewer whose clock is off still times bubbles and steps right.
+function takeWorld(w, hostNow) {
+  if (!office || !state.loaded || !w || !w.floors) return;
+  const skew = hostNow ? hostNow - Date.now() : 0;
+  const sessions = new Map(state.data.sessions.map((s) => [s.key, s]));
+  if (w.floors[1] && office.applyWorld) office.applyWorld(w.floors[1], sessions, { skew, hostNow });
+  if (w.floors[2] && office2 && office2.applyWorld) office2.applyWorld(w.floors[2], sessions, { skew, hostNow });
+  worldOk = Date.now();
+}
 async function pullWorld() {
-  if (!Hub.public || !office || !state.loaded) return;
+  if (!Hub.public || !office || !state.loaded || wsLive) return;
   try {
     const key = new URLSearchParams(location.search).get('k') || '';
     const r = await fetch(`/api/world?k=${encodeURIComponent(key)}`, { cache: 'no-store', headers: worldTag ? { 'if-none-match': worldTag } : {} });
     if (r.status === 200) {
       worldTag = r.headers.get('etag');
-      const w = await r.json();
-      const sessions = new Map(state.data.sessions.map((s) => [s.key, s]));
-      if (w.floors && w.floors[1] && office.applyWorld) office.applyWorld(w.floors[1], sessions);
-      if (w.floors && w.floors[2] && office2 && office2.applyWorld) office2.applyWorld(w.floors[2], sessions);
-      worldOk = Date.now();
+      takeWorld(await r.json(), Number(r.headers.get('x-now')) || 0);
     } else if (r.status === 304) worldOk = Date.now();
   } catch {}
   // The host may only have paused (a sleeping laptop, a reload): hold on a

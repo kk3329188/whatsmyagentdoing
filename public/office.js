@@ -182,7 +182,7 @@
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   function palette() {
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = !!window.OFFICE_FORCE_DARK || matchMedia('(prefers-color-scheme: dark)').matches;
     return dark ? {
       dark: true,
       wood1: '#4a3f35', wood2: '#453a31', woodLine: 'rgba(0,0,0,.22)',
@@ -2294,22 +2294,6 @@
       return null;
     }
 
-    // The sign on a desk of someone on leave, at screen point (x, y).
-    leaveSign(x, y, who) {
-      const c = this.ctx;
-      const name = (this.label ? this.label({ key: who.key, title: who.title }) : who.title).slice(0, 12);
-      const text = `🏖️ 休假中・${name}${who.days > 1 ? `（第 ${who.days} 天）` : ''}`;
-      c.save();
-      c.font = '700 9px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif';
-      c.textAlign = 'center'; c.textBaseline = 'middle';
-      const w = c.measureText(text).width + 12;
-      c.globalAlpha = 0.9;
-      this.roundRect(x - w / 2, y - 7, w, 14, 4, '#f3e3c3', '#c9a46a');
-      c.globalAlpha = 1;
-      c.fillStyle = '#6a4b1c';
-      c.fillText(text, x, y + 0.5);
-      c.restore();
-    }
 
     // The real weather outside (src/weather.js): clear, partly, cloudy, fog,
     // rain, snow or storm; null keeps the plain sky.
@@ -2476,7 +2460,8 @@
     }
 
     canHold() { return !!this.cam && !this.readOnly; }
-    // Look, don't touch (a public view): no picking people up, no walking yourself.
+    // Look, don't touch (a public view): no picking people up, no walking
+    // yourself; the camera is still yours to turn and zoom.
     setReadOnly(v) { this.readOnly = !!v; if (this.meKeys) this.meKeys.clear(); }
 
     // Where a held person's feet are over the floor: dangling a little below the pointer.
@@ -4786,12 +4771,16 @@
     }
 
     // `sessions`: this page's sessions by key, for each person's name tag.
-    applyWorld(w, sessions = new Map()) {
+    // `skew`: the host's clock minus ours; `hostNow`: the host's clock when
+    // this left it (for how old it is).
+    applyWorld(w, sessions = new Map(), { skew = 0, hostNow = 0 } = {}) {
       this.remote = true;
       this.first = false;
       if (w.n !== this.builtFor && !this.plan.fixed) { this.builtFor = w.n; this.nWorking = w.n; this.rebuild(); }
       const { byId } = this.planRefs();
+      // Wall-clock times (ms since 1970) on the host's clock: onto ours.
       const dec = (v) => {
+        if (typeof v === 'number' && v > 1e12 && v < 1e13) return v - skew;
         if (v == null || typeof v !== 'object') return v;
         if (Array.isArray(v)) return v.map(dec);
         if (v.$inf) return Infinity;
@@ -4813,7 +4802,7 @@
       const end = (a) => (a && a.length ? a[a.length - 1] : null);
       // What we get is a moment old: carry everyone on along their path for
       // that long, so we do not pull them back to walk a stretch again.
-      const age = Math.min(3, Math.max(0, (Date.now() - (w.wall || Date.now())) / 1000));
+      const age = Math.min(3, Math.max(0, ((hostNow || Date.now() + skew) - (w.wall || hostNow || Date.now() + skew)) / 1000));
       const ahead = (d) => {
         if (!d.path || !d.path.length || !age) return;
         let left = SPEED * age * (d.rush > Date.now() ? 2.3 : 1);
@@ -4870,12 +4859,12 @@
       }
       this.secKey = w.secKey || null;
       // The slot keeps time on the host's page clock: move it onto ours.
-      const off = this.t - (w.t || 0);
+      const off = this.t - (w.t || 0) - age * 1000;
       const slot = dec(w.slot);
       if (slot) for (const k of ['spinAt', 'next', 'winUntil']) if (typeof slot[k] === 'number') slot[k] += off;
       this.slot = slot;
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
-      for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] || 0;
+      for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
       this.bossIn = !!w.bossIn;
       this.worldAt = Date.now();
     }
@@ -4993,10 +4982,6 @@
       }
       if (this.closedNow) this.nightShade();
       this.pingPongBall();
-      if (!this.compact) for (const dk of this.plan.desks) {
-        const who = !occupant.get(dk) && this.leaveDesk(dk);
-        if (who) { const at = this.iso(dk.x + 0.7, dk.y + 0.4, 1.25); this.leaveSign(at.x, at.y, who); }
-      }
       if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();
       this.deskSign();

@@ -247,3 +247,45 @@ test('public world: your page -> main server -> public server -> viewer', async 
     for (const s of [main, pub]) { s.closeAllConnections(); s.close(); }
   }
 });
+
+test('public view, live: a WebSocket with the key gets the sessions and the office, pushed', async () => {
+  const watcher = Object.assign(new EventEmitter(), { sessions: () => [] });
+  const main = createServer(watcher, { demo: true });
+  await new Promise((r) => main.listen(0, '127.0.0.1', r));
+  const mainPort = main.address().port;
+  const pub = createServer(watcher, { public: true, privacy: true, publicKey: 'k3y', mainPort });
+  await new Promise((r) => pub.listen(0, '127.0.0.1', r));
+  const port = pub.address().port;
+  const send = (body) => new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port: mainPort, path: '/api/world', method: 'POST', headers: { 'x-whatsmyagentdoing': 'world' } }, (res) => { res.resume(); res.on('end', resolve); });
+    req.end(JSON.stringify(body));
+  });
+  const open = (k) => new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?k=${k}`);
+    const got = [];
+    ws.onmessage = (e) => got.push(JSON.parse(e.data));
+    ws.onopen = () => resolve({ ws, got, ok: true });
+    ws.onerror = () => resolve({ ws, got, ok: false });
+  });
+  try {
+    assert.equal((await open('nope')).ok, false, 'no key, no socket');
+    const v = await open('k3y');
+    assert.equal(v.ok, true);
+    await send(world());
+    const t0 = Date.now();
+    while (!v.got.some((m) => m.t === 'world') && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 50));
+    const st = v.got.find((m) => m.t === 'state');
+    const w = v.got.find((m) => m.t === 'world');
+    assert.ok(st && st.data.public, 'sessions first');
+    assert.ok(w, 'the office pushed within a moment');
+    assert.ok(Math.abs(w.now - Date.now()) < 5000, "with this machine's clock");
+    assert.ok(!/Alice|secret prompt|aaaa/.test(JSON.stringify(w)), 'filtered like the polled one');
+    // Nothing changed: nothing more is sent.
+    const n = v.got.filter((m) => m.t === 'world').length;
+    await new Promise((r) => setTimeout(r, 700));
+    assert.equal(v.got.filter((m) => m.t === 'world').length, n);
+    v.ws.close();
+  } finally {
+    for (const s of [main, pub]) { s.closeAllConnections(); s.close(); }
+  }
+});

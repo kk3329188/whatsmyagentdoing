@@ -332,6 +332,48 @@ function privateWordsOf(snap) {
 const PUBLIC_OK = (p) => !!STATIC[p] || p.startsWith('/assets/') || p.startsWith('/scenes/') || p === '/api/scenes' || p === '/api/ping' || p === '/events' || p === '/api/state' || p === '/api/world';
 const PUBLIC_MAX_VIEWERS = 50;
 
+// A WebSocket, by hand (RFC 6455, just what a viewer needs): the handshake,
+// text frames out, and reading close / ping from the browser.
+function wsAccept(req, socket) {
+  const key = req.headers['sec-websocket-key'];
+  if (!key || String(req.headers.upgrade || '').toLowerCase() !== 'websocket') return false;
+  const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  return true;
+}
+function wsFrame(op, payload) {
+  const len = payload.length;
+  const head = len < 126 ? Buffer.from([0x80 | op, len])
+    : len < 65536 ? Buffer.from([0x80 | op, 126, len >> 8, len & 255])
+    : (() => { const b = Buffer.alloc(10); b[0] = 0x80 | op; b[1] = 127; b.writeBigUInt64BE(BigInt(len), 2); return b; })();
+  return Buffer.concat([head, payload]);
+}
+function wsSend(socket, text) { if (!socket.destroyed) socket.write(wsFrame(1, Buffer.from(text))); }
+// Frames from the browser (masked): answer pings, close on close.
+function wsRead(socket, onClose) {
+  let buf = Buffer.alloc(0);
+  socket.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    if (buf.length > 1 << 20) { socket.destroy(); return; }
+    while (buf.length >= 2) {
+      const op = buf[0] & 15, masked = buf[1] & 128;
+      let len = buf[1] & 127, at = 2;
+      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); at = 4; }
+      else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); at = 10; }
+      const need = at + (masked ? 4 : 0) + len;
+      if (buf.length < need) return;
+      const mask = masked ? buf.subarray(at, at + 4) : null;
+      const data = Buffer.from(buf.subarray(at + (masked ? 4 : 0), need));
+      if (mask) for (let i = 0; i < data.length; i++) data[i] ^= mask[i & 3];
+      buf = buf.subarray(need);
+      if (op === 8) { try { socket.end(wsFrame(8, Buffer.alloc(0))); } catch {} onClose(); return; }
+      if (op === 9) socket.write(wsFrame(10, data));
+    }
+  });
+  socket.on('close', onClose);
+  socket.on('error', onClose);
+}
+
 // The public server fetches your page's office from the main one.
 function fetchHostWorld(port) {
   return new Promise((resolve) => {
@@ -399,8 +441,8 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
       if (url.pathname === '/api/world') {
         const send = (w) => {
           if (!w) { res.writeHead(204, { 'cache-control': 'no-store' }).end(); return; }
-          if (req.headers['if-none-match'] === w.tag) { res.writeHead(304, { etag: w.tag, 'cache-control': 'no-store' }).end(); return; }
-          res.writeHead(200, { 'content-type': 'application/json', etag: w.tag, 'cache-control': 'no-store' });
+          if (req.headers['if-none-match'] === w.tag) { res.writeHead(304, { etag: w.tag, 'cache-control': 'no-store', 'x-now': String(Date.now()) }).end(); return; }
+          res.writeHead(200, { 'content-type': 'application/json', etag: w.tag, 'cache-control': 'no-store', 'x-now': String(Date.now()) });
           res.end(w.body);
         };
         if (worldCache && Date.now() - worldCache.at < 400) { send(worldCache.w); return; }
@@ -602,6 +644,52 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
       res.writeHead(404).end();
     }
   });
+  // Public view, live: a WebSocket per viewer. Your page's office is fetched
+  // from the main server every 300 ms and pushed when it changed; the
+  // sessions every 2 s. Each message carries this machine's clock, so a
+  // viewer on another computer can set its own against it.
+  if (opts.public) {
+    const viewers = new Set();
+    let lastWorld = '', lastState = '', worldBusy = false;
+    const pushAll = (text) => { for (const v of viewers) wsSend(v, text); };
+    const pushWorld = async () => {
+      if (!viewers.size || worldBusy) return;
+      worldBusy = true;
+      try {
+        const raw = await fetchHostWorld(opts.mainPort || 4545);
+        if (!privateWords || Date.now() - privateWords.at > 60_000) privateWords = { at: Date.now(), list: privateWordsOf(snapshot(watcher, snapOpts)) };
+        const body = raw ? JSON.stringify(publicWorld(raw, salt, privateWords.list)) : '';
+        if (body && body !== lastWorld) { lastWorld = body; pushAll(`{"t":"world","now":${Date.now()},"world":${body}}`); }
+      } finally { worldBusy = false; }
+    };
+    const pushState = (force) => {
+      if (!viewers.size) return;
+      const body = JSON.stringify(shape(snapshot(watcher, snapOpts)));
+      const sig = body.replace(/^\{"now":\d+,/, '{');
+      if (!force && sig === lastState) return;
+      lastState = sig;
+      pushAll(`{"t":"state","now":${Date.now()},"data":${body}}`);
+    };
+    setInterval(pushWorld, 300).unref();
+    setInterval(() => pushState(false), 2000).unref();
+    setInterval(() => { for (const v of viewers) if (!v.destroyed) v.write(wsFrame(9, Buffer.alloc(0))); }, 25_000).unref();
+    server.on('upgrade', (req, socket) => {
+      const url = new URL(req.url, 'http://localhost');
+      const k = Buffer.from(url.searchParams.get('k') || '');
+      const want = Buffer.from(String(opts.publicKey || ''));
+      const keyOk = want.length && k.length === want.length && crypto.timingSafeEqual(k, want);
+      if (url.pathname !== '/ws' || !keyOk || viewers.size >= PUBLIC_MAX_VIEWERS || !wsAccept(req, socket)) {
+        socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+        return;
+      }
+      socket.setNoDelay(true);
+      viewers.add(socket);
+      wsRead(socket, () => viewers.delete(socket));
+      // Straight away: the sessions, and the office if we have it.
+      wsSend(socket, `{"t":"state","now":${Date.now()},"data":${JSON.stringify(shape(snapshot(watcher, snapOpts)))}}`);
+      if (lastWorld) wsSend(socket, `{"t":"world","now":${Date.now()},"world":${lastWorld}}`);
+    });
+  }
   return server;
 }
 

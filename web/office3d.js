@@ -1373,7 +1373,7 @@ export class Office3D extends window.Office {
       this.panView(e.deltaX, 0);
     }, { capture: true, passive: false });
     this.onViewKey = (e) => {
-      if (!this.visible || this.compact || !this.loaded || this.readOnly) return;
+      if (!this.visible || this.compact || !this.loaded) return;
       if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
       if (e.key === '0') { this.resetView(); return; }
       const d = keyPan(e.key);
@@ -1383,7 +1383,6 @@ export class Office3D extends window.Office {
     };
     window.addEventListener('keydown', this.onViewKey);
     this.canvas.addEventListener('dblclick', (e) => {
-      if (this.readOnly) return;
       const r = this.canvas.getBoundingClientRect();
       const mx = e.clientX - r.left, my = e.clientY - r.top;
       if (this.hit.some((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1)) return;
@@ -1967,16 +1966,6 @@ export class Office3D extends window.Office {
       v.set(b.x + 0.7, 0, Math.min(this.plan.D - 0.1, b.y + 1.7)).project(this.camera);
       this.deskSignAt({ x: (v.x + 1) / 2 * this.cw, y: (1 - v.y) / 2 * this.ch });
     }
-    // On leave: a sign over their dusty desk.
-    if (!this.compact) {
-      const busy = new Set([...this.people.values()].filter((p) => p.mode === 'work' && p.desk).map((p) => p.desk));
-      for (const dk of this.plan.desks) {
-        const who = !busy.has(dk) && this.leaveDesk(dk);
-        if (!who) continue;
-        v.set(dk.x + 0.7, DESK_H + 0.55, dk.y + 0.4).project(this.camera);
-        this.leaveSign((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, who);
-      }
-    }
     if (!this.compact) for (const d of this.podDepts()) {
       v.set(d.x, d.z, d.y).project(this.camera);
       this.deptPlaque((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, d.name, d.color);
@@ -2045,8 +2034,6 @@ export class Office3D extends window.Office {
   // still until the button is let go; pressing anywhere else turns it.
   canHold() { return !!this.loaded && !this.readOnly; }
 
-  // A public view: the camera is the broadcast's, not the viewer's.
-  setReadOnly(v) { super.setReadOnly(v); this.controls.enabled = !v; }
 
   grab(e) {
     super.grab(e);
@@ -2055,7 +2042,7 @@ export class Office3D extends window.Office {
 
   drop(e) {
     super.drop(e);
-    this.controls.enabled = !this.readOnly;
+    this.controls.enabled = true;
   }
 
   // The pointer holds them by the head: where the ray through it meets head height.
