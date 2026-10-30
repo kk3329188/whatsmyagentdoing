@@ -571,7 +571,9 @@
         }
       };
 
-      // ---- cubicle pods: 4 desks back to back with a divider
+      // ---- cubicle pods: 4 desks back to back with a divider, low enough
+      // (PANEL_H) to see the faces and screens of whoever sits across
+      const PANEL_H = 0.85;
       const cubicles = (count, x0 = 1.3) => { for (let p = 0; p < count; p++) {
         const c = p % podCols, r = Math.floor(p / podCols);
         const px = x0 + c * PODX, py = 2.0 + r * 4.7;
@@ -584,14 +586,14 @@
           solid(x, py, 1.4, 0.8, 0.08);
           solid(x, py + 0.92, 1.4, 0.8, 0.08);
         }
-        longBox(px - 0.1, py + 0.82, 0, 3.15, 0.08, 1.15, this.shade(panel, 25), panel, this.shade(panel, -15), { bias: 0.05 });
-        prop('panel', { x: px - 0.1, y: py + 0.82, w: 3.15, d: 0.08, h: 1.15, color: panel });
-        prop('panel', { x: px - 0.18, y: py - 0.05, w: 0.08, d: 1.82, h: 1.15, color: panel });
-        add(px - 0.1 + py + 0.86, () => this.box(px - 0.18, py - 0.05, 0, 0.08, 1.82, 1.15, this.shade(panel, 25), panel, this.shade(panel, -15)));
+        longBox(px - 0.1, py + 0.82, 0, 3.15, 0.08, PANEL_H, this.shade(panel, 25), panel, this.shade(panel, -15), { bias: 0.05 });
+        prop('panel', { x: px - 0.1, y: py + 0.82, w: 3.15, d: 0.08, h: PANEL_H, color: panel });
+        prop('panel', { x: px - 0.18, y: py - 0.05, w: 0.08, d: 1.82, h: PANEL_H, color: panel });
+        add(px - 0.1 + py + 0.86, () => this.box(px - 0.18, py - 0.05, 0, 0.08, 1.82, PANEL_H, this.shade(panel, 25), panel, this.shade(panel, -15)));
         solid(px - 0.18, py + 0.8, 3.25, 0.12, 0.05);
         // Pendant lamps over the pod and a planter along the divider (3D).
         prop('pendant', { x: px + 1.45, y: py + 0.86, span: 1.5 });
-        prop('planter', { x: px + 0.2, y: py + 0.82, w: 2.4 });
+        prop('planter', { x: px + 0.2, y: py + 0.82, w: 2.4, h: PANEL_H });
       } };
       const aislesFrom = (x0) => {
         const out = [];

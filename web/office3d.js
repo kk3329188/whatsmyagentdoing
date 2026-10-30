@@ -1090,13 +1090,13 @@ export class Office3D extends window.Office {
       // A long planter box along the top of a pod's divider.
       case 'planter': {
         const box = new THREE.Mesh(roundedBox(p.w, 0.14, 0.16, 0.03), soft(dark ? 0x5c4431 : 0xe9e3d7));
-        box.position.set(p.x + p.w / 2, 1.15 + 0.07, p.y + 0.04);
+        box.position.set(p.x + p.w / 2, (p.h ?? 1.15) + 0.07, p.y + 0.04);
         box.castShadow = true; outlineOf(box);
         this.room.add(box);
         for (let i = 0; i < Math.round(p.w / 0.18); i++) {
           const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), soft(i % 3 ? 0x5e9a5b : 0x447a46));
           leaf.scale.set(1, 0.8 + (i % 2) * 0.3, 0.9);
-          leaf.position.set(p.x + 0.1 + i * 0.18, 1.3 + (i % 2) * 0.03, p.y + 0.04 + ((i * 37) % 5 - 2) * 0.012);
+          leaf.position.set(p.x + 0.1 + i * 0.18, (p.h ?? 1.15) + 0.15 + (i % 2) * 0.03, p.y + 0.04 + ((i * 37) % 5 - 2) * 0.012);
           leaf.castShadow = true;
           this.room.add(leaf);
         }

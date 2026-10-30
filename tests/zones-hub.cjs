@@ -1536,3 +1536,11 @@ test('desks: the first people to work take the pod nearest the front, not the ba
   const who = settle(o, [at('tool', { n: 1, cwd: '/r/a' }), at('tool', { n: 2, cwd: '/r/a' })]);
   for (const k of ['claude:tool1', 'claude:tool2']) assert.equal(who(k).desk.pod, front, `${k} sits up front`);
 });
+
+test('desks: the pod dividers are low enough to see whoever sits across (and the plants sit on top)', () => {
+  const o = load(true);
+  const panels = o.plan.props.filter((x) => x.t === 'panel');
+  assert.ok(panels.length > 0);
+  for (const p of panels) assert.ok(p.h <= 0.9, `divider ${p.h} m high`);
+  for (const p of o.plan.props.filter((x) => x.t === 'planter')) assert.equal(p.h, panels[0].h, 'planters on top of the divider');
+});
