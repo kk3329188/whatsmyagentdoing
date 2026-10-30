@@ -229,6 +229,181 @@ export class Office3D extends window.Office {
     return m;
   }
 
+  // ---- appliances people use (office.js USE / applianceAt) ------------------
+  //
+  // Each has real moving parts: a microwave door on its hinge, a fridge door,
+  // coffee pouring, a can dropping, paper coming out. What they do comes from
+  // the spot in front of them: who is there and for how long.
+  appliance(kind, x, y, update) { this.appliances.push({ kind, x, y, poi: null, update }); }
+
+  animateAppliances(dt) {
+    for (const a of this.appliances || []) {
+      if (!a.poi) {
+        let d = 1e9;
+        for (const q of this.plan.pois) if (q.act === a.kind) { const k = Math.hypot(q.x - a.x, q.y - a.y); if (k < d) { d = k; a.poi = q; } }
+      }
+      a.update(a.poi ? this.applianceAt(a.poi) : null, dt);
+    }
+  }
+
+  // 0.55 x 0.4 on the counter (top at 0.9), facing the room.
+  microwaveRig(x, y) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.9, y);
+    this.room.add(g);
+    const W = 0.55, H = 0.32, D = 0.4, P = 0.15, body = 0xe9e3d7, o = { group: g };
+    this.boxMesh(0, 0, 0, W, D, 0.02, body, o);
+    this.boxMesh(0, 0, H - 0.02, W, D, 0.02, body, o);
+    this.boxMesh(0, 0, 0.02, 0.02, D, H - 0.04, body, o);
+    this.boxMesh(0, 0, 0.02, W - P, 0.02, H - 0.04, body, o);
+    this.boxMesh(W - P, 0, 0.02, P, D, H - 0.04, body, o);
+    // Inside: a warm light at the back, the plate going round, the food.
+    const glow = this.boxMesh(0.03, 0.025, 0.03, W - P - 0.04, 0.005, H - 0.06, 0x3a3226, { group: g, emissive: 0xffc46b, ei: 0, shadow: false });
+    const plate = new THREE.Group();
+    plate.position.set((W - P) / 2, 0.03, D / 2);
+    g.add(plate);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.01, 24), new THREE.MeshStandardMaterial({ color: 0xdfe8ec, roughness: 0.2, transparent: true, opacity: 0.85 }));
+    plate.add(disc);
+    const food = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 10), soft(0xd99a52));
+    food.scale.set(1.2, 0.6, 1);
+    food.position.set(0.02, 0.035, 0);
+    plate.add(food);
+    // The door, on its hinge at the front left, with a window.
+    const hinge = new THREE.Group();
+    hinge.position.set(0, 0, D);
+    g.add(hinge);
+    this.boxMesh(0, -0.02, 0, W - P, 0.02, H, body, { group: hinge });
+    const win = this.boxMesh(0.05, 0.001, 0.06, W - P - 0.1, 0.004, H - 0.12, 0x20242a, { group: hinge, emissive: 0xffc46b, ei: 0, shadow: false });
+    const display = this.boxMesh(W - P + 0.03, D - 0.004, H - 0.1, 0.09, 0.006, 0.04, 0x0d1a12, { group: g, emissive: 0x39ff88, ei: 0.15, shadow: false });
+    for (let i = 0; i < 3; i++) this.boxMesh(W - P + 0.05, D - 0.004, 0.06 + i * 0.05, 0.05, 0.008, 0.025, 0x3a3e45, { group: g, shadow: false });
+    let spin = 0;
+    this.appliance('microwave', x + 0.275, y + 0.2 + 0.8, (m, dt) => {
+      const ph = m ? m.phase : null, k = m ? m.k : 0;
+      const open = { open: k, load: 1, close: 1 - k, ding: k, take: 1, shut: 1 - k }[ph] ?? 0;
+      hinge.rotation.y = -1.9 * (open * open * (3 - 2 * open));
+      const cook = ph === 'cook';
+      glow.material.emissiveIntensity = cook ? 1.4 : open > 0.05 ? 0.7 : 0;
+      win.material.emissiveIntensity = cook ? 0.9 : 0;
+      if (cook) spin += dt * 1.6;
+      plate.rotation.y = spin;
+      food.visible = (ph === 'load' && k > 0.5) || ph === 'close' || cook || ph === 'ding' || (ph === 'take' && k < 0.5);
+      display.material.emissiveIntensity = cook ? 1 : ph === 'ding' ? (Math.sin(this.t / 90) > 0 ? 1.4 : 0.1) : 0.15;
+    });
+  }
+
+  // On the coffee machine (kitchenCoffeeMachine, placed at x, y): a cup, the
+  // coffee pouring into it, steam, and a light while it brews.
+  coffeeRig(x, y) {
+    const cx = x + 0.225, cz = y + 0.27;
+    const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.011, 0.2, 8), new THREE.MeshStandardMaterial({ color: 0x5b3316, roughness: 0.3 }));
+    stream.position.set(cx, 0.9 + 0.25, cz);
+    this.room.add(stream);
+    const steam = [0, 1, 2].map(() => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+      this.room.add(m);
+      return m;
+    });
+    const led = this.boxMesh(x + 0.33, y + 0.395, 0.9 + 0.42, 0.04, 0.008, 0.02, 0x10202a, { emissive: 0x46c8ff, ei: 0.1, shadow: false });
+    this.appliance('coffee', x + 0.25, y + 1.2, (m) => {
+      const ph = m ? m.phase : null;
+      const brew = ph === 'brew';
+      stream.visible = brew;
+      if (brew) stream.scale.y = 0.85 + 0.15 * Math.sin(this.t / 60);
+      led.material.emissiveIntensity = brew ? 0.8 + 0.4 * Math.sin(this.t / 200) : 0.1;
+      const hot = brew || ph === 'take';
+      steam.forEach((s, i) => {
+        const f = ((this.t / 1400) + i / 3) % 1;
+        s.position.set(cx + Math.sin(f * 6 + i) * 0.025, 0.9 + 0.16 + f * 0.3, cz + 0.02);
+        s.scale.setScalar(0.7 + f * 0.9);
+        s.material.opacity = hot ? 0.6 * (1 - f) : 0;
+      });
+    });
+  }
+
+  // A fridge whose lower door opens on its hinge, light and drinks inside.
+  fridgeRig(x, y) {
+    const sage = 0x8fb08c, steel = 0xa3a9b0;
+    this.boxMesh(x, y, 0, 0.85, 0.71, 1.95, sage);
+    this.boxMesh(x, y + 0.71, 1.27, 0.85, 0.04, 0.68, sage);
+    this.boxMesh(x + 0.06, y + 0.75, 1.36, 0.03, 0.03, 0.3, steel, { metal: 0.6, rough: 0.3 });
+    // What you see with the door open.
+    const inside = new THREE.Group();
+    this.room.add(inside);
+    const light = this.boxMesh(x + 0.04, y + 0.708, 0.06, 0.77, 0.004, 1.18, 0xf6f1e6, { group: inside, emissive: 0xfff4d6, ei: 0, shadow: false });
+    for (const h of [0.42, 0.82]) this.boxMesh(x + 0.04, y + 0.712, h, 0.77, 0.03, 0.012, 0xe9eef0, { group: inside, shadow: false });
+    const cols = [0xd8574a, 0x4f8bd6, 0xf2c94c, 0x6fbf73, 0xe58ac0];
+    for (let i = 0; i < 5; i++) {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 10), soft(cols[i]));
+      b.position.set(x + 0.15 + i * 0.13, (i % 2 ? 0.82 : 0.42) + 0.092, y + 0.727);
+      inside.add(b);
+    }
+    // The door: hinged on the right, handle on the left.
+    const hinge = new THREE.Group();
+    hinge.position.set(x + 0.85, 0, y + 0.75);
+    this.room.add(hinge);
+    this.boxMesh(-0.85, -0.04, 0.02, 0.85, 0.04, 1.24, sage, { group: hinge });
+    this.boxMesh(-0.8, 0, 0.55, 0.03, 0.035, 0.42, steel, { group: hinge, metal: 0.6, rough: 0.3 });
+    this.appliance('fridge', x + 0.4, y + 1.3, (m) => {
+      const ph = m ? m.phase : null, k = m ? m.k : 0;
+      const open = { open: k, reach: 1, close: 1 - k }[ph] ?? 0;
+      hinge.rotation.y = 1.75 * (open * open * (3 - 2 * open));
+      inside.visible = open > 0.02;
+      light.material.emissiveIntensity = open * 0.9;
+    });
+  }
+
+  // A vending machine (facing +x): the button lights, a can drops into the tray.
+  vendingRig(p) {
+    const btn = this.boxMesh(p.x + 0.7, p.y + 0.6, 1.0, 0.012, 0.08, 0.06, 0x2a2d33, { emissive: 0x46c8ff, ei: 0, shadow: false });
+    this.boxMesh(p.x + 0.69, p.y + 0.12, 0.1, 0.02, 0.42, 0.18, 0x111418, { shadow: false });
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.11, 12), soft(new THREE.Color(p.color).offsetHSL(0.5, 0, 0.1).getHex()));
+    can.visible = false;
+    this.room.add(can);
+    this.appliance('vending', p.x + 1.3, p.y + 0.4, (m) => {
+      const ph = m ? m.phase : null, k = m ? m.k : 0;
+      btn.material.emissiveIntensity = ph === 'press' ? (Math.sin(this.t / 80) > 0 ? 1.5 : 0.3) : 0;
+      if (ph === 'drop') {
+        can.visible = true;
+        can.position.set(p.x + 0.716, 1.55 - 1.33 * k * k, p.y + 0.3);
+        can.rotation.z = k * 2.5;
+      } else if (ph === 'pickup' && k < 0.6) {
+        can.visible = true;
+        can.position.set(p.x + 0.72, 0.17, p.y + 0.33);
+        can.rotation.z = Math.PI / 2;
+      } else can.visible = false;
+    });
+  }
+
+  // The printer: pages slide out while someone prints; fixing a jam lifts the lid.
+  printerRig(p) {
+    // An output tray in front, pages sliding out onto it and piling up.
+    this.boxMesh(p.x + 0.17, p.y + 0.5, 0.6, 0.42, 0.32, 0.015, 0x9aa0a6, { shadow: false });
+    const sheets = [0, 1].map(() => this.boxMesh(0, 0, 0, 0.3, 0.24, 0.004, 0xffffff, { shadow: false }));
+    const pile = this.boxMesh(p.x + 0.23, p.y + 0.56, 0.615, 0.3, 0.24, 0.006, 0xf7f7f2, { shadow: false });
+    const lid = new THREE.Group();
+    lid.position.set(p.x + 0.05, 0.83, p.y + 0.05);
+    this.room.add(lid);
+    this.boxMesh(0, 0, 0, 0.65, 0.45, 0.03, 0xdedede, { group: lid });
+    let printed = 0, wasPrinting = false;
+    this.appliance('printer', p.x + 0.35, 1.15, (m) => {
+      const printing = !!m;
+      if (printing && !wasPrinting) printed = 0;
+      wasPrinting = printing;
+      sheets.forEach((sh, i) => {
+        const f = ((this.t / 1300) + i / 2) % 1;
+        sh.visible = printing;
+        sh.position.set(p.x + 0.38, 0.62 + 0.004 * i + Math.floor(printed) * 0.006, p.y + 0.42 + f * 0.26);
+        if (printing && f > 0.97) printed = Math.min(8, printed + 0.02);
+      });
+      pile.scale.y = 1 + Math.floor(printed);
+      pile.position.y = 0.615 + pile.scale.y * 0.003;
+      pile.visible = printing || printed > 0;
+      // A jam: whoever is fixing it has the lid up.
+      const fixing = [...this.people.values()].some((q) => !q.path.length && Math.hypot(q.x - (p.x + 0.35), q.y - 1.15) < 0.8 && this.stateOf(q).act === 'fix');
+      lid.rotation.x += ((fixing ? -1.05 : 0) - lid.rotation.x) * 0.15;
+    });
+  }
+
   glassMat() {
     return this._glass || (this._glass = new THREE.MeshPhysicalMaterial({
       color: 0xcfe6f5, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0, depthWrite: false,
@@ -288,6 +463,7 @@ export class Office3D extends window.Office {
     this.screens.clear();
     this.blinkers = [];
     this.tvScreen = this.neonMat = this.liftDoors = this.slotRig = null;
+    this.appliances = [];
     this.boardAt = this.jamLight = null;
     this.boardShown = -1; this.tables = [];
     const { W, D } = plan;
@@ -596,6 +772,7 @@ export class Office3D extends window.Office {
         this.jamLight.position.set(p.x + 0.6, 0.86, p.y + 0.5);
         this.jamLight.visible = false;
         this.room.add(this.jamLight);
+        this.printerRig(p);
         break;
       case 'plant':
         this.place('pottedPlant', p.x - 0.3, p.y - 0.3, 0.6, 0.6, { h: 1.0 });
@@ -660,6 +837,7 @@ export class Office3D extends window.Office {
         for (let r = 0; r < 4; r++) for (let k = 0; k < 3; k++) {
           this.boxMesh(p.x + 0.62, p.y + 0.13 + k * 0.14, 0.82 + r * 0.22, 0.06, 0.07, 0.13, cols[(r * 3 + k) % 5], { emissive: cols[(r * 3 + k) % 5], ei: 0.25, shadow: false });
         }
+        this.vendingRig(p);
         break;
       }
       case 'foosball': {
@@ -722,15 +900,16 @@ export class Office3D extends window.Office {
           const isSink = Math.abs(ux + u / 2 - (p.x + 3.15)) < u / 2;
           this.place(isSink ? 'kitchenSink' : 'kitchenCabinet', ux, p.y, u, p.d, { h: 0.9, stretch: true });
         }
-        this.place('kitchenMicrowave', p.x + p.w - 0.75, p.y + 0.1, 0.55, 0.4, { y0: 0.9, h: 0.32 });
+        this.microwaveRig(p.x + p.w - 0.75, p.y + 0.1);
         this.place('toaster', p.x + 0.2, p.y + 0.2, 0.3, 0.2, { y0: 0.9, h: 0.18 });
         break;
       }
       case 'coffee':
         this.place('kitchenCoffeeMachine', p.x, p.y, 0.45, 0.4, { y0: 0.9, h: 0.5 });
+        this.coffeeRig(p.x, p.y);
         break;
       case 'fridge':
-        this.place('kitchenFridgeLarge', p.x, p.y, 0.85, 0.75, { h: 1.95, stretch: true });
+        this.fridgeRig(p.x, p.y);
         break;
       case 'cooler': {
         this.boxMesh(p.x, p.y, 0, 0.42, 0.42, 0.95, 0xe8ecef, { rough: 0.4 });
@@ -1910,6 +2089,7 @@ export class Office3D extends window.Office {
     }
     if (this.alarmLight) this.alarmLight.intensity = this.alarmUntil > Date.now() ? 4 + 4 * Math.sin(this.t / 150) : 0;
     if (this.arcadeScreen) this.arcadeScreen.material.emissive.setHSL((t * 0.05) % 1, 0.7, 0.5);
+    this.animateAppliances(dt);
     // The slot machine: repaint its screens (about 30 times a second), cycle
     // the edge lights, flash everything on a win.
     if (this.slotRig) {

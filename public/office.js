@@ -82,6 +82,29 @@
   const SLOT_PAY = { '7': 500, '💎': 300, 'BAR': 200, '⭐': 150, '🔔': 100, '🍀': 80, '🍒': 50, '🍋': 40 };
   // Each reel holds every symbol twice, in its own order.
   const SLOT_STRIPS = [0, 1, 2, 3, 4].map((i) => Array.from({ length: 16 }, (_, k) => SLOT_SYMS[(k < 8 ? k * 3 + i : k * 5 + i * 3) % 8]));
+  // Appliances people use: what the machine and the person do, phase by
+  // phase, from the moment they got there (p.useAt). Both come from that one
+  // moment, so a public view (which gets it with the rest) shows the same.
+  // [phase, how long (ms), what the person does]
+  const USE = {
+    microwave: [['open', 700, 'fridge'], ['load', 800, 'fridge'], ['close', 600, 'fridge'], ['cook', 5000, 'watch'],
+      ['ding', 600, 'fridge'], ['take', 800, 'fridge'], ['shut', 600, 'eat'], ['idle', Infinity, 'eat']],
+    coffee: [['cup', 700, 'coffee'], ['brew', 4000, 'watch'], ['take', 600, 'coffee'], ['idle', Infinity, 'sip']],
+    fridge: [['open', 600, 'fridge'], ['reach', 2000, 'fridge'], ['close', 600, 'fridge'], ['idle', Infinity, 'sip']],
+    vending: [['press', 900, 'vending'], ['drop', 800, 'vending'], ['pickup', 1000, 'unpack'], ['idle', Infinity, 'sip']],
+    printer: [['print', Infinity, 'printer']],
+  };
+  // -> { phase, k (0..1 through it), act, ms } for `ms` into using `kind`.
+  function usePhase(kind, ms) {
+    const steps = USE[kind];
+    if (!steps) return null;
+    let t = Math.max(0, ms);
+    for (const [phase, len, act] of steps) {
+      if (t < len) return { phase, k: len === Infinity ? 0 : t / len, act, ms };
+      t -= len;
+    }
+    return null;
+  }
   const SLOT_EASE = (k) => (k >= 1 ? 1 : 1 + 2.2 * Math.pow(k - 1, 3) + 1.2 * Math.pow(k - 1, 2));
 
   // Everyone has a personality or two (fixed by who they are): it decides
@@ -93,7 +116,7 @@
     { id: 'chatty', name: '話匣子', emoji: '💬', likes: { stool: 1.5 }, seat: ['chat', 'laugh'], chat: 3 },
     { id: 'bookworm', name: '書蟲', emoji: '📚', likes: { read: 5, window: 1.5 }, seat: ['read', 'read'] },
     { id: 'gamer', name: '遊戲宅', emoji: '🎮', likes: { arcade: 5, slot: 4, beanbag: 3, foosball: 2 }, seat: ['game', 'game'] },
-    { id: 'foodie', name: '美食家', emoji: '🍙', likes: { fridge: 4, vending: 4, stool: 2 }, seat: ['eat', 'eat'] },
+    { id: 'foodie', name: '美食家', emoji: '🍙', likes: { fridge: 4, vending: 4, microwave: 4, stool: 2 }, seat: ['eat', 'eat'] },
     { id: 'tidy', name: '整潔控', emoji: '🧹', likes: { plant: 3, printer: 2 }, seat: ['write'], tidy: true },
   ];
   function traitsOf(key) {
@@ -402,7 +425,9 @@
       // false if the renderer gave up (3D load failure).
       this.ready = new Promise((ok) => (this.markReady = ok));
       this.framesShown = 0;
-      const loop = (t) => { if (this.dead) return; this.frame(t); this.raf = requestAnimationFrame(loop); };
+      // A cap on the frame rate (3D sets minFrameMs): the office looks the
+      // same at 30 a second and the computer does half the work.
+      const loop = (t) => { if (this.dead) return; if (!this.minFrameMs || t - this.last >= this.minFrameMs) this.frame(t); this.raf = requestAnimationFrame(loop); };
       this.raf = requestAnimationFrame(loop);
     }
 
@@ -642,6 +667,8 @@
       add(CX0 + 0.5 + cy + 0.25, () => this.waterCooler(CX0 + 0.3, cy + 0.05));
       solid(CX0 + 0.25, cy, 0.5, 0.5);
       poi(cfx + 0.25, cy + 1.2, 'coffee', 'back', { zone: 'done' });
+      // The microwave sits on the far end of the counter (web/office3d.js).
+      poi(CX0 + 0.9 + cw - 0.475, cy + 1.2, 'microwave', 'back', { zone: 'done' });
       poi(skx + 0.25, cy + 1.2, 'sink', 'back', { zone: 'done' });
       poi(W - 0.6, cy + 1.3, 'fridge', 'back', { zone: 'done' });
       poi(CX0 + 0.55, cy + 0.95, 'water', 'back', { zone: 'done' });
@@ -904,6 +931,7 @@
       add(W - 0.75 + cy + 0.4, () => this.fridge(W - 1.15, cy));
       solid(W - 1.15, cy, 0.85, 0.75);
       poi(mx + 2.65, cy + 1.2, 'coffee', 'back', { zone: 'idle' });
+      poi(mx + 1.0 + RW - 2.3 - 0.475, cy + 1.2, 'microwave', 'back', { zone: 'idle' });
       poi(mx + 4.15, cy + 1.2, 'sink', 'back', { zone: 'idle' });
       poi(W - 0.75, cy + 1.3, 'fridge', 'back', { zone: 'idle' });
       for (const rtx of [mx + 1.9, mx + 4.9]) {
@@ -3753,7 +3781,8 @@
       if (p.mode === 'work' && p.run) {
         const q = p.run.poi;
         if (p.run.trip) return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: p.run.act, sitZ: q.sit || 0 };
-        return { pose: 'stand', face: q.face, act: q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
+        const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
+        return { pose: 'stand', face: q.face, act: use ? use.act : q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
       }
       if (p.mode === 'work' && p.desk) {
         const face = p.desk.side === 'n' ? 'front' : 'back';
@@ -3799,6 +3828,8 @@
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slot.winUntil > this.t) act = 'cheer';
+        const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
+        if (use) act = use.act;
         if (q.act === 'chat') {
           const mate = this.people.get(q.partner);
           if (!mate || mate.chatWith !== p.key) act = 'lookaround';
@@ -4698,9 +4729,6 @@
     // ------------------------------------------------------------ frame
 
     frame(now) {
-      // A cap on the frame rate (3D sets it): the office looks the same at
-      // 30 a second and the computer does half the work.
-      if (this.minFrameMs && now - this.last < this.minFrameMs) return;
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
       this.t = now;
@@ -4882,6 +4910,42 @@
       this.worldAt = Date.now();
     }
 
+    // At an appliance (wandering there, or out on a quick run from the desk):
+    // remember since when; walking off ends it.
+    trackUse(p, wall = Date.now()) {
+      const q = (p.run && p.run.poi) || (p.mode === 'wander' && p.poi) || null;
+      if (q && USE[q.act] && !p.path.length && !p.held && Math.hypot(p.x - q.x, p.y - q.y) < 0.3) {
+        if (p.useOf !== q) { p.useOf = q; p.useAt = wall; }
+      } else if (p.useOf) { p.useOf = null; p.useAt = 0; }
+    }
+
+    // What an appliance (the spot in front of it) is doing now, or null.
+    applianceAt(q, now = Date.now()) {
+      if (!q || !USE[q.act]) return null;
+      for (const p of this.people.values()) {
+        if (p.useOf === q && p.useAt && !(p.path && p.path.length)) return usePhase(q.act, now - p.useAt);
+      }
+      return null;
+    }
+
+    // 2D: a little sign over an appliance in use (3D moves its parts instead).
+    applianceFx2d() {
+      const ICON = { cook: '🔥', ding: '🔔', open: '🚪', load: '🍞', take: '🍞', brew: '☕', reach: '🧊', press: '👆', drop: '🥤', pickup: '🥤', print: '📄' };
+      const c = this.ctx;
+      for (const q of this.plan.pois) {
+        const m = USE[q.act] && this.applianceAt(q);
+        const icon = m && ICON[m.phase];
+        if (!icon) continue;
+        const at = q.act === 'vending' ? this.iso(q.x - 1.0, q.y, 1.6) : this.iso(q.x, q.y - 0.9, 1.4);
+        const bob = Math.sin(this.t / 220) * 2;
+        c.save();
+        c.font = '15px ui-sans-serif, system-ui, "Apple Color Emoji", sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(icon, at.x, at.y - 10 + bob);
+        c.restore();
+      }
+    }
+
     // Back to running the office here (the host went quiet).
     leaveWorld() { this.remote = false; }
 
@@ -4961,6 +5025,7 @@
           if (p.viaLift) this.liftOpen = wall;
           this.people.delete(k);
         }
+        this.trackUse(p, wall);
       }
       this.moveCat(dt, wall);
       if (this.cat2) this.moveCat(dt, wall, this.cat2);
@@ -5008,6 +5073,7 @@
       if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();
       this.deskSign();
+      if (!this.compact) this.applianceFx2d();
       // Where a held person would be dropped onto furniture.
       if (this.dropAt) {
         const f = this.iso(this.dropAt.x, this.dropAt.y, 0);
@@ -5131,6 +5197,7 @@
     return { floors, moved };
   }
 
+  Office.usePhase = usePhase;
   window.Office = Office;
   window.OfficeFloors = { split: splitFloors, zoneOf };
   window.OfficeSeason = seasonOf;

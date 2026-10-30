@@ -1368,3 +1368,51 @@ test('public replay: the same spin keeps its own timing (no stutter from late up
   view.applyWorld(JSON.parse(JSON.stringify({ ...w, t: w.t + 180 })), new Map(), { hostNow: Date.now() });
   assert.equal(view.slot.spinAt, first);
 });
+
+test('appliances: the microwave opens, cooks and dings; the person reaches in, waits, then eats', () => {
+  const o = load(true);
+  const p = settle(o, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = o.plan.pois.find((x) => x.act === 'microwave');
+  assert.ok(q, 'a microwave to use');
+  assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length, 'reachable');
+  o.release(p);
+  p.mode = 'wander'; p.poi = q; q.taken = p.key; p.x = q.x; p.y = q.y; p.path = []; p.until = Date.now() + 60_000;
+  o.step(0.01);
+  assert.equal(p.useOf, q, 'started using it');
+  const into = (ms) => { p.useAt = Date.now() - ms; return { m: o.applianceAt(q), act: o.stateOf(p).act }; };
+  let s = into(300); assert.equal(s.m.phase, 'open'); assert.equal(s.act, 'fridge');
+  s = into(4000); assert.equal(s.m.phase, 'cook'); assert.equal(s.act, 'watch');
+  s = into(12_000); assert.equal(s.m.phase, 'idle'); assert.equal(s.act, 'eat');
+  // Walks off: the machine is idle again.
+  p.path = [{ x: q.x + 2, y: q.y }];
+  o.step(0.01);
+  assert.equal(o.applianceAt(q), null);
+  const up = load(true); up.floor = 2; up.plan = up.buildPlan(0);
+  assert.ok(up.plan.pois.some((x) => x.act === 'microwave'), 'upstairs too');
+});
+
+test('appliances: a desk worker buying a drink presses, the can drops, then they sip', () => {
+  const o = load(true);
+  const p = settle(o, [at('tool', { activity: 'Bash: npm run long', ago: 2 * MIN })])('claude:tool');
+  const q = o.plan.pois.find((x) => x.act === 'vending');
+  q.taken = p.key; p.run = { poi: q, until: Infinity }; p.x = q.x; p.y = q.y; p.path = [];
+  o.step(0.01);
+  assert.equal(p.useOf, q);
+  p.useAt = Date.now() - 400; assert.equal(o.applianceAt(q).phase, 'press'); assert.equal(o.stateOf(p).act, 'vending');
+  p.useAt = Date.now() - 1200; assert.equal(o.applianceAt(q).phase, 'drop');
+  p.useAt = Date.now() - 5000; assert.equal(o.stateOf(p).act, 'sip');
+});
+
+test('appliances on a public view: the same moment of use comes across, so the same phase shows', () => {
+  const host = load(true), view = load(true);
+  const p = settle(host, [at('idle', { ago: 5 * MIN })])('claude:idle');
+  const q = host.plan.pois.find((x) => x.act === 'fridge');
+  host.release(p);
+  p.mode = 'wander'; p.poi = q; q.taken = p.key; p.x = q.x; p.y = q.y; p.path = []; p.until = Date.now() + 60_000;
+  host.step(0.01);
+  p.useAt = Date.now() - 1500;
+  view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now(), skew: 0 });
+  const vq = view.plan.pois.find((x) => x.act === 'fridge');
+  assert.equal(view.applianceAt(vq).phase, host.applianceAt(q).phase);
+  assert.equal(view.applianceAt(vq).phase, 'reach');
+});
