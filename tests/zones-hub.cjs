@@ -1267,3 +1267,64 @@ test('slot machine: someone at it spins, the reels stop left to right, a line pa
   o.t += 3000; o.stepSlot(0.03);
   assert.equal(o.stateOf(p).act, 'slot');
 });
+
+test('slot machine: drop someone on it and they play a while, then carry on', () => {
+  const o = load(true);
+  const q = o.plan.pois.find((x) => x.act === 'slot');
+  const who = settle(o, [at('idle', { ago: 5 * MIN }), at('tool', { n: 2 })]);
+  Object.assign(o, { canvas: { style: {} }, onRelay() {}, onCommand() {}, label: () => '', pointer() {} });
+  const drop = (p) => { o.held = p; p.held = true; o.dropOn = null; o.dropAt = null; p.x = q.x + 0.4; p.y = q.y - 0.3; o.drop(null); };
+  // Someone idle: sits down at it and is the one pulling the lever.
+  const idle = who('claude:idle');
+  drop(idle);
+  assert.equal(idle.x, q.x); assert.equal(idle.y, q.y);
+  assert.equal(q.taken, idle.key);
+  o.step(0.03); o.t = 5000; o.stepSlot(0.03);
+  assert.equal(o.slot.player, idle.key, 'plays');
+  assert.equal(o.stateOf(idle).act, 'slot');
+  // Someone at work takes the seat: the one there goes, the worker plays,
+  // and gets back to the desk afterwards.
+  const worker = who('claude:tool2');
+  drop(worker);
+  assert.equal(q.taken, worker.key);
+  assert.notEqual(idle.poi, q, 'bumped off');
+  o.step(0.03); o.t = 9000; o.stepSlot(0.03);
+  assert.equal(o.slot.player, worker.key);
+  assert.equal(o.stateOf(worker).act, 'slot');
+  worker.run.until = Date.now() - 1;
+  o.step(0.03);
+  assert.equal(worker.run, null, 'done playing');
+  assert.equal(q.taken, null);
+  const end = worker.path[worker.path.length - 1];
+  assert.ok(end && Math.hypot(end.x - worker.desk.seat.x, end.y - worker.desk.seat.y) < 0.05, 'back to the desk');
+  // Dropped anywhere else: no slot.
+  const idle2 = who('claude:idle');
+  o.held = idle2; idle2.held = true; idle2.x = o.plan.door.x; idle2.y = o.plan.door.y - 1; o.drop(null);
+  assert.notEqual(idle2.poi, q);
+});
+
+test('slot machine: walk yourself up to it, stop, and you play; walk off and you stop', () => {
+  const o = load(true);
+  const q = o.plan.pois.find((x) => x.act === 'slot');
+  settle(o, [at('idle', { ago: 5 * MIN })]);
+  const me = o.meOn();
+  assert.ok(me);
+  me.seated = false; me.x = q.x + 0.3; me.y = q.y + 0.2;
+  for (let i = 0; i < 10; i++) o.stepMe(0.1);
+  assert.equal(me.atSlot, true, 'sat down');
+  assert.equal(me.x, q.x);
+  assert.equal(q.taken, 'me');
+  o.t = 3000; o.stepSlot(0.03);
+  assert.equal(o.slot.player, 'me');
+  assert.equal(o.stateOf(me).act, 'slot');
+  assert.equal(o.stateOf(me).pose, 'sit');
+  // Walking off ends it.
+  o.screenAxes = () => ({ right: { x: 1, y: 0 }, up: { x: 0, y: 1 } });
+  o.meKeys.add('s');
+  o.stepMe(0.1);
+  o.meKeys.delete('s');
+  assert.equal(me.atSlot, false);
+  assert.equal(q.taken, null);
+  o.t = 9000; o.stepSlot(0.03);
+  assert.equal(o.slot.player, null);
+});

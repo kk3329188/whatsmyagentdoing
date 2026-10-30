@@ -1710,7 +1710,7 @@ export class Office3D extends window.Office {
 
   facing(p, st) {
     if (st.pose === 'walk') return null;
-    if (p.me) return p.seated ? Math.PI : null;
+    if (p.me) return p.seated || p.atSlot ? Math.PI : null;
     if (p.seeOff && !p.path.length) return Math.atan2(this.plan.door.x - p.x, this.plan.door.y - p.y);
     if (p.meeting && this.atSeat(p)) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
     // A visitor talks to whoever sits at the desk they came to.

@@ -2081,7 +2081,7 @@
       const k = key.toLowerCase();
       if ('wasd'.includes(k) && k.length === 1) { if (down) this.meKeys.add(k); else this.meKeys.delete(k); return true; }
       if (!down) return false;
-      if (k === 'r') { me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
+      if (k === 'r') { if (me.atSlot) this.meOffSlot(); me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
       if (k === ' ' || k === 'e') { const p = this.meNear(); if (p) this.onHover(p.s, null, true); return !!p; }
       return false;
     }
@@ -2108,6 +2108,7 @@
       const sig = [...keys].sort().join('');
       if (sig !== me.keySig) { me.keySig = sig; me.detour = null; } // a new direction: a new way round
       if (dx || dy) {
+        if (me.atSlot) this.meOffSlot();
         me.path = []; me.homing = false; me.seated = false;
         const ax = this.screenAxes();
         let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
@@ -2150,6 +2151,26 @@
       }
       me.moving = false;
       if (me.homing) { me.homing = false; me.seated = true; }
+      // Stopped by the slot machine's stool: sit down and play.
+      const q = this.slotPoi();
+      if (q && !me.atSlot && !me.seated && Math.hypot(me.x - q.x, me.y - q.y) < 0.8) {
+        me.slotWait = (me.slotWait || 0) + dt;
+        if (me.slotWait >= 0.4) {
+          if (q.taken !== 'me') this.leaveSlot(q);
+          q.taken = 'me';
+          me.atSlot = true; me.slotWait = 0;
+          me.x = q.x; me.y = q.y; me.path = [];
+          me.event = { text: '來一把 🎰', at: Date.now(), zone: 'held' };
+        }
+      } else me.slotWait = 0;
+    }
+
+    // You got up from the slot machine.
+    meOffSlot() {
+      const me = this.me, q = this.slotPoi();
+      if (!me) return;
+      me.atSlot = false;
+      if (q && q.taken === 'me') q.taken = null;
     }
 
     // No desk while the boss is in: somewhere that looks like work.
@@ -2436,6 +2457,13 @@
       const target = !mate && this.dropAt;
       this.dropOn = null;
       this.dropAt = null;
+      // Put down at the slot machine: they sit and play.
+      const q = !mate && !target && this.slotPoi();
+      if (q && Math.hypot(p.x - q.x, p.y - q.y) < 1.2 && this.playSlot(p)) {
+        if (this.canvas) this.canvas.style.cursor = 'default';
+        if (e) this.pointer(e);
+        return;
+      }
       const spot = mate ? this.besideOf(mate) : target ? this.freeSpot(target.x, target.y) : this.freeSpot(p.x, p.y);
       p.x = spot.x; p.y = spot.y;
       p.path = [];
@@ -3029,6 +3057,37 @@
 
     // ---- the slot machine ---------------------------------------------------
 
+    slotPoi() { return (this.plan && this.plan.pois && this.plan.pois.find((o) => o.act === 'slot')) || null; }
+
+    // Whoever is on the slot stool gets up (someone else was put there).
+    leaveSlot(q) {
+      if (this.me && this.me.atSlot) this.meOffSlot();
+      const o = q.taken && this.people.get(q.taken);
+      if (o) {
+        if (o.run && o.run.poi === q) this.endRun(o, true);
+        else if (o.poi === q) { this.release(o); o.until = 0; }
+      }
+      q.taken = null;
+    }
+
+    // Sat down at the slot machine by hand: a few rounds, then back to what
+    // they were doing (a desk worker goes back to the desk).
+    playSlot(p, wall = Date.now()) {
+      const q = this.slotPoi();
+      if (!q || p.leaving || p.visitor) return false;
+      if (q.taken !== p.key) this.leaveSlot(q);
+      this.endRun(p, false);
+      this.release(p);
+      p.chores = null;
+      p.x = q.x; p.y = q.y; p.path = []; p.landed = 0;
+      q.taken = p.key;
+      const ms = 45_000;
+      if (p.mode === 'work') p.run = { poi: q, until: wall + ms, trip: true, act: 'slot', ms };
+      else { p.poi = q; p.lastPoi = q; p.until = wall + ms; p.stay = ms; }
+      p.event = { text: '手氣來了 🎰', at: wall, zone: 'held' };
+      return true;
+    }
+
     // Someone sitting at it pulls a spin every few seconds; the reels stop
     // one by one, and three or more alike along the middle row pay out.
     stepSlot(dt) {
@@ -3037,7 +3096,8 @@
       const now = this.t;
       const sl = this.slot || (this.slot = { pos: [0, 3, 6, 9, 12], from: [0, 0, 0, 0, 0], to: [0, 3, 6, 9, 12], dur: [1, 1, 1, 1, 1], spinAt: -1e9, next: 0, win: 0, winUntil: 0, paid: true, jackpot: 88888, credit: 12340, player: null });
       let player = null;
-      for (const p of this.people.values()) if (p.mode === 'wander' && p.poi === q && !p.path.length) { player = p; break; }
+      for (const p of this.people.values()) if (!p.path.length && ((p.mode === 'wander' && p.poi === q) || (p.run && p.run.poi === q))) { player = p; break; }
+      if (!player && this.me && this.me.atSlot && !this.me.moving) player = this.me;
       sl.player = player ? player.key : null;
       const spinning = now - sl.spinAt < Math.max(...sl.dur);
       if (player && !spinning && now >= sl.next) {
@@ -3680,6 +3740,11 @@
       }
       if (p.me) {
         if (p.moving) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
+        if (p.atSlot) {
+          const q = this.slotPoi();
+          const won = this.slot && this.slot.player === 'me' && this.slot.winUntil > this.t;
+          return { pose: 'sit', face: 'back', act: won ? 'cheer' : 'slot', sitZ: (q && q.sit) || 0.47 };
+        }
         if (p.seated) return { pose: 'sit', face: 'back', act: 'type', sitZ: 0.34 };
         return { pose: 'stand', face: 'front', act: 'lookaround', sitZ: 0 };
       }
