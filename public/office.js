@@ -4711,7 +4711,7 @@
         return o;
       };
       return {
-        t: this.t, n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
+        t: this.t, wall: Date.now(), n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
         people: [...this.people.values()].map(person), me: this.me ? person(this.me) : null,
         visitors: [...(this.visitors || new Map()).values()].map(person),
         cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1),
@@ -4746,13 +4746,33 @@
       };
       const tagOf = (key, sk) => sessions.get(key) || { key, agent: sk.agent, status: sk.status, visitor: sk.visitor, subagent: sk.subagent, title: sk.visitor ? '訪客' : null };
       const end = (a) => (a && a.length ? a[a.length - 1] : null);
+      // What we get is a moment old: carry everyone on along their path for
+      // that long, so we do not pull them back to walk a stretch again.
+      const age = Math.min(3, Math.max(0, (Date.now() - (w.wall || Date.now())) / 1000));
+      const ahead = (d) => {
+        if (!d.path || !d.path.length || !age) return;
+        let left = SPEED * age * (d.rush > Date.now() ? 2.3 : 1);
+        while (left > 0 && d.path.length) {
+          const n = d.path[0], g = Math.hypot(n.x - d.x, n.y - d.y);
+          if (g <= left) { d.x = n.x; d.y = n.y; d.path.shift(); left -= g; }
+          else { d.x += (n.x - d.x) / g * left; d.y += (n.y - d.y) / g * left; left = 0; }
+        }
+      };
       const assign = (p, r) => {
         const d = dec(r);
-        // Already walking the same way, close by: keep our own smooth position
-        // rather than jumping back to where the host was a moment ago.
+        const was = { x: d.x, y: d.y, path: d.path ? d.path.slice() : [] };
+        ahead(d);
+        // Close to where they should be: keep our own smooth position (and,
+        // on the same way, our own path). Still near where they were when
+        // this was sent (they just set off): walk the whole way from here, a
+        // little faster until caught up. Only a real gap is a jump.
+        const at = p.x != null;
+        const near = at && Math.hypot(p.x - d.x, p.y - d.y) < 1.5;
+        const behind = at && !near && Math.hypot(p.x - was.x, p.y - was.y) < 3.5;
         const e1 = end(p.path), e2 = end(d.path);
-        const same = p.x != null && Math.hypot(p.x - d.x, p.y - d.y) < 1.2 && ((!e1 && !e2) || (e1 && e2 && Math.hypot(e1.x - e2.x, e1.y - e2.y) < 0.05));
-        const keep = same ? { x: p.x, y: p.y, path: p.path } : null;
+        const sameWay = (!e1 && !e2) || (e1 && e2 && Math.hypot(e1.x - e2.x, e1.y - e2.y) < 0.05);
+        const keep = near ? { x: p.x, y: p.y, path: sameWay ? p.path : d.path }
+          : behind ? { x: p.x, y: p.y, path: sameWay ? p.path : was.path, catchUp: Date.now() + 2500 } : null;
         for (const k of p.worldKeys || []) if (!(k in d)) delete p[k];
         Object.assign(p, d, keep || {});
         p.worldKeys = Object.keys(d);
@@ -4810,7 +4830,7 @@
         if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
         else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
       };
-      for (const p of this.people.values()) walk(p, SPEED * (p.rush > wall ? 2.3 : 1));
+      for (const p of this.people.values()) walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1));
       for (const v of (this.visitors || new Map()).values()) walk(v, SPEED);
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);

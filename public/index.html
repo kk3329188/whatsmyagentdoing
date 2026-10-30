@@ -1013,10 +1013,11 @@ function enterPublic() {
 const worldHost = Math.random().toString(36).slice(2, 10);
 let worldWanted = false, worldSent = 0;
 const bgAt = new WeakMap(); // office -> last time it was stepped in the background
-setInterval(() => {
-  if (PIP || Hub.public || !worldWanted) return;
-  // A hidden tab gets no animation frames, and the floor you are not looking
-  // at stands still: keep both going while someone is watching.
+// A hidden tab gets no animation frames and its timers are throttled (to once
+// a minute, after a while), and the floor you are not looking at stands
+// still. A worker's ticks are not held back like that: they keep both floors
+// going, and the sending, while someone is watching.
+function bgStep() {
   const now = performance.now();
   for (const o of [office, office2]) {
     if (!o || !o.step || o.remote) continue;
@@ -1027,18 +1028,29 @@ setInterval(() => {
     o.t = now;
     for (let i = 0; i < n; i++) o.step(gap / n);
   }
-}, 250);
-setInterval(async () => {
-  if (PIP || Hub.public || !office || !state.loaded || !office.worldState) return;
+}
+async function sendWorld() {
+  if (!office || !state.loaded || !office.worldState) return;
   const now = Date.now();
-  if (!worldWanted && now - worldSent < 5000) return;
+  if (now - worldSent < (worldWanted ? 450 : 5000)) return;
   worldSent = now;
   try {
     const body = JSON.stringify({ host: worldHost, at: now, floors: { 1: office.worldState(), 2: office2 && office2.worldState ? office2.worldState() : null } });
     const r = await fetch('/api/world', { method: 'POST', headers: { 'x-whatsmyagentdoing': 'world', 'content-type': 'application/json' }, body });
     worldWanted = !!(await r.json()).wanted;
   } catch { worldWanted = false; }
-}, 500);
+}
+let worldTicker = null;
+try {
+  worldTicker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 250);'], { type: 'text/javascript' })));
+} catch { worldTicker = null; }
+const worldTick = () => {
+  if (PIP || Hub.public) return;
+  if (worldWanted) bgStep();
+  sendWorld();
+};
+if (worldTicker) worldTicker.onmessage = worldTick;
+else setInterval(worldTick, 250);
 
 // The viewer's side: the host's office when there is one, else our own.
 let worldTag = null, worldOk = 0;
@@ -1056,7 +1068,9 @@ async function pullWorld() {
       worldOk = Date.now();
     } else if (r.status === 304) worldOk = Date.now();
   } catch {}
-  if (Date.now() - worldOk > 10_000) for (const o of [office, office2]) if (o && o.remote) o.leaveWorld();
+  // The host may only have paused (a sleeping laptop, a reload): hold on a
+  // while before running an office of our own, which would not match it.
+  if (Date.now() - worldOk > 60_000) for (const o of [office, office2]) if (o && o.remote) o.leaveWorld();
 }
 setInterval(pullWorld, 1000);
 if (new URLSearchParams(location.search).get('live') === '1') setTimeout(() => setLive(true), 1500);
