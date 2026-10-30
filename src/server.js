@@ -309,7 +309,9 @@ function publicView(snap, salt, { units = [], company = '' } = {}) {
 const WORLD_DROP = new Set(['s', 'text', 'say', 'title', 'label', 'name', 'from', 'topic', 'conv', 'lines', 'lineOf', 'note', 'notes', 'msg',
   'message', 'prompt', 'reply', 'question', 'words', 'line', 'caption', 'who', 'what', 'cwd', 'project', 'branch', 'activity', 'error', 'recap']);
 const WORLD_SAY = { work: '開工！', done: '做完了 ✓', error: '出錯了…', wait: '有事問你！', level: '升等！⭐', held: '…' };
-function publicWorld(world, salt, privateWords = []) {
+// Same hours as the office (public/office.js closing): 19:00 to 07:00.
+const closedHours = (now = Date.now()) => { const h = new Date(now).getHours(); return h >= 19 || h < 7; };
+function publicWorld(world, salt, privateWords = [], now = Date.now()) {
   const alias = (id) => crypto.createHmac('sha256', salt).update(String(id)).digest('hex').slice(0, 10);
   const words = [...new Set(privateWords.map((w) => String(w || '').toLowerCase()).filter((w) => w.length >= 3))];
   const str = (v) => {
@@ -341,6 +343,9 @@ function publicWorld(world, salt, privateWords = []) {
   };
   const floors = {};
   for (const f of ['1', '2']) if (world && world.floors && world.floors[f]) floors[f] = walk(world.floors[f], 0);
+  // After hours by this machine's clock (the same as your page's) when your
+  // page did not say (an older page still open): the lights still go down.
+  for (const f of Object.values(floors)) if (typeof f.closedNow !== 'boolean') f.closedNow = closedHours(now);
   return { at: world && world.at, floors };
 }
 // Words a public world must never carry: your projects' and folders' names.

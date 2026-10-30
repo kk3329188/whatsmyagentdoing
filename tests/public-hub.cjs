@@ -310,3 +310,12 @@ test('public view: a click shows what your page shows over their head, made safe
   assert.equal(safeText(`using ${fake} here`), 'using *** here');
   assert.equal(safeText('fix the thing '.repeat(10)).length, 60, 'short');
 });
+
+test('public world: an older page that does not say whether it is after hours still gets the lights by this clock', () => {
+  const at = (h) => { const d = new Date(); d.setHours(h, 0, 0, 0); return d.getTime(); };
+  const old = { at: 1, floors: { 1: { people: [] } } };
+  assert.equal(publicWorld(old, 'salt', [], at(21)).floors[1].closedNow, true);
+  assert.equal(publicWorld(old, 'salt', [], at(14)).floors[1].closedNow, false);
+  // A page that says so is believed (the boss is in, the stand-up is on).
+  assert.equal(publicWorld({ at: 1, floors: { 1: { closedNow: false } } }, 'salt', [], at(21)).floors[1].closedNow, false);
+});
