@@ -1184,6 +1184,7 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
     createBiquadFilter() { return node(); }
     createBuffer(ch, n) { return { getChannelData: () => new Float32Array(n) }; }
     createBufferSource() { return { ...node(), start() { made.started++; }, stop() {} }; }
+    createOscillator() { return { ...node(), type: '', frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {} }, start() { made.started++; }, stop() {} }; }
   }
   win.AudioContext = FakeAudio;
   const ctx = { window: win, Math, Date, setInterval: () => 1, clearInterval() {}, setTimeout() {}, Float32Array };
@@ -1199,12 +1200,13 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
   const loops = made.started;
   assert.equal(loops, 4, 'room tone, coffee machine, rain, voices');
   a.update({ typing: 6, coffee: 1, chat: 2, weather: 'rain' });
-  for (let i = 0; i < 20; i++) a.tick();
+  // The audio clock moves on between ticks, as it does in a browser.
+  for (let i = 0; i < 20; i++) { a.ctx.currentTime += 0.09; a.tick(); }
   assert.ok(made.started > loops, 'keys clicking');
   assert.ok(made.gains.some((g) => g > 0.1), 'coffee machine and rain up');
   made.started = 0;
   a.update({ typing: 0, coffee: 0, chat: 0, weather: null });
-  for (let i = 0; i < 20; i++) a.tick();
+  for (let i = 0; i < 20; i++) { a.ctx.currentTime += 0.09; a.tick(); }
   assert.equal(made.started, 0, 'no typing, no clicks');
   a.stop();
 });

@@ -65,8 +65,7 @@
       to(this.rain, wet);
       // A murmur that rises and falls like voices.
       to(this.murmur, s.chat ? Math.min(0.09, 0.03 + s.chat * 0.02) * (0.6 + 0.4 * Math.sin(now * 5.3) * Math.sin(now * 2.1)) : 0);
-      const clicks = Math.min(6, s.typing) * 0.35;
-      for (let i = 0; i < 3; i++) if (Math.random() < clicks / 3) this.key(now + Math.random() * 0.09);
+      this.typeTick(now);
       if (s.flash && !this.flashed) this.thunder(now + 0.4 + Math.random() * 1.2);
       this.flashed = s.flash;
       this.slotSounds(s.slot, now);
@@ -124,18 +123,49 @@
       });
     }
 
-    // One key press: a short, bright tick.
-    key(at) {
+    // Everyone typing (up to six) types like a person: a burst of keys, a
+    // pause between words, the space bar now and then. Keys are scheduled a
+    // little ahead of the 90 ms tick so the rhythm holds.
+    typeTick(now) {
+      const n = Math.min(6, this.scene.typing || 0);
+      const ts = this.typists || (this.typists = []);
+      while (ts.length < n) ts.push({ next: now + Math.random() * 0.6, left: 0, k: 0 });
+      ts.length = n;
+      for (const t of ts) {
+        if (t.next < now) t.next = now + Math.random() * 0.05;
+        while (t.next < now + 0.1) {
+          t.k++;
+          this.key(t.next, t.k % 7 === 0);
+          if (--t.left <= 0) { t.left = 3 + Math.floor(Math.random() * 7); t.next += 0.35 + Math.random() * 0.9; }
+          else t.next += 0.07 + Math.random() * 0.09;
+        }
+      }
+    }
+
+    // One key press: a bright click and the key bottoming out (a low thock);
+    // the space bar is deeper and longer.
+    key(at, space = false) {
       const c = this.ctx;
       const src = c.createBufferSource();
       src.buffer = this.noise;
-      const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2400 + Math.random() * 1800; f.Q.value = 3;
+      const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = space ? 900 : 1800 + Math.random() * 1200;
       const g = c.createGain();
+      const v = (space ? 0.35 : 0.45) * (0.75 + Math.random() * 0.5);
       g.gain.setValueAtTime(0, at);
-      g.gain.linearRampToValueAtTime(0.18 + Math.random() * 0.12, at + 0.002);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.03);
-      src.connect(f); f.connect(g); g.connect(this.master);
-      src.start(at, Math.random() * 1.5, 0.05);
+      g.gain.linearRampToValueAtTime(v, at + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.001, at + (space ? 0.045 : 0.02));
+      src.connect(hp); hp.connect(g); g.connect(this.master);
+      src.start(at, Math.random() * 1.5, 0.06);
+      const o = c.createOscillator(), og = c.createGain();
+      o.type = 'triangle';
+      const f0 = space ? 120 : 190 + Math.random() * 90;
+      o.frequency.setValueAtTime(f0, at);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.6, at + 0.04);
+      og.gain.setValueAtTime(0.0001, at);
+      og.gain.exponentialRampToValueAtTime(space ? 0.3 : 0.2, at + 0.003);
+      og.gain.exponentialRampToValueAtTime(0.0001, at + (space ? 0.07 : 0.045));
+      o.connect(og); og.connect(this.master);
+      o.start(at); o.stop(at + 0.08);
     }
 
     // A roll of thunder, a moment after the flash.
