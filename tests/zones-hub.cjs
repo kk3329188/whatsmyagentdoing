@@ -1526,3 +1526,13 @@ test('public replay: after hours on your office is after hours for the viewer (d
   view.applyWorld(JSON.parse(JSON.stringify({ ...day.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
   assert.equal(view.closedNow, false);
 });
+
+test('desks: the first people to work take the pod nearest the front, not the back', () => {
+  const o = load(true);
+  const depth = (d) => d.x + d.y;
+  const pods = new Map();
+  for (const d of o.plan.desks) if (d.pod != null) pods.set(d.pod, Math.max(pods.get(d.pod) || 0, depth(d)));
+  const front = [...pods].sort((a, b) => b[1] - a[1])[0][0];
+  const who = settle(o, [at('tool', { n: 1, cwd: '/r/a' }), at('tool', { n: 2, cwd: '/r/a' })]);
+  for (const k of ['claude:tool1', 'claude:tool2']) assert.equal(who(k).desk.pod, front, `${k} sits up front`);
+});

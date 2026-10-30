@@ -1216,9 +1216,13 @@
       const workKeys = new Set([...working, ...pretend].map((s) => s.key));
       for (const k of [...this.deskOf.keys()]) if (!workKeys.has(k)) this.deskOf.delete(k);
       const used = new Set(this.deskOf.values());
-      // Fill the desks that face us first so more faces and screens show.
+      // Fill the pods nearest the front first (closest to the camera), and in
+      // each the desks that face us, so more faces and screens show.
       const desks = this.plan.desks;
-      const order = desks.map((d, i) => i).sort((a, b) => (desks[a].side === 's') - (desks[b].side === 's') || a - b);
+      const podFront = new Map();
+      for (const d of desks) if (d.pod != null) podFront.set(d.pod, Math.max(podFront.get(d.pod) ?? -Infinity, d.x + d.y));
+      const front = (d) => (d.pod != null ? podFront.get(d.pod) : d.x + d.y);
+      const order = desks.map((d, i) => i).sort((a, b) => front(desks[b]) - front(desks[a]) || (desks[a].side === 's') - (desks[b].side === 's') || a - b);
       // Departments sit together: a newcomer takes a free desk in the pod
       // where their own repository already works, else an empty pod.
       const byKey = new Map([...working, ...pretend].map((s) => [s.key, s]));
