@@ -1177,13 +1177,14 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
   const win = {};
   // A stand-in for the browser's audio: count what gets made and started.
   const made = { started: 0, gains: [] };
-  const node = () => ({ connect: () => {}, disconnect: () => {}, frequency: { value: 0 }, Q: { value: 0 }, gain: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime(v) { made.gains.push(v); } } });
+  const node = () => ({ connect: () => {}, disconnect: () => {}, frequency: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, Q: { value: 0 }, gain: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime(v) { made.gains.push(v); } } });
   class FakeAudio {
     constructor() { this.currentTime = 0; this.sampleRate = 8000; this.state = 'running'; this.destination = {}; }
     createGain() { return node(); }
     createBiquadFilter() { return node(); }
     createBuffer(ch, n) { return { getChannelData: () => new Float32Array(n) }; }
     createBufferSource() { return { ...node(), start() { made.started++; }, stop() {} }; }
+    createConvolver() { return { ...node(), buffer: null }; }
     createOscillator() { return { ...node(), type: '', frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {} }, start() { made.started++; }, stop() {} }; }
   }
   win.AudioContext = FakeAudio;
@@ -1484,8 +1485,8 @@ test('public replay: the temple game plays the same frame from the seed on the v
   const q = host.plan.pois.find((x) => x.act === 'slot');
   p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = [];
   host.t = 10_000; host.stepSlot(0.03);
-  host.t = 10_700;
-  view.t = 50_700;
+  // Sent the moment it starts (a late one plays from its start: next test).
+  view.t = 50_000;
   view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
   const a = host.slotFrame(), b = view.slotFrame();
   assert.equal(b.sp.seed, a.sp.seed);
