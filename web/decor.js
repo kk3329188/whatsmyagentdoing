@@ -148,6 +148,10 @@ const LOOKS = {
   boucle: () => ({ roughness: 1, bumpMap: weave(), bumpScale: 1.4 }),
   leather: () => ({ roughness: 0.5 }),
   ceramic: () => ({ roughness: 0.6 }),
+  marble: () => ({ color: 0xffffff, map: marble(false), roughness: 0.18 }),
+  brass: () => ({ roughness: 0.28, metalness: 1 }),
+  gloss: () => ({ roughness: 0.22 }),
+  velvet: () => ({ roughness: 1, bumpMap: velvetNap(), bumpScale: 0.5 }),
 };
 // A decor's materials: one per colour, its look from the colour's role.
 function materials(roles) {
@@ -543,6 +547,238 @@ const TECH = {
   },
 };
 
-export const DECORS = { modern: MODERN, tech: TECH };
-export const DECOR_LIST = [{ id: 'default', label: '預設' }, { id: 'modern', label: MODERN.label }, { id: 'tech', label: TECH.label }];
+// ---- the modern luxury decor ----------------------------------------------
+
+// Marble: a pale stone with long soft veins (dark: a black marble with gold
+// ones); slabs with fine joints.
+function marble(dark, joints = false) {
+  return canvasTex(`marble${dark}${joints}`, 512, (c, s) => {
+    c.fillStyle = dark ? '#1f1d1c' : '#efebe5'; c.fillRect(0, 0, s, s);
+    blotches(c, s, 24, dark ? 'rgba(255,255,255,.025)' : 'rgba(200,190,178,.12)', 40, 140, 121);
+    const r = rnd(122);
+    for (let i = 0; i < 9; i++) {
+      let x = r() * s, y = -10, a = (r() - 0.5) * 1.2;
+      const wide = 1 + r() * 2.5;
+      for (const [wd, al] of [[wide * 4, 0.05], [wide, dark ? 0.35 : 0.28]]) {
+        c.strokeStyle = dark ? `rgba(196,158,92,${al})` : `rgba(120,112,104,${al})`; c.lineWidth = wd;
+        c.beginPath(); let px = x, py = y; c.moveTo(px, py);
+        const rr = rnd(130 + i);
+        while (py < s + 10) { a += (rr() - 0.5) * 0.5; px += Math.sin(a) * 10; py += 10; c.lineTo(px, py); }
+        c.stroke();
+      }
+    }
+    if (joints) { c.fillStyle = dark ? 'rgba(0,0,0,.6)' : 'rgba(150,142,132,.5)'; c.fillRect(0, 0, s, 1.2); c.fillRect(0, 0, 1.2, s); }
+  });
+}
+// Black and white marble squares, laid on the diagonal of the room.
+function checker(dark) {
+  return canvasTex(`checker${dark}`, 256, (c, s) => {
+    const h = s / 2;
+    c.fillStyle = dark ? '#d8d2c8' : '#f2eee8'; c.fillRect(0, 0, s, s);
+    c.fillStyle = '#1c1a19'; c.fillRect(0, 0, h, h); c.fillRect(h, h, h, h);
+    blotches(c, s, 16, 'rgba(255,255,255,.06)', 20, 60, 141);
+    c.fillStyle = 'rgba(176,141,87,.6)'; c.fillRect(0, 0, s, 1); c.fillRect(0, h, s, 1); c.fillRect(0, 0, 1, s); c.fillRect(h, 0, 1, s);
+  });
+}
+// A deep wool carpet: a small diamond pattern in the pile.
+function luxCarpet(dark, key, base, line) {
+  return canvasTex(`lux${key}${dark}`, 256, (c, s) => {
+    c.fillStyle = base; c.fillRect(0, 0, s, s);
+    c.strokeStyle = line; c.lineWidth = 1.5;
+    for (let k = -s; k <= s; k += 32) { c.beginPath(); c.moveTo(k, 0); c.lineTo(k + s, s); c.stroke(); c.beginPath(); c.moveTo(k + s, 0); c.lineTo(k, s); c.stroke(); }
+    specks(c, s, 2400, ['rgba(255,255,255,.05)', 'rgba(0,0,0,.12)'], 1.4, 151);
+  });
+}
+// Fluted walnut panels: upright half-round reeds, light catching each one.
+function fluted(dark, bump) {
+  return canvasTex(`flute${dark}${bump}`, 256, (c, s) => {
+    const n = 16, w = s / n;
+    for (let i = 0; i < n; i++) {
+      const g = c.createLinearGradient(i * w, 0, (i + 1) * w, 0);
+      if (bump) { g.addColorStop(0, '#202020'); g.addColorStop(0.5, '#e0e0e0'); g.addColorStop(1, '#202020'); }
+      else {
+        const base = dark ? [58, 38, 28] : [122, 86, 60];
+        const sh = (k) => `rgb(${base.map((v) => Math.round(v * k)).join(',')})`;
+        g.addColorStop(0, sh(0.62)); g.addColorStop(0.45, sh(1.08)); g.addColorStop(1, sh(0.7));
+      }
+      c.fillStyle = g; c.fillRect(i * w, 0, w, s);
+    }
+    if (!bump) {
+      const r = rnd(161);
+      c.strokeStyle = 'rgba(30,18,10,.12)'; c.lineWidth = 1;
+      for (let i = 0; i < 50; i++) { const x = r() * s; c.beginPath(); c.moveTo(x, 0); for (let y = 0; y <= s; y += 16) c.lineTo(x + Math.sin(y / 30 + i) * 1.5, y); c.stroke(); }
+    }
+  }, { color: !bump });
+}
+// Velvet: a fine nap as a bump map.
+const velvetNap = () => canvasTex('velvet', 128, (c, s) => {
+  c.fillStyle = '#808080'; c.fillRect(0, 0, s, s);
+  blotches(c, s, 30, 'rgba(255,255,255,.12)', 6, 20, 171);
+  specks(c, s, 1500, ['rgba(255,255,255,.15)', 'rgba(0,0,0,.15)'], 1, 172);
+}, { color: false });
+
+const LUX_C = {
+  oak: 0x8a6246, oakDark: 0x4a3226, white: 0xf1ece4, cream: 0xe8dccb, char: 0xb08d57, ink: 0x1d1a18,
+  steel: 0xc9a96e, sage: 0x2f5d50, terra: 0x7a2e3a, mustard: 0x9c6438, blue: 0x23324f, blush: 0xd2b2a2,
+  leaf: 0x4f7f4a, leafDark: 0x355e36, pot: 0xece7df, glass: 0x9fc4dd,
+};
+const luxMat = materials(new Map([
+  [LUX_C.oak, 'walnut'], [LUX_C.oakDark, 'walnut'], [LUX_C.white, 'marble'], [LUX_C.cream, 'leather'],
+  [LUX_C.char, 'brass'], [LUX_C.ink, 'gloss'], [LUX_C.steel, 'brass'], [LUX_C.sage, 'velvet'],
+  [LUX_C.terra, 'velvet'], [LUX_C.mustard, 'leather'], [LUX_C.blue, 'velvet'], [LUX_C.blush, 'velvet'],
+  [LUX_C.pot, 'marble'],
+]));
+
+// Furniture for a hotel lobby of an office: walnut and marble, brass feet,
+// a tufted leather desk chair, velvet dining chairs and a Chesterfield,
+// barrel armchairs, a brass arc lamp with an opal globe.
+const LUX_PIECES = {
+  desk(g, { box, C }) {
+    box(g, 1.44, 0.045, 0.8, C.oak, 0, 0.555, 0, { r: 0.01 });
+    box(g, 1.44, 0.012, 0.8, C.char, 0, 0.545, 0, { r: 0.004 }); // a brass edge under the top
+    for (const s of [-1, 1]) {
+      box(g, 0.06, 0.53, 0.72, C.oakDark, s * 0.66, 0.015, 0, { r: 0.006 });
+      box(g, 0.07, 0.015, 0.74, C.char, s * 0.66, 0, 0, { r: 0.004 });
+    }
+    box(g, 1.26, 0.3, 0.025, C.oakDark, 0, 0.25, -0.33, { r: 0.004 });
+  },
+  chairDesk(g, { box, cyl, ball, C }) {
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2;
+      box(g, 0.035, 0.025, 0.28, C.steel, Math.sin(a) * 0.13, 0.05, Math.cos(a) * 0.13, { ry: a, r: 0.01 });
+      ball(g, 0.024, C.ink, Math.sin(a) * 0.26, 0.024, Math.cos(a) * 0.26);
+    }
+    cyl(g, 0.024, 0.024, 0.32, C.steel, 0, 0.07, 0);
+    box(g, 0.52, 0.1, 0.5, C.mustard, 0, 0.36, 0.02, { r: 0.05 });
+    box(g, 0.5, 0.72, 0.1, C.mustard, 0, 0.42, -0.26, { r: 0.06, rx: -0.1 });
+    // tufting: a grid of buttons on the back
+    for (let r2 = 0; r2 < 3; r2++) for (let k = -1; k <= 1; k++) ball(g, 0.012, C.oakDark, k * 0.13, 0.62 + r2 * 0.16, -0.2 - r2 * 0.016);
+    for (const s of [-1, 1]) box(g, 0.07, 0.2, 0.42, C.mustard, s * 0.27, 0.4, 0.02, { r: 0.03 });
+  },
+  chairModernCushion(g, { box, cyl, C, piece, THREE }) {
+    for (const [x, z] of [[-0.19, -0.19], [0.19, -0.19], [-0.19, 0.19], [0.19, 0.19]]) cyl(g, 0.014, 0.01, 0.42, C.char, x, 0, z, { seg: 8 });
+    box(g, 0.5, 0.08, 0.48, C.sage, 0, 0.42, 0, { r: 0.035 });
+    // a rounded back hugging the seat
+    piece(g, new THREE.CylinderGeometry(0.26, 0.26, 0.34, 28, 1, true, Math.PI * 0.62, Math.PI * 0.76), C.sage, 0, 0.66, 0.03, { m: (() => { const m = luxMat(C.sage).clone(); m.side = THREE.DoubleSide; return m; })() });
+  },
+  table(g, { box, cyl, C }) {
+    box(g, 2.4, 0.05, 1.15, C.white, 0, 0.7, 0, { r: 0.015 });
+    for (const s of [-1, 1]) {
+      cyl(g, 0.11, 0.14, 0.66, C.oakDark, s * 0.75, 0.04, 0, { seg: 24 });
+      cyl(g, 0.3, 0.32, 0.04, C.char, s * 0.75, 0, 0, { seg: 32 });
+    }
+  },
+  tableRound(g, { cyl, C }) {
+    cyl(g, 0.46, 0.46, 0.04, C.white, 0, 0.7, 0, { seg: 40 });
+    cyl(g, 0.04, 0.16, 0.66, C.char, 0, 0.04, 0, { seg: 24 });
+    cyl(g, 0.28, 0.3, 0.04, C.char, 0, 0, 0, { seg: 32 });
+  },
+  tableCoffee(g, { cyl, C, piece, THREE }) {
+    const top = cyl(g, 0.5, 0.5, 0.05, C.white, 0, 0.32, 0, { seg: 40 });
+    top.parent.scale.set(1.2, 1, 0.6);
+    piece(g, new THREE.TorusGeometry(0.5, 0.012, 6, 40), C.char, 0, 0.3, 0, { rx: Math.PI / 2 }).parent.scale.set(1.15, 0.55, 1);
+    for (const [x, z] of [[-0.45, 0], [0.45, 0], [0, -0.22], [0, 0.22]]) cyl(g, 0.012, 0.012, 0.3, C.char, x, 0, z, { seg: 6 });
+  },
+  stoolBar(g, { cyl, C, piece, THREE }) {
+    cyl(g, 0.18, 0.17, 0.08, C.blue, 0, 0.64, 0, { seg: 28 });
+    cyl(g, 0.025, 0.025, 0.64, C.char, 0, 0, 0, { seg: 10 });
+    cyl(g, 0.2, 0.22, 0.02, C.char, 0, 0, 0, { seg: 28 });
+    piece(g, new THREE.TorusGeometry(0.13, 0.009, 6, 24), C.char, 0, 0.26, 0, { rx: Math.PI / 2 });
+  },
+  kitchenCabinet(g, { box, C }) {
+    box(g, 0.7, 0.8, 0.58, C.oakDark, 0, 0.06, -0.01, { r: 0.006 });
+    box(g, 0.7, 0.06, 0.52, C.ink, 0, 0, -0.03, { r: 0.002 });
+    box(g, 0.72, 0.04, 0.62, C.white, 0, 0.86, 0, { r: 0.006 });
+    box(g, 0.3, 0.015, 0.02, C.char, 0, 0.72, 0.29, { r: 0.006 });
+  },
+  kitchenSink(g, H) {
+    LUX_PIECES.kitchenCabinet(g, H);
+    const { box, cyl, C } = H;
+    box(g, 0.46, 0.01, 0.36, C.ink, 0, 0.905, 0.02, { r: 0.006 });
+    cyl(g, 0.014, 0.014, 0.28, C.char, 0, 0.9, -0.22, { seg: 10 });
+    box(g, 0.022, 0.022, 0.16, C.char, 0, 1.17, -0.15, { r: 0.008 });
+  },
+  kitchenFridgeLarge(g, { box, C }) {
+    box(g, 0.85, 1.95, 0.72, C.oakDark, 0, 0, 0, { r: 0.01 });
+    box(g, 0.85, 0.008, 0.01, C.ink, 0, 1.25, 0.362, { r: 0.002 });
+    box(g, 0.016, 0.9, 0.03, C.char, -0.38, 0.75, 0.37, { r: 0.006 });
+  },
+  bookcaseOpen(g, { box, C }) {
+    for (const s of [-1, 1]) box(g, 0.04, 1.45, 0.38, C.oakDark, s * 0.43, 0, 0, { r: 0.008 });
+    box(g, 0.9, 1.45, 0.02, C.oakDark, 0, 0, -0.18, { r: 0.004 });
+    for (const y of [0, 0.47, 0.94, 1.41]) { box(g, 0.84, 0.035, 0.36, C.oak, 0, y, 0, { r: 0.006 }); box(g, 0.84, 0.01, 0.01, C.char, 0, y + 0.012, 0.18, { r: 0.002 }); }
+  },
+  loungeSofa(g, { box, cyl, ball, C }) {
+    // a Chesterfield: deep buttoned back, rolled arms, brass feet
+    for (const [x, z] of [[-0.9, -0.3], [0.9, -0.3], [-0.9, 0.3], [0.9, 0.3]]) cyl(g, 0.025, 0.018, 0.08, C.char, x, 0, z, { seg: 8 });
+    box(g, 2.0, 0.24, 0.84, C.sage, 0, 0.08, 0, { r: 0.05 });
+    box(g, 1.7, 0.12, 0.62, C.sage, 0, 0.3, 0.08, { r: 0.05 });
+    box(g, 2.0, 0.46, 0.2, C.sage, 0, 0.3, -0.32, { r: 0.06 });
+    for (let k = -3; k <= 3; k++) for (let r = 0; r < 2; r++) ball(g, 0.014, C.oakDark, k * 0.26 + (r ? 0.13 : 0), 0.5 + r * 0.14, -0.215);
+    for (const s of [-1, 1]) { box(g, 0.18, 0.38, 0.84, C.sage, s * 0.91, 0.08, 0, { r: 0.06 }); cyl(g, 0.11, 0.11, 0.84, C.sage, s * 0.91, 0.44, 0, { seg: 16, rx: Math.PI / 2 }); }
+    box(g, 0.32, 0.3, 0.1, C.terra, 0.55, 0.4, -0.15, { r: 0.05, rx: -0.15 });
+  },
+  loungeChairRelax(g, { cyl, piece, C, THREE }) {
+    // a barrel armchair in blush velvet on a brass ring
+    piece(g, new THREE.TorusGeometry(0.3, 0.012, 6, 32), C.char, 0, 0.04, 0, { rx: Math.PI / 2 });
+    cyl(g, 0.34, 0.32, 0.22, C.blush, 0, 0.06, 0, { seg: 32 });
+    const back = piece(g, new THREE.CylinderGeometry(0.36, 0.36, 0.42, 32, 1, true, Math.PI * 0.55, Math.PI * 0.9), C.blush, 0, 0.47, 0, {});
+    back.material = back.material.clone(); back.material.side = THREE.DoubleSide;
+  },
+  lampRoundFloor(g, { cyl, piece, C, THREE }) {
+    cyl(g, 0.17, 0.18, 0.05, C.white, 0, 0, 0, { seg: 28 });
+    piece(g, new THREE.TorusGeometry(0.55, 0.012, 6, 28, Math.PI * 0.62), C.char, 0.55, 0.05, 0, { rz: Math.PI * 0.38 });
+    const globe = new THREE.Mesh(new THREE.SphereGeometry(0.15, 20, 14), new THREE.MeshBasicMaterial({ color: 0xfff0d8 }));
+    globe.position.set(0.97, 1.36, 0); g.add(globe);
+  },
+  cabinetTelevision(g, { box, C }) {
+    box(g, 1.2, 0.32, 0.4, C.oak, 0, 0.08, 0, { r: 0.008 });
+    box(g, 1.2, 0.01, 0.4, C.char, 0, 0.4, 0, { r: 0.003 });
+    for (const x of [-0.55, 0.55]) box(g, 0.03, 0.08, 0.03, C.char, x, 0, 0, { r: 0.006 });
+  },
+  pottedPlant(g, { cyl, piece, C, THREE }) {
+    cyl(g, 0.2, 0.16, 0.42, C.pot, 0, 0.04, 0, { seg: 24 });
+    cyl(g, 0.17, 0.17, 0.04, C.char, 0, 0, 0, { seg: 24 });
+    for (let i = 0; i < 9; i++) {
+      const a = i * 2.4, y = 0.72 + (i % 3) * 0.14, r = 0.08 + (i % 2) * 0.07;
+      piece(g, new THREE.SphereGeometry(0.15, 10, 6), i % 3 ? C.leaf : C.leafDark, Math.cos(a) * r, y, Math.sin(a) * r, { rx: Math.sin(a) * 0.7, rz: -Math.cos(a) * 0.7 }).parent.scale.set(0.6, 1.4, 0.15);
+    }
+  },
+};
+
+const LUX = {
+  name: 'lux',
+  label: '現代奢華',
+  furniture: { palette: LUX_C, material: luxMat, outline: false, pieces: LUX_PIECES },
+  material: (color) => luxMat(color),
+  floors(dark) {
+    return {
+      wood: [marble(dark, true), 2.4, 0.16],
+      work: [luxCarpet(dark, 'work', dark ? '#2b2826' : '#5a5450', dark ? 'rgba(176,141,87,.18)' : 'rgba(176,141,87,.35)'), 1.2, 1],
+      carpet: [luxCarpet(dark, 'navy', dark ? '#161d30' : '#25335a', 'rgba(201,169,110,.4)'), 1.0, 1],
+      tiles: [checker(dark), 1.2, 0.2],
+    };
+  },
+  wall(dark) {
+    const m = new THREE.MeshStandardMaterial({ map: fluted(dark, false), bumpMap: fluted(dark, true), bumpScale: 2.5, roughness: 0.55 });
+    m.userData.worldUV = 1.0;
+    return m;
+  },
+  runner: false,
+  light: { exposure: 1.04, hemi: 0xfff0dc, sun: 0xffe7c8, env: 0.4 },
+  // Over each pod: an opal glass globe on a brass rod.
+  pendant(THREE_, dark) {
+    const g = new THREE.Group();
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.5, 6), luxMat(LUX_C.char));
+    rod.position.y = 0.38; g.add(rod);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.05, 16), luxMat(LUX_C.char));
+    cap.position.y = 0.14; g.add(cap);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 14), new THREE.MeshBasicMaterial({ color: 0xffe7b0 }));
+    g.add(glow);
+    return { group: g, glow };
+  },
+};
+
+export const DECORS = { modern: MODERN, tech: TECH, lux: LUX };
+export const DECOR_LIST = [{ id: 'default', label: '預設' }, { id: 'modern', label: MODERN.label }, { id: 'tech', label: TECH.label }, { id: 'lux', label: LUX.label }];
 export function decorOf(id) { return DECORS[id] || null; }
