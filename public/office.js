@@ -70,6 +70,8 @@
   const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
   // Closing time: whoever is just resting goes home, the lights go down.
   const closing = () => { const h = hour(); return h >= 19 || h < 7; };
+  // The lunchtime nap (12:30-13:30): the main lights go off, as in a Taiwanese office.
+  const napTime = () => { const h = hour(); return h >= 12.5 && h < 13.5; };
   // Sitting somewhere off duty is not just sitting: what they get up to on
   // each kind of seat, a new thing every 7–10 seconds.
   const SEAT_ACTS = {
@@ -130,6 +132,26 @@
     return Math.min(1, 0.12 + cat * 0.17);
   }
   window.OfficePoker = { handScore, handFeel, cardName, HAND_NAMES };
+
+  // ---- Roulette (European, one zero) ----------------------------------------
+  // Rounds: bets for 12 s, the wheel turns for 5 s, the number stays up for 4 s.
+  // Red, black, odd, even, 1-18, 19-36 pay even money; a single number 35 to 1;
+  // the zero loses every outside bet. Pretend chips, the same as at the poker table.
+  const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+  const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+  const ROULETTE = { betMs: 12_000, spinMs: 5_000, showMs: 4_000 };
+  const BET_NAMES = { red: '紅', black: '黑', odd: '單', even: '雙', low: '小 1-18', high: '大 19-36' };
+  const colourOf = (n) => (n === 0 ? 'green' : RED.has(n) ? 'red' : 'black');
+  // What a bet brings back when n comes up (stake included; 0 = lost).
+  function roulettePay(bet, n) {
+    const { on, amount } = bet;
+    if (typeof on === 'number') return on === n ? amount * 36 : 0;
+    if (n === 0) return 0;
+    const win = { red: RED.has(n), black: !RED.has(n), odd: n % 2 === 1, even: n % 2 === 0, low: n <= 18, high: n >= 19 }[on];
+    return win ? amount * 2 : 0;
+  }
+  const betName = (on) => (typeof on === 'number' ? `${on} 號` : BET_NAMES[on]);
+  window.OfficeRoulette = { roulettePay, colourOf, WHEEL, RED, betName, ROULETTE };
 
   // ---- The slot machine: a Seth-style "pay anywhere" game ------------------
   // 6 columns x 5 rows. Eight or more of one symbol anywhere on the screen
@@ -783,8 +805,8 @@
         // The roulette table: two watch the wheel from its ends.
         prop('roulette', { x: fx, y: fby, w: 1.6, d: 0.8 });
         solid(fx, fby, 1.6, 0.8, 0.05);
-        poi(fx - 0.45, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: Math.PI / 2 });
-        poi(fx + 2.05, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: -Math.PI / 2 });
+        poi(fx - 0.45, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: Math.PI / 2, table: 'roulette' });
+        poi(fx + 2.05, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: -Math.PI / 2, table: 'roulette' });
       } else {
         add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
         prop('foosball', { x: fx, y: fby });
@@ -1283,6 +1305,7 @@
       const pretend = this.bossIn && zoned && !this.standup ? sessions.filter((s) => !atDesk(s) && zoneOf(s) !== 'wait') : [];
       const pretendKeys = new Set(pretend.map((s) => s.key));
       this.closedNow = zoned && !this.compact && !this.bossIn && !this.standup && closing();
+      this.napNow = zoned && !this.compact && !this.bossIn && !this.standup && !this.closedNow && napTime();
       const working = sessions.filter(atDesk);
       const off = sessions
         .filter((s) => !atDesk(s) && !pretendKeys.has(s.key))
@@ -2147,7 +2170,7 @@
 
     // After hours: the room goes dark except a pool of lamp light round
     // everyone still at a desk.
-    nightShade() {
+    nightShade(dark = 0.5) {
       const c = this.ctx;
       if (!this.shadeCv) this.shadeCv = document.createElement('canvas');
       const sc = this.shadeCv;
@@ -2155,7 +2178,7 @@
       const g = sc.getContext('2d');
       g.globalCompositeOperation = 'source-over';
       g.clearRect(0, 0, sc.width, sc.height);
-      g.fillStyle = 'rgba(6, 10, 30, 0.5)';
+      g.fillStyle = `rgba(6, 10, 30, ${dark})`;
       g.fillRect(0, 0, sc.width, sc.height);
       g.globalCompositeOperation = 'destination-out';
       const z = this.cam.zoom;
@@ -2311,7 +2334,7 @@
       const k = key.toLowerCase();
       if ('wasd'.includes(k) && k.length === 1) { if (down) this.meKeys.add(k); else this.meKeys.delete(k); return true; }
       if (!down) return false;
-      if (k === 'r') { if (me.atSlot) this.meOffSlot(); this.meOffPoker(); me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
+      if (k === 'r') { if (me.atSlot) this.meOffSlot(); this.meOffPoker(); this.meOffRoulette(); me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
       if (k === ' ' || k === 'e') { const p = this.meNear(); if (p) this.onHover(p.s, null, true); return !!p; }
       return false;
     }
@@ -2340,6 +2363,7 @@
       if (dx || dy) {
         if (me.atSlot) this.meOffSlot();
         if (me.atPoker) this.meOffPoker();
+        if (me.atRoulette) this.meOffRoulette();
         me.path = []; me.homing = false; me.seated = false;
         const ax = this.screenAxes();
         let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
@@ -2395,8 +2419,20 @@
           me.event = { text: '來一把 🎰', at: Date.now(), zone: 'held' };
         }
       } else me.slotWait = 0;
+      // Stopped by the roulette table: step up to it.
+      if (!me.atRoulette && !me.atPoker && !me.atSlot && !me.seated) {
+        const spot = this.rouletteSpots().find((q) => (!q.taken || q.taken === 'me') && Math.hypot(me.x - q.x, me.y - q.y) < 0.8);
+        if (spot) {
+          me.rouletteWait = (me.rouletteWait || 0) + dt;
+          if (me.rouletteWait >= 0.4) {
+            spot.taken = 'me'; me.atRoulette = spot; me.rouletteWait = 0;
+            me.x = spot.x; me.y = spot.y; me.path = [];
+            me.event = { text: '來押一把 🎡', at: Date.now(), zone: 'held' };
+          }
+        } else me.rouletteWait = 0;
+      }
       // Stopped by a free seat at the poker table: sit in.
-      if (!me.atPoker && !me.atSlot && !me.seated) {
+      if (!me.atPoker && !me.atSlot && !me.seated && !me.atRoulette) {
         const seat = this.holdemSeats().find((s) => (!s.taken || s.taken === 'me') && Math.hypot(me.x - s.x, me.y - s.y) < 0.7);
         if (seat) {
           me.pokerWait = (me.pokerWait || 0) + dt;
@@ -2431,7 +2467,7 @@
     stepPoker() {
       if (this.layout !== 'casino' || this.floor !== 1) return;
       const seats = this.pokerSitters(), now = Date.now();
-      const g = this.poker || (this.poker = { stage: 'idle', stacks: {}, dealer: 0, at: now, log: [] });
+      const g = this.poker || (this.poker = { stage: 'idle', stacks: this.wallet(), dealer: 0, at: now, log: [] });
       g.seats = seats;
       const sitting = seats.filter(Boolean);
       for (const k of sitting) if (!(g.stacks[k] > 0)) g.stacks[k] = POKER.stack;
@@ -2539,6 +2575,90 @@
       g.winners = winners; g.winName = name; g.stage = 'done'; g.at = Date.now(); g.queue = [];
       // broke: a fresh stack next hand (pretend chips)
       for (const k of Object.keys(g.stacks)) if (g.stacks[k] <= 0) g.stacks[k] = POKER.stack;
+    }
+
+    // Everyone's pretend chips at the casino (poker and roulette share them):
+    // 1000 to start, topped up when someone runs out. This page only.
+    wallet() { return this.casinoChips || (this.casinoChips = {}); }
+    chipsOf(key) { const w = this.wallet(); if (!(w[key] > 0)) w[key] = POKER.stack; return w[key]; }
+
+    rouletteSpots() { return (this.plan && this.plan.pois || []).filter((q) => q.table === 'roulette'); }
+
+    // Who is at the roulette table now (people standing at its spots, you).
+    rouletteSitters() {
+      const out = [];
+      for (const q of this.rouletteSpots()) {
+        if (q.taken === 'me') { if (this.me && this.me.atRoulette === q && !this.me.moving) out.push('me'); continue; }
+        const p = q.taken && this.people.get(q.taken);
+        if (p && !p.leaving && p.poi === q && !p.path.length) out.push(p.key);
+      }
+      return out;
+    }
+
+    stepRoulette() {
+      if (this.layout !== 'casino' || this.floor !== 1) return;
+      const now = Date.now();
+      const r = this.roulette || (this.roulette = { stage: 'bets', at: now, bets: [], history: [], number: null, pay: {} });
+      const players = this.rouletteSitters();
+      r.players = players;
+      if (r.stage === 'bets') {
+        // the others put their chips down once, at some moment in the round
+        for (const k of players) {
+          if (k === 'me' || r.bets.some((b) => b.key === k)) continue;
+          if (Math.random() > 0.02) continue;
+          const pick = Math.random() < 0.2 ? Math.floor(Math.random() * 37) : ['red', 'black', 'odd', 'even', 'low', 'high'][Math.floor(Math.random() * 6)];
+          this.rouletteBet(k, pick, [10, 20, 50][Math.floor(Math.random() * 3)]);
+        }
+        if (now - r.at >= ROULETTE.betMs) {
+          if (!r.bets.length && !players.length) { r.at = now; return; } // nobody: wait
+          r.stage = 'spin'; r.at = now;
+          r.number = WHEEL[Math.floor(Math.random() * WHEEL.length)];
+          for (const k of players) if (k !== 'me' || r.bets.some((b) => b.key === 'me')) this.say(k, '轉啦 🎡');
+        }
+      } else if (r.stage === 'spin') {
+        if (now - r.at >= ROULETTE.spinMs) {
+          r.stage = 'show'; r.at = now; r.pay = {};
+          const w = this.wallet();
+          for (const b of r.bets) { const got = roulettePay(b, r.number); if (got) { w[b.key] = (w[b.key] || 0) + got; } r.pay[b.key] = (r.pay[b.key] || 0) + got - b.amount; }
+          r.history.unshift(r.number); r.history.length = Math.min(r.history.length, 12);
+          const tag = `${r.number}${colourOf(r.number) === 'red' ? ' 紅' : colourOf(r.number) === 'black' ? ' 黑' : ''}`;
+          for (const [k, net] of Object.entries(r.pay)) this.say(k, net > 0 ? `中了！${tag} +${net} 🎉` : net === 0 ? `${tag}，打平 😮‍💨` : `${tag}…槓龜 😩`);
+        }
+      } else if (now - r.at >= ROULETTE.showMs) {
+        for (const k of Object.keys(this.wallet())) if (!(this.wallet()[k] > 0)) this.wallet()[k] = POKER.stack;
+        Object.assign(r, { stage: 'bets', at: now, bets: [], pay: {} });
+      }
+    }
+
+    // Put chips on a bet (while bets are open): on = 'red' | 'black' | 'odd' |
+    // 'even' | 'low' | 'high' | a number 0-36.
+    rouletteBet(key, on, amount) {
+      const r = this.roulette;
+      if (!r || r.stage !== 'bets') return false;
+      if (!(typeof on === 'number' ? on >= 0 && on <= 36 && Number.isInteger(on) : BET_NAMES[on])) return false;
+      amount = Math.floor(amount);
+      if (!(amount > 0) || this.chipsOf(key) < amount) return false;
+      this.wallet()[key] -= amount;
+      const same = r.bets.find((b) => b.key === key && b.on === on);
+      if (same) same.amount += amount; else r.bets.push({ key, on, amount });
+      if (key !== 'me') this.say(key, `押${betName(on)} ${amount}`);
+      return true;
+    }
+
+    // Take your chips back off the table (while bets are open).
+    rouletteClear(key = 'me') {
+      const r = this.roulette;
+      if (!r || r.stage !== 'bets') return false;
+      for (const b of r.bets.filter((x) => x.key === key)) this.wallet()[key] += b.amount;
+      r.bets = r.bets.filter((x) => x.key !== key);
+      return true;
+    }
+
+    meOffRoulette() {
+      const me = this.me;
+      if (!me || !me.atRoulette) return;
+      if (me.atRoulette.taken === 'me') me.atRoulette.taken = null;
+      me.atRoulette = null;
     }
 
     // You stood up from the poker table.
@@ -4237,6 +4357,10 @@
           const won = this.slot && this.slot.player === 'me' && this.slotWinning();
           return { pose: 'sit', face: 'back', act: won ? 'cheer' : 'slot', sitZ: (q && q.sit) || 0.47 };
         }
+        if (p.atRoulette) {
+          const r = this.roulette, act = r && r.stage === 'show' && (r.pay.me || 0) > 0 ? 'cheer' : 'watch';
+          return { pose: 'stand', face: 'back', act, sitZ: 0 };
+        }
         if (p.atPoker) {
           const mine = this.poker && this.poker.queue && this.poker.queue[0] && this.poker.queue[0].key === 'me';
           return { pose: 'sit', face: p.atPoker.face, act: mine ? 'think' : 'lookaround', sitZ: p.atPoker.sit || 0.47 };
@@ -4310,7 +4434,11 @@
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slotWinning()) act = 'cheer';
         // At the roulette wheel: watch it go round, cheer now and then.
-        if (q.act === 'roulette') act = Math.floor((Date.now() / 1000 + p.phase * 7) / 9) % 4 === 0 ? 'cheer' : 'watch';
+        if (q.act === 'roulette') {
+          const r = this.roulette;
+          act = q.table === 'roulette' && r ? (r.stage === 'show' && (r.pay[p.key] || 0) > 0 ? 'cheer' : 'watch')
+            : Math.floor((Date.now() / 1000 + p.phase * 7) / 9) % 4 === 0 ? 'cheer' : 'watch';
+        }
         const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
         if (use) act = use.act;
         if (q.act === 'chat') {
@@ -5285,6 +5413,7 @@
         lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
         // after hours by the host's clock (a viewer may be somewhere else)
         closedNow: !!this.closedNow,
+        napNow: !!this.napNow,
       };
     }
 
@@ -5404,6 +5533,7 @@
       for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
       this.bossIn = !!w.bossIn;
       this.closedNow = !!w.closedNow;
+      this.napNow = !!w.napNow;
       this.worldAt = Date.now();
     }
 
@@ -5525,6 +5655,7 @@
       this.stepVisitors(dt);
       this.stepSlot(dt);
       this.stepPoker();
+      this.stepRoulette();
     }
 
     draw() {
@@ -5559,7 +5690,8 @@
         if (it.person) heads.push([it.person, this.person(it.person)]);
         else it.draw();
       }
-      if (this.closedNow) this.nightShade();
+      // After hours, and over the lunchtime nap (a little less dark: daylight still comes in).
+      if (this.closedNow || this.napNow) this.nightShade(this.closedNow ? 0.5 : 0.32);
       this.pingPongBall();
       if (!this.compact) for (const d of this.podDepts()) { const at = this.iso(d.x, d.y, d.z); this.deptPlaque(at.x, at.y, d.name, d.color); }
       if (!this.compact && this.roam === false) this.zoneSigns();

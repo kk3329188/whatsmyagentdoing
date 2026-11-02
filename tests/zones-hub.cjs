@@ -525,7 +525,7 @@ test('on the treadmill they stand on the belt and run', () => {
 
 // A Date whose "now" (new Date()) is the given local time today; Date.now stays real.
 function clockAt(h) {
-  const fixed = new Date(); fixed.setHours(h, 0, 0, 0);
+  const fixed = new Date(); fixed.setHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0); // 12.75 = 12:45
   return class extends Date { constructor(...a) { if (a.length) super(...a); else super(fixed.getTime()); } static now() { return Date.now(); } };
 }
 const seat = (p) => { p.x = p.desk.seat.x; p.y = p.desk.seat.y; p.path = []; };
@@ -1666,4 +1666,64 @@ test('hold\'em at the casino table: two sitting play a hand to the end; the pot 
     }
     assert.equal(hands, 3, 'three hands were played');
   } finally { Date.now = real; }
+});
+
+// ---- the casino's roulette
+const rouletteOf = () => { const window = {}; vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), { window, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} }); return window.OfficeRoulette; };
+
+test('roulette pays: even money on red, black, odd, even, low and high, 35 to 1 on a number; the zero takes every outside bet', () => {
+  const { roulettePay, WHEEL } = rouletteOf();
+  assert.equal(WHEEL.length, 37);
+  assert.deepEqual([...WHEEL].sort((a, b) => a - b), Array.from({ length: 37 }, (_, i) => i));
+  const b = (on) => ({ on, amount: 10 });
+  assert.equal(roulettePay(b('red'), 1), 20);
+  assert.equal(roulettePay(b('black'), 1), 0);
+  assert.equal(roulettePay(b('black'), 2), 20);
+  assert.equal(roulettePay(b('odd'), 7), 20);
+  assert.equal(roulettePay(b('even'), 7), 0);
+  assert.equal(roulettePay(b('low'), 18), 20);
+  assert.equal(roulettePay(b('high'), 19), 20);
+  for (const on of ['red', 'black', 'odd', 'even', 'low', 'high']) assert.equal(roulettePay(b(on), 0), 0, `${on} loses on zero`);
+  assert.equal(roulettePay(b(17), 17), 360);
+  assert.equal(roulettePay(b(0), 0), 360);
+  assert.equal(roulettePay(b(17), 18), 0);
+});
+
+test('roulette at the casino table: you bet, the wheel turns, your chips change by exactly what the bet paid', () => {
+  const o = load(true);
+  o.layout = 'casino'; o.floor = 1;
+  o.plan = o.buildPlan(0);
+  const spot = o.rouletteSpots()[0];
+  o.me = { me: true, key: 'me', x: spot.x, y: spot.y, path: [], atRoulette: spot, moving: false };
+  spot.taken = 'me';
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    o.stepRoulette();
+    const start = o.chipsOf('me');
+    assert.equal(o.rouletteBet('me', 'red', 50), true);
+    assert.equal(o.rouletteBet('me', 7, 10), true);
+    assert.equal(o.rouletteBet('me', 'purple', 10), false, 'no such bet');
+    assert.equal(o.rouletteBet('me', 40, 10), false, 'no such number');
+    assert.equal(o.rouletteBet('me', 'red', 5000), false, 'not that many chips');
+    assert.equal(o.chipsOf('me'), start - 60);
+    for (let i = 0; i < 200 && o.roulette.stage !== 'show'; i++) { clock += 200; o.stepRoulette(); }
+    assert.equal(o.roulette.stage, 'show');
+    const n = o.roulette.number, { roulettePay } = rouletteOf();
+    const got = roulettePay({ on: 'red', amount: 50 }, n) + roulettePay({ on: 7, amount: 10 }, n);
+    assert.equal(o.chipsOf('me'), start - 60 + got, `came up ${n}`);
+    assert.equal(o.roulette.pay.me, got - 60);
+    assert.equal(o.rouletteBet('me', 'red', 10), false, 'no bets while the number is up');
+  } finally { Date.now = real; }
+});
+
+test('the lunchtime nap, 12:30 to 13:30: the main lights go off (people stay, unlike after hours)', () => {
+  const list = [at('tool'), at('idle', { ago: 60 * MIN })];
+  for (const [h, nap] of [[12.75, true], [13.25, true], [12.25, false], [13.75, false], [21, false]]) {
+    const o = load(true, clockAt(h));
+    settle(o, list);
+    assert.equal(o.napNow, nap, `${h}:00`);
+    if (nap) assert.ok(o.people.get('claude:idle'), 'nobody is sent home for the nap');
+  }
 });

@@ -839,11 +839,17 @@ const rouletteFelt = () => canvasTex('rlayout', 256, (c, s) => {
   }
   c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1; c.strokeRect(x0 - cw * 1.2, y0, cw * 13.2, ch * 3);
 }, { repeat: false });
+// The wheel's pockets in their real order (office.js OfficeRoulette.WHEEL):
+// pocket i is drawn from angle i/37 of a turn, so the ball can be sent there.
+const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const wheelFace = () => canvasTex('rwheel', 256, (c, s) => {
   const n = 37, R = s / 2;
   for (let i = 0; i < n; i++) {
-    c.fillStyle = i === 0 ? '#1f8a4c' : i % 2 ? '#b3262f' : '#16181b';
+    const num = WHEEL[i];
+    c.fillStyle = num === 0 ? '#1f8a4c' : REDS.has(num) ? '#b3262f' : '#16181b';
     c.beginPath(); c.moveTo(R, R); c.arc(R, R, R, (i / n) * 6.283, ((i + 1) / n) * 6.283); c.closePath(); c.fill();
+    c.save(); c.translate(R, R); c.rotate(((i + 0.5) / n) * 6.283); c.fillStyle = '#fff'; c.font = 'bold 9px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(num), R * 0.86, 0); c.restore();
   }
   c.fillStyle = '#6b3a1e'; c.beginPath(); c.arc(R, R, R * 0.55, 0, 6.283); c.fill();
   c.strokeStyle = '#d9b25a'; c.lineWidth = 4; c.beginPath(); c.arc(R, R, R * 0.55, 0, 6.283); c.stroke();
@@ -946,8 +952,9 @@ function vegasBuild(p, o) {
     const wheel = new THREE.Mesh(new THREE.CircleGeometry(0.29, 37), new THREE.MeshStandardMaterial({ map: wheelFace(), roughness: 0.35 }));
     wheel.rotation.x = -Math.PI / 2; wheel.position.set(wx, 0.905, 0); g.add(wheel);
     g.add(mesh(new THREE.ConeGeometry(0.05, 0.08, 12), M(C.char), wx, 0.94, 0));
-    const ball = mesh(new THREE.SphereGeometry(0.018, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 }), wx, 0.915, 0);
-    g.add(ball);
+    // the ball rides on the wheel (its child): sent round, it settles in the pocket that came up
+    const ball = mesh(new THREE.SphereGeometry(0.018, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 }), 0, 0, 0.014);
+    ball.castShadow = false; wheel.add(ball);
     g.position.set(p.x + p.w / 2, 0, p.y + p.d / 2);
     g.userData.roulette = { wheel, ball, wx };
     (o.casinoWheels || (o.casinoWheels = [])).push(g.userData.roulette);
@@ -1196,12 +1203,21 @@ function vegasAnimate(fx, t, closed, o) {
   }
   // the lamp over the poker table: off after hours, like the rest
   for (const l of o.casinoLamps || []) l.material.color.setHex(closed ? 0x2a2418 : 0xffe2a8);
-  // the roulette wheels turn (and stop after hours), the ball runs the other way
+  // the roulette wheel follows the game (office.js stepRoulette): turning
+  // slowly while bets are open, fast when spun; the ball runs round the other
+  // way, slows and drops into the pocket of the number that came up
+  const rl = o.roulette;
   for (const w of o.casinoWheels || []) {
-    if (closed) continue;
-    w.wheel.rotation.z = t * 1.2;
-    const a = -t * 2.3;
-    w.ball.position.set(w.wx + Math.cos(a) * 0.24, 0.915, Math.sin(a) * 0.24);
+    const dt = Math.min(0.1, t - (w.lt ?? t)); w.lt = t;
+    const spinMs = 5000, k = rl && rl.stage === 'spin' ? Math.min(1, (Date.now() - rl.at) / spinMs) : 1;
+    w.rot = (w.rot || 0) + dt * (rl && rl.stage === 'spin' ? 0.4 + 5 * (1 - k) * (1 - k) : 0.35);
+    w.wheel.rotation.z = w.rot;
+    const idx = rl && rl.number != null ? WHEEL.indexOf(rl.number) : 0;
+    const home = -((idx + 0.5) / 37) * Math.PI * 2;
+    const a = rl && rl.stage === 'spin' ? home + (1 - k) * (1 - k) * 46 : home;
+    const rad = rl && rl.stage === 'spin' ? 0.27 - 0.045 * k * k : 0.225;
+    w.ball.position.set(Math.cos(a) * rad, Math.sin(a) * rad, 0.014);
+    w.ball.visible = !!(rl && rl.number != null);
   }
 }
 

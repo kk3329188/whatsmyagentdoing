@@ -2102,7 +2102,7 @@ export class Office3D extends window.Office {
 
   facing(p, st) {
     if (st.pose === 'walk') return null;
-    if (p.me) return p.atPoker ? p.atPoker.yaw : p.seated || p.atSlot ? Math.PI : null;
+    if (p.me) return p.atPoker ? p.atPoker.yaw : p.atRoulette ? p.atRoulette.yaw : p.seated || p.atSlot ? Math.PI : null;
     if (p.seeOff && !p.path.length) return Math.atan2(this.plan.door.x - p.x, this.plan.door.y - p.y);
     if (p.meeting && this.atSeat(p)) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
     // A visitor talks to whoever sits at the desk they came to.
@@ -2260,9 +2260,14 @@ export class Office3D extends window.Office {
     // After hours: dim the room, a desk lamp over everyone still working.
     // The room's own soft light (scene.environment) goes down with them.
     if (this.envBase == null) this.envBase = this.scene.environmentIntensity ?? 1;
-    this.scene.environmentIntensity = this.envBase * (this.closedNow ? 0.35 : 1);
-    if (this.closedNow) { this.sun.intensity *= 0.3; this.hemi.intensity *= 0.4; }
-    this.deskLamps(!!this.closedNow);
+    // The main lights off: after hours, or over the lunchtime nap (daylight
+    // still comes in then); either way only the lamps over whoever works stay on.
+    const out = this.closedNow ? 'night' : this.napNow ? 'nap' : null;
+    this.scene.environmentIntensity = this.envBase * (out === 'night' ? 0.35 : out === 'nap' ? 0.45 : 1);
+    if (out === 'night') { this.sun.intensity *= 0.3; this.hemi.intensity *= 0.4; }
+    if (out === 'nap') { this.sun.intensity *= 0.7; this.hemi.intensity *= 0.45; }
+    this.lightsOut = !!out;
+    this.deskLamps(!!out);
     if (this.windowMat) {
       // The real weather: a grey sky, rain running down, snow, lightning.
       const wx = this.weatherKind();
@@ -2330,7 +2335,7 @@ export class Office3D extends window.Office {
     }
     this.officeLife();
     this.animateTV();
-    if (this.decorFx && this.decor.animate) this.decor.animate(this.decorFx, this.t / 1000, !!this.closedNow, this);
+    if (this.decorFx && this.decor.animate) this.decor.animate(this.decorFx, this.t / 1000, !!this.lightsOut, this);
     if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
     if (this.rods) this.rods.forEach((r, k) => { r.position.z = this.plan.props.find((q) => q.t === 'foosball').y + 0.4 + (fbPlaying ? Math.sin(t * 8 + k) * 0.06 : 0); r.rotation.z = fbPlaying ? Math.sin(t * 12 + k) * 0.6 : 0; });

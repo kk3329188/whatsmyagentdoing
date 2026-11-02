@@ -210,6 +210,14 @@
   .poker-hud .muted { color: #9aa3b5; }
   .poker-hud button { border: 0; border-radius: 999px; padding: 6px 14px; font: 700 13px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
   .poker-hud button:disabled { opacity: .4; cursor: default; }
+  .poker-hud .chip { background: #2b2f3a; color: #fff; padding: 5px 11px; }
+  .poker-hud .chip.on { background: #ffc845; color: #3a2a00; }
+  .poker-hud .bet { background: #3a3f4d; color: #fff; padding: 6px 11px; }
+  .poker-hud .bet.red { background: #b3262f; } .poker-hud .bet.black { background: #16181b; box-shadow: inset 0 0 0 1px #555; }
+  .poker-hud .num { width: 52px; padding: 5px 6px; border-radius: 8px; border: 0; font: 700 13px ui-sans-serif, system-ui, sans-serif; }
+  .poker-hud .ball { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font: 800 11px ui-sans-serif, system-ui, sans-serif; color: #fff; }
+  .poker-hud .ball.red { background: #b3262f; } .poker-hud .ball.black { background: #16181b; box-shadow: inset 0 0 0 1px #555; } .poker-hud .ball.green { background: #1f8a4c; }
+  .poker-hud .big { width: 34px; height: 34px; font-size: 15px; }
   .poker-hud .call { background: #3fb36b; color: #fff; } .poker-hud .raise { background: #ffc845; color: #3a2a00; } .poker-hud .fold { background: #e14c4c; color: #fff; }
   .office.stack .floor-view[data-floor="2"] { z-index: 2; }
   .office.stack[data-floor="1"] .floor-view[data-floor="2"] { transform: translateY(calc(-100% - 40px)); pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
@@ -506,6 +514,7 @@
 <div class="conn" id="conn" data-t="disconnected"></div>
 <div class="tip" id="tip"></div>
 <div class="poker-hud" id="pokerHud" hidden></div>
+<div class="poker-hud" id="rouletteHud" hidden></div>
 <div class="ver" id="ver"></div>
 <script>if (new URLSearchParams(location.search).get('k')) { document.documentElement.dataset.theme = 'dark'; window.OFFICE_FORCE_DARK = true; }</script>
 <script src="/i18n.js"></script>
@@ -1392,6 +1401,49 @@ setInterval(() => {
   if (left) left.textContent = Math.max(0, Math.ceil((25_000 - (Date.now() - (g.youSince || Date.now()))) / 1000));
 }, 300);
 pokerHud.addEventListener('click', (e) => { const b = e.target.closest('[data-poker]'); if (b && office && office.pokerAct) office.pokerAct(b.dataset.poker); });
+
+// Standing at the roulette table: the last numbers, your bets and the board
+// to bet on. The same pretend chips as at the poker table.
+const rouletteHud = document.getElementById('rouletteHud');
+let rouletteHtml = '', rouletteChip = 20;
+setInterval(() => {
+  const me = office && office.me, r = office && office.roulette;
+  const on = !!(me && me.atRoulette && r);
+  if (rouletteHud.hidden !== !on) rouletteHud.hidden = !on;
+  if (!on) { rouletteHtml = ''; return; }
+  const R = OfficeRoulette, ball = (n, big) => `<span class="ball ${R.colourOf(n)}${big ? ' big' : ''}">${n}</span>`;
+  const mine = r.bets.filter((b) => b.key === 'me'), staked = mine.reduce((a, b) => a + b.amount, 0);
+  const open = r.stage === 'bets';
+  let status = open ? '下注中' : r.stage === 'spin' ? '轉盤轉動中…' : '開獎';
+  if (r.stage === 'show') { const net = r.pay.me; status = `開出 ${r.number}・${net == null ? '你這局沒押' : net > 0 ? `你贏 +${net} 🎉` : net === 0 ? '打平' : `你輸 ${-net}`}`; }
+  const html = `<div class="row"><b>🎡 輪盤</b><span class="muted">${status}${open ? '（<span data-left></span> 秒）' : ''}</span>${r.stage !== 'bets' && r.number != null && r.stage === 'show' ? ball(r.number, true) : ''}</div>`
+    + `<div class="row"><span class="muted">最近</span>${r.history.slice(0, 10).map((n) => ball(n)).join('') || '<span class="muted">還沒開過</span>'}</div>`
+    + `<div class="row"><span class="muted">籌碼</span>${[10, 20, 50, 100].map((v) => `<button class="chip${v === rouletteChip ? ' on' : ''}" data-chip="${v}">${v}</button>`).join('')}`
+    + `<span class="muted">你的籌碼 <b style="color:#ffd76a">${office.chipsOf('me')}</b></span></div>`
+    + `<div class="row">${[['red', '紅'], ['black', '黑'], ['odd', '單'], ['even', '雙'], ['low', '1-18'], ['high', '19-36']].map(([k, t]) => `<button class="bet ${k === 'red' ? 'red' : k === 'black' ? 'black' : ''}" data-bet="${k}"${open ? '' : ' disabled'}>${t}</button>`).join('')}</div>`
+    + `<div class="row"><input class="num" type="number" min="0" max="36" value="7" data-num aria-label="押的號碼"${open ? '' : ' disabled'}><button class="bet" data-bet="num"${open ? '' : ' disabled'}>押號碼（35 倍）</button>`
+    + `<button class="fold" data-clear${open && mine.length ? '' : ' disabled'}>收回</button></div>`
+    + `<div class="row"><span class="muted">你押了：${mine.length ? mine.map((b) => `${R.betName(b.on)} ${b.amount}`).join('、') + `（共 ${staked}）` : '還沒押'}・WASD 走開就離桌・假籌碼</span></div>`;
+  if (html !== rouletteHtml) {
+    // keep the number you typed when the board is redrawn
+    const typed = rouletteHud.querySelector('[data-num]');
+    const keep = typed && typed.value;
+    rouletteHtml = html; rouletteHud.innerHTML = html;
+    if (keep != null) rouletteHud.querySelector('[data-num]').value = keep;
+  }
+  const left = rouletteHud.querySelector('[data-left]');
+  if (left) left.textContent = Math.max(0, Math.ceil((R.ROULETTE.betMs - (Date.now() - r.at)) / 1000));
+}, 300);
+rouletteHud.addEventListener('click', (e) => {
+  if (!office) return;
+  const chip = e.target.closest('[data-chip]');
+  if (chip) { rouletteChip = Number(chip.dataset.chip); rouletteHtml = ''; return; }
+  if (e.target.closest('[data-clear]')) { office.rouletteClear('me'); return; }
+  const b = e.target.closest('[data-bet]');
+  if (!b) return;
+  const on = b.dataset.bet === 'num' ? Math.round(Number(rouletteHud.querySelector('[data-num]').value)) : b.dataset.bet;
+  if (!office.rouletteBet('me', on, rouletteChip)) Hub.toast(office.chipsOf('me') < rouletteChip ? '籌碼不夠' : '這局已經不能押了');
+});
 
 // The stand-up: everyone downstairs (upstairs comes down by the lift), one
 // after another says where they are; the minutes pop up at the end.
