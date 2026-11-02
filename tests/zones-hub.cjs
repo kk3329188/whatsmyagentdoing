@@ -1544,3 +1544,28 @@ test('desks: the pod dividers are low enough to see whoever sits across (and the
   for (const p of panels) assert.ok(p.h <= 0.9, `divider ${p.h} m high`);
   for (const p of o.plan.props.filter((x) => x.t === 'planter')) assert.equal(p.h, panels[0].h, 'planters on top of the divider');
 });
+
+test('the casino layout: a hold\'em table with six seats turned to it and a roulette wheel instead of ping-pong and foosball', () => {
+  const o = load(true);
+  o.layout = 'casino';
+  o.plan = o.buildPlan(0);
+  const t = (k) => o.plan.props.filter((p) => p.t === k);
+  assert.equal(t('pokerTable').length, 1);
+  assert.equal(t('roulette').length, 1);
+  assert.equal(t('pingpong').length + t('foosball').length, 0);
+  const table = t('pokerTable')[0], cx = table.x + table.w / 2, cy = table.y + table.d / 2;
+  const seats = o.plan.pois.filter((q) => q.act === 'poker');
+  assert.equal(seats.length, 6);
+  for (const q of seats) {
+    assert.ok(q.sit > 0 && q.zone === 'idle');
+    // facing the middle of the table
+    const want = Math.atan2(cx - q.x, cy - q.y);
+    assert.ok(Math.abs(Math.atan2(Math.sin(q.yaw - want), Math.cos(q.yaw - want))) < 1e-6);
+    assert.ok(!o.plan.grid.blocked(q.x, q.y), 'a seat can be reached');
+  }
+  assert.equal(o.plan.pois.filter((q) => q.act === 'roulette').length, 2);
+  // the plain office is unchanged
+  const plain = load(true);
+  assert.equal(plain.plan.props.filter((p) => p.t === 'pingpong').length, 1);
+  assert.equal(plain.plan.pois.filter((q) => q.act === 'poker').length, 0);
+});

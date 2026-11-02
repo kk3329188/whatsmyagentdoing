@@ -79,6 +79,7 @@
     read: ['read', 'laptop', 'write', 'think', 'read'],
     meeting: ['laptop', 'write', 'scroll', 'think'],
     tv: ['watch', 'laugh', 'watch'],
+    poker: ['think', 'sip', 'laugh', 'think', 'chat', 'scroll'],
   };
   // ---- The slot machine: a Seth-style "pay anywhere" game ------------------
   // 6 columns x 5 rows. Eight or more of one symbol anywhere on the screen
@@ -273,7 +274,7 @@
 
   const ACT_EMOJI = {
     coffee: '☕', water: '💧', fridge: '🍎', sink: '🫧', stool: '💬', couch: '💬', beanbag: '🎧',
-    window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', plant: '🌱',
+    window: '☁️', read: '📖', whiteboard: '✏️', meeting: '💬', arcade: '🎮', pingpong: '🏓', poker: '🃏', roulette: '🎡', plant: '🌱',
     vending: '🥤', foosball: '⚽', phone: '📞', eat: '🍱', printer: '📄', petcat: '😺', stretch: '🙆',
     tv: '📺', trophy: '🏆', run: '🏃', yoga: '🧘',
     pin: '📌', fix: '🔧', refill: '☕', waterplant: '🌱', unpack: '🍱', deliver: '📦',
@@ -447,8 +448,11 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { floor = 1, onHover, onRelay, onCommand, isSecretary, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false } = {}) {
+    constructor(root, { floor = 1, onHover, onRelay, onCommand, isSecretary, label, doing, zoneLabels, helpers, onFrame, roam = true, showAgent = true, compact = false, layout = null } = {}) {
       this.root = root;
+      // Another layout for some rooms (a 3D decor's, e.g. 'casino': the play
+      // corner becomes the casino floor). Set before the first floor plan.
+      this.layout = layout;
       this.onHover = onHover || (() => {});
       // Dropped one person onto another: pass the first one's last reply on.
       this.onRelay = onRelay || null;
@@ -692,15 +696,30 @@
       prop('plant', { x: MW - 0.45, y: 0.45 });
       solid(MW - 0.65, 0.25, 0.4, 0.4);
 
-      // ---- the play corner: ping-pong, foosball, vending machines
+      // ---- the play corner: ping-pong, foosball, vending machines (or, in
+      // the casino layout, a Texas hold'em table and a roulette wheel)
+      const casino = this.layout === 'casino';
       const tx = 1.5, ty = MD + 1.1;
-      add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
-      prop('pingpong', { x: tx, y: ty });
-      solid(tx, ty, 2.6, 1.4, 0.05);
-      poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
-      poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
-      const pp = { x0: tx - 0.2, x1: tx + 2.8, y: ty + 0.7 };
-      floors.push({ kind: 'mat', x: pp.x0 - 0.6, y: pp.y - 1.4, w: pp.x1 - pp.x0 + 1.2, d: 2.7 });
+      let pp = null; // the ping-pong table's line of play (the ball follows it)
+      if (casino) {
+        // Six seats round an oval table, each turned to its middle.
+        const pw = 2.4, pd = 1.2, cx = tx + 0.1 + pw / 2, cy = ty + pd / 2;
+        prop('pokerTable', { x: tx + 0.1, y: ty, w: pw, d: pd });
+        solid(tx + 0.1, ty, pw, pd, 0.02);
+        for (const [sx, sy] of [[cx - 0.6, ty - 0.42], [cx + 0.6, ty - 0.42], [cx - 0.6, ty + pd + 0.42], [cx + 0.6, ty + pd + 0.42], [tx - 0.32, cy], [tx + pw + 0.52, cy]]) {
+          prop('pokerSeat', { x: sx, y: sy, yaw: Math.atan2(cx - sx, cy - sy) });
+          poi(sx, sy, 'poker', Math.cos(Math.atan2(cx - sx, cy - sy)) >= 0 ? 'front' : 'back', { sit: 0.47, zone: 'idle', yaw: Math.atan2(cx - sx, cy - sy) });
+        }
+        floors.push({ kind: 'mat', x: tx - 0.8, y: ty - 0.9, w: pw + 1.8, d: pd + 1.8 });
+      } else {
+        add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
+        prop('pingpong', { x: tx, y: ty });
+        solid(tx, ty, 2.6, 1.4, 0.05);
+        poi(tx - 0.55, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
+        poi(tx + 3.15, ty + 0.7, 'pingpong', 'side', { pair: 'pp' });
+        pp = { x0: tx - 0.2, x1: tx + 2.8, y: ty + 0.7 };
+        floors.push({ kind: 'mat', x: pp.x0 - 0.6, y: pp.y - 1.4, w: pp.x1 - pp.x0 + 1.2, d: 2.7 });
+      }
       const vy = FY - 2.1;
       add(0.5 + vy + 0.4, () => this.vending(0.12, vy, '#c0392b'));
       prop('vending', { x: 0.12, y: vy, color: '#c0392b' });
@@ -710,11 +729,19 @@
       poi(1.3, vy + 0.4, 'vending', 'back');
       poi(1.3, vy + 1.2, 'vending', 'back');
       const fx = 3.0, fby = vy + 0.4;
-      add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
-      prop('foosball', { x: fx, y: fby });
-      solid(fx, fby, 1.6, 0.8, 0.05);
-      poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
-      poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+      if (casino) {
+        // The roulette table: two watch the wheel from its ends.
+        prop('roulette', { x: fx, y: fby, w: 1.6, d: 0.8 });
+        solid(fx, fby, 1.6, 0.8, 0.05);
+        poi(fx - 0.45, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: Math.PI / 2 });
+        poi(fx + 2.05, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: -Math.PI / 2 });
+      } else {
+        add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
+        prop('foosball', { x: fx, y: fby });
+        solid(fx, fby, 1.6, 0.8, 0.05);
+        poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+        poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
+      }
       const ax = MW - 1.55, ay = MD + 2.6;
       add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
       prop('arcade', { x: ax, y: ay });
@@ -4047,6 +4074,8 @@
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slotWinning()) act = 'cheer';
+        // At the roulette wheel: watch it go round, cheer now and then.
+        if (q.act === 'roulette') act = Math.floor((Date.now() / 1000 + p.phase * 7) / 9) % 4 === 0 ? 'cheer' : 'watch';
         const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
         if (use) act = use.act;
         if (q.act === 'chat') {

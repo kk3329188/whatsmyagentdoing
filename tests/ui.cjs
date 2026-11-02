@@ -126,7 +126,7 @@ async function drawnLogos(target) {
   // Another decor: other materials and furniture, no outlines, fewer draw calls.
   const callsOf=()=>page.evaluate(()=>{office.gl.shadowMap.needsUpdate=true;office.draw();return office.gl.info.render.calls});
   const callsDefault=await callsOf();
-  for (const d of ['modern','tech','lux']) {
+  for (const d of ['modern','tech','lux','vegas']) {
     await openSettings(page);await page.click(`#decorSeg [data-v=${d}]`);
     await page.waitForFunction(d=>officeKind===`high:office:${d}`&&office?.loaded&&office.framesShown>4&&office.decor?.name===d&&office.tvScreen!==undefined,d,{timeout:30000});
     const calls=await callsOf();
@@ -135,7 +135,7 @@ async function drawnLogos(target) {
   await page.click('#decorSeg [data-v=default]');
   await page.waitForFunction(()=>officeKind==='high:office'&&office?.loaded&&office.framesShown>4&&!office.decor,{},{timeout:30000});
   await page.locator('#settingsMenu > summary').press('Escape');
-  check('the modern, tech and luxury decors build, draw fewer calls than the default, and switch back');
+  check('the modern, tech, luxury and casino decors build, draw fewer calls than the default, and switch back');
   await page.click('#pipBtn');await page.waitForFunction(()=>!!popout.win);
   const pip=context.pages().find(p=>p!==page);assert.ok(pip);
   const frame=await (async()=>{for(let i=0;i<100;i++){const f=pip.frames().find(f=>f.url().includes('?pip=1'));if(f)return f;await new Promise(r=>setTimeout(r,50))}throw Error('No compact frame')})();

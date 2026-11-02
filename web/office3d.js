@@ -113,7 +113,9 @@ let PENDING_SCENE = null;
 export class Office3D extends window.Office {
   constructor(root, opts) {
     PENDING_SCENE = (opts && opts.scene) || null;
-    super(root, opts);
+    // A decor may lay some rooms out its own way (decor.layout, office.js).
+    const decor = PENDING_SCENE ? null : decorOf(opts && opts.decor);
+    super(root, { ...opts, layout: (decor && decor.layout) || null });
     this.sceneDef = PENDING_SCENE;
     // Another decor (opts.decor, web/decor.js): built-in office only.
     this.decor = this.sceneDef ? null : decorOf(opts && opts.decor);
@@ -568,6 +570,7 @@ export class Office3D extends window.Office {
     const { W, D } = plan;
     const dark = this.pal.dark;
     DECOR = this.decor;
+    this.casinoWheels = []; this.casinoLamps = [];
 
     // floors
     const floor = (x, y, w, d, color, tex) => {
@@ -697,6 +700,8 @@ export class Office3D extends window.Office {
     }
     // Standing on the floor below (fitBelow): that floor's outside, plain.
     if (this.fitBelow) this.storeyBelow(wallMat);
+    // A decor's own touches: lights, signs (decor.extras), animated by decor.animate.
+    this.decorFx = this.decor && this.decor.extras ? this.decor.extras(this, wallMat) : null;
     // Framed prints between the back windows.
     (plan.art || []).forEach((a, n) => this.room.add(this.decor && this.decor.art ? this.decor.art(a.x, 1.45, a.w, a.w * 1.25, n) : this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
@@ -1179,6 +1184,12 @@ export class Office3D extends window.Office {
       // Unlocked by the office's experience.
       case 'tv': {
         this.room.add(this.tvSet(p));
+        break;
+      }
+      // The casino layout's tables (decor.js builds them).
+      case 'pokerTable': case 'pokerSeat': case 'roulette': {
+        const made = this.decor && this.decor.build && this.decor.build(p, this);
+        if (made) this.room.add(made);
         break;
       }
       case 'trophy': {
@@ -2317,6 +2328,7 @@ export class Office3D extends window.Office {
     }
     this.officeLife();
     this.animateTV();
+    if (this.decorFx && this.decor.animate) this.decor.animate(this.decorFx, this.t / 1000, !!this.closedNow, this);
     if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
     if (this.rods) this.rods.forEach((r, k) => { r.position.z = this.plan.props.find((q) => q.t === 'foosball').y + 0.4 + (fbPlaying ? Math.sin(t * 8 + k) * 0.06 : 0); r.rotation.z = fbPlaying ? Math.sin(t * 12 + k) * 0.6 : 0; });

@@ -779,6 +779,258 @@ const LUX = {
   },
 };
 
-export const DECORS = { modern: MODERN, tech: TECH, lux: LUX };
-export const DECOR_LIST = [{ id: 'default', label: '預設' }, { id: 'modern', label: MODERN.label }, { id: 'tech', label: TECH.label }, { id: 'lux', label: LUX.label }];
+// ---- the Las Vegas casino decor --------------------------------------------
+
+// The famous loud carpet: a deep ground, gold scrolls and stars, a few jewel
+// colours, busy enough to hide every stain.
+function casinoCarpet(dark, key, ground, acc) {
+  return canvasTex(`casino${key}${dark}`, 256, (c, s) => {
+    c.fillStyle = ground; c.fillRect(0, 0, s, s);
+    const r = rnd(181 + key.length);
+    // scrolls
+    c.lineWidth = 3;
+    for (let i = 0; i < 10; i++) {
+      const x = r() * s, y = r() * s, rad = 14 + r() * 22;
+      c.strokeStyle = i % 2 ? 'rgba(214,170,74,.55)' : acc;
+      for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) { c.beginPath(); c.arc(x + dx, y + dy, rad, r() * 6.28, r() * 6.28 + 3.6); c.stroke(); }
+    }
+    // stars and diamonds
+    for (let i = 0; i < 26; i++) {
+      const x = r() * s, y = r() * s, k = 3 + r() * 4;
+      c.fillStyle = i % 3 ? 'rgba(232,192,96,.8)' : acc;
+      c.beginPath(); c.moveTo(x, y - k); c.lineTo(x + k * 0.6, y); c.lineTo(x, y + k); c.lineTo(x - k * 0.6, y); c.closePath(); c.fill();
+    }
+    specks(c, s, 1500, ['rgba(255,255,255,.05)', 'rgba(0,0,0,.2)'], 1.4, 191);
+  });
+}
+// Walls: burgundy damask over a dark wainscot with a gold rail (laid in
+// metres: the rail runs at the same height along the whole wall).
+function damask(dark) {
+  return canvasTex(`damask${dark}`, 256, (c, s) => {
+    c.fillStyle = dark ? '#3a1219' : '#6b1d2a'; c.fillRect(0, 0, s, s);
+    c.fillStyle = dark ? 'rgba(214,170,74,.14)' : 'rgba(232,190,110,.22)';
+    for (const [x, y] of [[s / 4, s / 4], [3 * s / 4, 3 * s / 4], [3 * s / 4, s / 4 - s / 2 + s], [s / 4, 3 * s / 4]]) {
+      c.beginPath(); c.moveTo(x, y - 28); c.bezierCurveTo(x + 20, y - 10, x + 20, y + 10, x, y + 28); c.bezierCurveTo(x - 20, y + 10, x - 20, y - 10, x, y - 28); c.fill();
+      c.beginPath(); c.arc(x, y, 6, 0, 6.283); c.fill();
+    }
+    specks(c, s, 800, ['rgba(0,0,0,.12)', 'rgba(255,255,255,.04)'], 1.4, 201);
+  });
+}
+// Green baize, a little lighter in the middle, with the gold racetrack line.
+function baize(key, w, h, line) {
+  return canvasTex(key, 256, (c, s) => {
+    const g = c.createRadialGradient(s / 2, s / 2, 10, s / 2, s / 2, s * 0.6);
+    g.addColorStop(0, '#2f8a55'); g.addColorStop(1, '#1d5e39');
+    c.fillStyle = g; c.fillRect(0, 0, s, s);
+    specks(c, s, 2000, ['rgba(255,255,255,.04)', 'rgba(0,0,0,.08)'], 1.2, 211);
+    if (line) { c.strokeStyle = 'rgba(232,192,96,.8)'; c.lineWidth = 3; c.beginPath(); c.ellipse(s / 2, s / 2, s * 0.36, s * 0.3, 0, 0, 6.283); c.stroke(); }
+  }, { repeat: false });
+}
+// The roulette layout: zero, three rows of red and black numbers.
+const rouletteFelt = () => canvasTex('rlayout', 256, (c, s) => {
+  c.fillStyle = '#1f6a40'; c.fillRect(0, 0, s, s);
+  const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+  const x0 = s * 0.42, cw = (s * 0.55) / 12, ch = s * 0.22, y0 = s * 0.17;
+  c.fillStyle = '#1f8a4c'; c.fillRect(x0 - cw * 1.2, y0, cw * 1.2, ch * 3);
+  for (let col = 0; col < 12; col++) for (let row = 0; row < 3; row++) {
+    const n = col * 3 + (3 - row);
+    c.fillStyle = RED.has(n) ? '#b3262f' : '#16181b';
+    c.fillRect(x0 + col * cw + 1, y0 + row * ch + 1, cw - 2, ch - 2);
+  }
+  c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1; c.strokeRect(x0 - cw * 1.2, y0, cw * 13.2, ch * 3);
+}, { repeat: false });
+const wheelFace = () => canvasTex('rwheel', 256, (c, s) => {
+  const n = 37, R = s / 2;
+  for (let i = 0; i < n; i++) {
+    c.fillStyle = i === 0 ? '#1f8a4c' : i % 2 ? '#b3262f' : '#16181b';
+    c.beginPath(); c.moveTo(R, R); c.arc(R, R, R, (i / n) * 6.283, ((i + 1) / n) * 6.283); c.closePath(); c.fill();
+  }
+  c.fillStyle = '#6b3a1e'; c.beginPath(); c.arc(R, R, R * 0.55, 0, 6.283); c.fill();
+  c.strokeStyle = '#d9b25a'; c.lineWidth = 4; c.beginPath(); c.arc(R, R, R * 0.55, 0, 6.283); c.stroke();
+}, { repeat: false });
+// A neon sign: the words in a coloured glow on black glass.
+function neonSign(text, color, w, h) {
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = Math.round(512 * h / w);
+  const c = cv.getContext('2d');
+  c.fillStyle = 'rgba(10,8,14,.92)'; c.fillRect(0, 0, cv.width, cv.height);
+  c.font = `800 ${Math.round(cv.height * 0.55)}px ui-sans-serif, system-ui, sans-serif`;
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (const [blur, a] of [[28, 0.9], [12, 1]]) { c.shadowColor = color; c.shadowBlur = blur; c.fillStyle = color; c.globalAlpha = a; c.fillText(text, cv.width / 2, cv.height / 2); }
+  c.shadowBlur = 0; c.globalAlpha = 1; c.fillStyle = '#fff'; c.font = `800 ${Math.round(cv.height * 0.5)}px ui-sans-serif, system-ui, sans-serif`;
+  c.fillText(text, cv.width / 2, cv.height / 2);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, transparent: true, toneMapped: false }));
+}
+
+const VEGAS_C = {
+  oak: 0x7a2f22, oakDark: 0x141215, white: 0xf0e6d2, cream: 0xe9dcc0, char: 0xc9a04a, ink: 0x101012,
+  steel: 0xd4b05c, sage: 0x1e6b45, terra: 0x8e1b2b, mustard: 0xc9a04a, blue: 0x1f2e6b, blush: 0xcdae8c,
+  leaf: 0x4f7f4a, leafDark: 0x355e36, pot: 0x141215, glass: 0x9fc4dd,
+};
+const vegasMat = materials(new Map([
+  [VEGAS_C.oak, 'mahogany'], [VEGAS_C.oakDark, 'gloss'], [VEGAS_C.white, 'leather'], [VEGAS_C.cream, 'leather'],
+  [VEGAS_C.char, 'brass'], [VEGAS_C.ink, 'gloss'], [VEGAS_C.steel, 'brass'], [VEGAS_C.sage, 'velvet'],
+  [VEGAS_C.terra, 'velvet'], [VEGAS_C.blue, 'velvet'], [VEGAS_C.blush, 'velvet'], [VEGAS_C.pot, 'gloss'],
+]));
+LOOKS.mahogany = () => ({ color: 0xffffff, map: grain('mahogany', '#7a2f22', 'rgba(25,8,4,A)', 64), roughness: 0.32 });
+
+// The casino's tables, built for the casino layout (office.js): a Texas
+// hold'em table under its lamp, the seats round it, a roulette table.
+function vegasBuild(p, o) {
+  const M = vegasMat, C = VEGAS_C;
+  const mesh = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; };
+  if (p.t === 'pokerTable') {
+    const g = new THREE.Group(), rx = p.w / 2, rz = p.d / 2;
+    const oval = (r, h, mat, y) => { const m = mesh(new THREE.CylinderGeometry(1, 1, h, 48), mat, 0, y, 0); m.scale.set(r * rx, 1, r * rz); return m; };
+    g.add(mesh(new THREE.CylinderGeometry(0.22, 0.32, 0.66, 24), M(C.oakDark), 0, 0.33, 0));
+    g.add(oval(1.0, 0.1, M(C.oak), 0.7));                                   // the wooden apron
+    const rail = mesh(new THREE.TorusGeometry(1, 0.07, 10, 64), M(C.ink), 0, 0.77, 0);
+    rail.rotation.x = Math.PI / 2; rail.scale.set(rx * 0.97, rz * 0.94, 1); g.add(rail);  // padded leather rail
+    const felt = oval(0.9, 0.02, new THREE.MeshStandardMaterial({ map: baize('pokerfelt', 1, 1, true), roughness: 1 }), 0.76);
+    g.add(felt);
+    // the flop, turn and river, the pot, and a stack in front of each seat
+    const card = new THREE.MeshStandardMaterial({ color: 0xfaf8f2, roughness: 0.6 });
+    for (let k = 0; k < 5; k++) { const c = mesh(new THREE.BoxGeometry(0.09, 0.004, 0.13), card, -0.24 + k * 0.12, 0.774, 0); g.add(c); }
+    // a stack is one cylinder with stripes painted round it (cheap to draw)
+    const chipMats = [0xb3262f, 0x1f4fb3, 0x16181b, 0x1f8a4c, 0xf0e6d2].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
+    const chip = (x, z, n, col) => g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.009 * n, 14), chipMats[Math.abs(col) % 5], x, 0.772 + 0.0045 * n, z));
+    chip(0, 0.18, 7, 0); chip(0.07, 0.2, 4, 1);
+    for (const [x, z] of [[-0.6, -0.36], [0.6, -0.36], [-0.6, 0.36], [0.6, 0.36], [-0.95, 0], [0.95, 0]]) chip(x * 0.85, z * 0.85, 3 + Math.round(Math.abs(x * 5)) % 4, Math.round((x + z) * 7));
+    // the lamp over the table: a long green shade, glowing underneath
+    const shade = mesh(new THREE.BoxGeometry(1.5, 0.16, 0.42), new THREE.MeshStandardMaterial({ color: 0x1e5a3a, roughness: 0.5 }), 0, 1.85, 0);
+    shade.castShadow = false; g.add(shade);
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(1.42, 0.36), new THREE.MeshBasicMaterial({ color: 0xffe2a8 }));
+    under.rotation.x = Math.PI / 2; under.position.set(0, 1.77, 0); g.add(under);
+    (o.casinoLamps || (o.casinoLamps = [])).push(under);
+    for (const x of [-0.6, 0.6]) g.add(mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.5, 4), M(C.char), x, 2.18, 0));
+    g.position.set(p.x + rx, 0, p.y + rz);
+    return g;
+  }
+  if (p.t === 'pokerSeat') {
+    const g = new THREE.Group();
+    for (const [x, z] of [[-0.17, -0.17], [0.17, -0.17], [-0.17, 0.17], [0.17, 0.17]]) g.add(mesh(new THREE.CylinderGeometry(0.014, 0.01, 0.42, 8), M(C.char), x, 0.21, z));
+    const seat = mesh(new THREE.CylinderGeometry(0.24, 0.22, 0.1, 24), M(C.terra), 0, 0.46, 0); g.add(seat);
+    const back = mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.3, 24, 1, true, Math.PI * 0.65, Math.PI * 0.7), M(C.terra).clone(), 0, 0.66, 0);
+    back.material.side = THREE.DoubleSide; g.add(back);
+    g.rotation.y = p.yaw || 0;
+    g.position.set(p.x, 0, p.y);
+    return g;
+  }
+  if (p.t === 'roulette') {
+    const g = new THREE.Group();
+    g.add(mesh(new THREE.BoxGeometry(p.w, 0.8, p.d), M(C.oak), 0, 0.4, 0));
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.1, p.d - 0.1), new THREE.MeshStandardMaterial({ map: rouletteFelt(), roughness: 1 }));
+    top.rotation.x = -Math.PI / 2; top.position.y = 0.805; g.add(top);
+    // the wheel at the left end: a bowl, the turning numbers, a gold turret
+    const wx = -p.w / 2 + 0.36;
+    g.add(mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.1, 32), M(C.oak), wx, 0.85, 0));
+    const wheel = new THREE.Mesh(new THREE.CircleGeometry(0.29, 37), new THREE.MeshStandardMaterial({ map: wheelFace(), roughness: 0.35 }));
+    wheel.rotation.x = -Math.PI / 2; wheel.position.set(wx, 0.905, 0); g.add(wheel);
+    g.add(mesh(new THREE.ConeGeometry(0.05, 0.08, 12), M(C.char), wx, 0.94, 0));
+    const ball = mesh(new THREE.SphereGeometry(0.018, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 }), wx, 0.915, 0);
+    g.add(ball);
+    g.position.set(p.x + p.w / 2, 0, p.y + p.d / 2);
+    g.userData.roulette = { wheel, ball, wx };
+    (o.casinoWheels || (o.casinoWheels = [])).push(g.userData.roulette);
+    return g;
+  }
+  return null;
+}
+
+// Lights: a row of marquee bulbs chasing along the top of both walls (one
+// instanced mesh, its colours stepped ten times a second), neon signs.
+function vegasExtras(o) {
+  const { W, D } = o.plan, H = 2.4;
+  const spots = [];
+  for (let x = 0.3; x < W - 0.1; x += 0.32) spots.push([x, H - 0.12, 0.03]);
+  for (let z = 0.3; z < D - 0.1; z += 0.32) spots.push([0.03, H - 0.12, z]);
+  const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), spots.length);
+  const m = new THREE.Matrix4();
+  spots.forEach(([x, y, z], i) => { m.makeTranslation(x, y, z); bulbs.setMatrixAt(i, m); bulbs.setColorAt(i, new THREE.Color(0xffd77a)); });
+  o.room.add(bulbs);
+  const signs = [];
+  if (o.plan.floor !== 2) {
+    const add = (text, color, w, h, x, y, z, ry) => { const s = neonSign(text, color, w, h); s.position.set(x, y, z); s.rotation.y = ry; o.room.add(s); signs.push(s); };
+    add("TEXAS HOLD'EM", '#ff3fa4', 1.8, 0.36, 0.02, 1.85, 6.8, Math.PI / 2);
+    add('JACKPOT', '#ffd23f', 1.2, 0.3, 0.02, 2.1, 9.7, Math.PI / 2);
+  } else {
+    const add = (text, color, w, h, x, y, z, ry) => { const s = neonSign(text, color, w, h); s.position.set(x, y, z); s.rotation.y = ry; o.room.add(s); signs.push(s); };
+    add('VIP LOUNGE', '#3fd0ff', 1.6, 0.34, 0.02, 1.9, Math.max(2, D - 5), Math.PI / 2);
+  }
+  return { bulbs, n: spots.length, signs, step: -1, col: new THREE.Color() };
+}
+function vegasAnimate(fx, t, closed, o) {
+  // marquee: every third bulb lit, the pattern running along; dark after hours
+  const step = closed ? -2 : Math.floor(t * 9);
+  if (step !== fx.step) {
+    fx.step = step;
+    for (let i = 0; i < fx.n; i++) {
+      const on = !closed && (i + step) % 3 === 0;
+      fx.bulbs.setColorAt(i, fx.col.setHex(closed ? 0x2a2418 : on ? 0xfff0b8 : 0x8a6a2a));
+    }
+    fx.bulbs.instanceColor.needsUpdate = true;
+  }
+  // neon: a steady glow with a flicker now and then; low after hours
+  for (const [k, s] of fx.signs.entries()) {
+    const flick = !closed && Math.sin(t * 23 + k * 5) > 0.985 ? 0.4 : 1;
+    s.material.opacity = closed ? 0.3 : 0.95 * flick;
+  }
+  // the lamp over the poker table: off after hours, like the rest
+  for (const l of o.casinoLamps || []) l.material.color.setHex(closed ? 0x2a2418 : 0xffe2a8);
+  // the roulette wheels turn (and stop after hours), the ball runs the other way
+  for (const w of o.casinoWheels || []) {
+    if (closed) continue;
+    w.wheel.rotation.z = t * 1.2;
+    const a = -t * 2.3;
+    w.ball.position.set(w.wx + Math.cos(a) * 0.24, 0.915, Math.sin(a) * 0.24);
+  }
+}
+
+const VEGAS = {
+  name: 'vegas',
+  label: '拉斯維加斯',
+  layout: 'casino',
+  furniture: { palette: VEGAS_C, material: vegasMat, outline: false, pieces: LUX_PIECES },
+  material: (color) => vegasMat(color),
+  floors(dark) {
+    return {
+      wood: [casinoCarpet(dark, 'red', dark ? '#3a0f16' : '#5e1420', 'rgba(40,140,150,.6)'), 1.6, 1],
+      work: [casinoCarpet(dark, 'navy', dark ? '#0f1430' : '#1b2350', 'rgba(170,40,60,.6)'), 1.6, 1],
+      carpet: [casinoCarpet(dark, 'royal', dark ? '#1b0f2e' : '#2d1a52', 'rgba(214,170,74,.5)'), 1.4, 1],
+      tiles: [marble(true, true), 2.4, 0.16],
+      mat: [casinoCarpet(dark, 'green', dark ? '#0d2a1c' : '#14402a', 'rgba(214,170,74,.5)'), 1.4, 1],
+    };
+  },
+  wall(dark) {
+    const m = new THREE.MeshStandardMaterial({ map: damask(dark), roughness: 0.8 });
+    m.userData.worldUV = 1.2;
+    return m;
+  },
+  runner: false,
+  light: { exposure: 1.0, hemi: 0xffe2c4, sun: 0xffd6a0, env: 0.32 },
+  // Over each pod: a small gold chandelier, its crystals lit together.
+  pendant(THREE_, dark) {
+    const g = new THREE.Group();
+    const gold = vegasMat(VEGAS_C.char);
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.45, 5), gold);
+    rod.position.y = 0.4; g.add(rod);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 6, 28), gold);
+    ring.rotation.x = Math.PI / 2; ring.position.y = 0.1; g.add(ring);
+    const lit = new THREE.MeshBasicMaterial({ color: 0xffe7b0 });
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), lit);
+    g.add(glow);
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4, drop = new THREE.Mesh(new THREE.OctahedronGeometry(0.035), lit);
+      drop.position.set(Math.cos(a) * 0.22, 0.02, Math.sin(a) * 0.22); g.add(drop);
+    }
+    return { group: g, glow };
+  },
+  build: vegasBuild,
+  extras: vegasExtras,
+  animate: vegasAnimate,
+};
+
+export const DECORS = { modern: MODERN, tech: TECH, lux: LUX, vegas: VEGAS };
+export const DECOR_LIST = [{ id: 'default', label: '預設' }, { id: 'modern', label: MODERN.label }, { id: 'tech', label: TECH.label }, { id: 'lux', label: LUX.label }, { id: 'vegas', label: VEGAS.label }];
 export function decorOf(id) { return DECORS[id] || null; }
