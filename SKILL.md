@@ -118,3 +118,6 @@ v0.16（reskin）：人物 `web/chibi.js`（`makeChibi(look)`／`animateChibi(ri
 
 v0.17（office-v2）：1F 重新規劃——左後玻璃會議室（`MW×MD` 6×5、門在前方 glass 缺口）、右後辦公區（pod 從 `PX0 = WX + 1` 起、窗與招牌在辦公區上方、印表機＋機櫃在右後）、左中遊戲區（桌球、手足球、販賣機靠左牆）、前排一條街（左：門口休息區＋電話亭；中：你的桌＋秘書，地毯、背後書櫃；右：咖啡廳；街機在遊戲區）。兩層同 `W`／`D`（升降梯同位置）；樓上仍是舊配置（`RW = W - OW`）。地板改成 `plan.floors`（wood／carpet／tiles／work／mat／rug，2D `floorPatch()`、3D 依序疊放），白板 `plan.whiteboard`、牆上名牌 `plan.wallSign`、掛畫 `plan.art`；`decorate({ spots })` 可傳節日裝飾候選點。
 遊戲區老虎機：`SLOT_SYMS`／`SLOT_STRIPS`（每輪每個符號兩次）／`SLOT_PAY`；`stepSlot()`（坐在 slot poi 上的人每 3–4 秒拉一把、五輪由左到右停、中線左起 ≥3 同符號派彩、中獎時那人 act 變 cheer）；`slotScreen()`／`slotTopper()` 畫螢幕（3D 每 33ms 重畫 CanvasTexture、2D 縮小貼在機台正面 `onFront()`）；3D `slotRig`（燈條／SPIN 鍵／點光源中獎閃）；個性 gamer／owl 偏好 slot。點人物的 session 面板改成右下角小卡（`.hub-panel`），細節收進 `<details class="hub-more">`，開合狀態 `moreOpen` 跨重繪保留。
+
+裝潢（v0.18）：`web/decor.js` 的 `DECORS`（目前 `modern`＝極簡現代），設定面板「裝潢（3D）」切換、存 `wmad.decor`，只在 3D 內建辦公室有效（`officeKind` 帶 `:modern`）。裝潢給：家具色盤＋依材料角色的材質（`modernMat`：ash／walnut 木紋貼圖、烤漆、粉體塗裝金屬、鋁、布料 bumpMap 織紋）、部分家具自己的造型（`PIECES`：鋼架薄桌、網背椅、雪橇腳會議椅、低矮模組沙發、弧形落地燈…，沒列的照 furniture.js）、地板貼圖（大板磚／方塊地毯／毛氈／磨石子＋粗糙度）、牆（微水泥）、線型吊燈、燈光（曝光、半球光、環境光強度），不畫描邊、不鋪走道地毯。office3d.js 的 `soft()`／`outlineOf()` 在 build 時依 `DECOR` 改用裝潢材質、不描邊。貼圖每頁只畫一次共用、材質每色一個。
+省效能：3D 陰影圖每 3 格才重算（`shadowMap.autoUpdate = false`＋`shadowTick`）；9 人時每格 9.6ms→7.8ms（預設）、極簡現代 6.0ms（draw call 約少一半，因為沒有描邊網格）。

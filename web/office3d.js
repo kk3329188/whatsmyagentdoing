@@ -10,7 +10,14 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
 import { makeChibi, animateChibi, dressChibi, HAIR_STYLES } from './chibi.js';
-import { makeFurniture, soft, outlineOf, roundedBox } from './furniture.js';
+import { makeFurniture, soft as toonSoft, outlineOf as toonOutline, roundedBox } from './furniture.js';
+import { decorOf } from './decor.js';
+
+// The decor being built (web/decor.js; null = the cartoon look): plain
+// pieces take its materials, and it has no outlines. Set by build().
+let DECOR = null;
+const soft = (c) => (DECOR ? DECOR.material(c) : toonSoft(c));
+const outlineOf = (m) => (DECOR ? null : toonOutline(m));
 
 const STATUS_COLOR = {
   thinking: 0x8b6be6, tool: 0x3b8ee0, typing: 0x22a874, waiting: 0xe09412, error: 0xde4b40,
@@ -69,6 +76,8 @@ export class Office3D extends window.Office {
     PENDING_SCENE = (opts && opts.scene) || null;
     super(root, opts);
     this.sceneDef = PENDING_SCENE;
+    // Another decor (opts.decor, web/decor.js): built-in office only.
+    this.decor = this.sceneDef ? null : decorOf(opts && opts.decor);
     this.compact = !!opts?.compact;
     this.canvas.classList.add('office-overlay');
     try {
@@ -84,6 +93,11 @@ export class Office3D extends window.Office {
     this.minFrameMs = 30;
     this.gl.shadowMap.enabled = true;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    // The shadows are drawn again every third frame only (draw()): they are
+    // a second pass over the whole room, and people's shadows still move
+    // ten times a second.
+    this.gl.shadowMap.autoUpdate = false;
+    this.shadowTick = 0;
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.06;
@@ -120,6 +134,13 @@ export class Office3D extends window.Office {
     this.sun.shadow.bias = -0.0006;
     this.sun.shadow.normalBias = 0.02;
     this.scene.add(this.sun, this.sun.target);
+    const lit = this.decor && this.decor.light;
+    if (lit) {
+      this.gl.toneMappingExposure = lit.exposure;
+      this.hemi.color.setHex(lit.hemi);
+      this.sun.color.setHex(lit.sun);
+      if (this.scene.environment) this.scene.environmentIntensity = lit.env;
+    }
 
     this.actors = new Map();     // person key -> { obj, mixer, actions, current, head, cup }
     this.screens = new Map();    // desk -> emissive screen mesh
@@ -157,7 +178,7 @@ export class Office3D extends window.Office {
     const get = (url) => new Promise((ok, fail) => loader.load(url, ok, undefined, fail));
     // People (chibi.js) and the office furniture (furniture.js) are made in
     // code; scene packs may still bring model files of their own.
-    this.models = makeFurniture();
+    this.models = makeFurniture(this.decor);
     if (this.sceneDef) {
       const extra = [...new Set(this.sceneDef.props.filter((p) => p.f && !this.models[p.f]).map((p) => p.f))];
       const base = await Promise.all(extra.map((f) => get(`/assets/kenney/furniture/${f}.glb`).then((g) => [f, g.scene])));
@@ -500,6 +521,7 @@ export class Office3D extends window.Office {
     this.boardShown = -1; this.tables = [];
     const { W, D } = plan;
     const dark = this.pal.dark;
+    DECOR = this.decor;
 
     // floors
     const floor = (x, y, w, d, color, tex) => {
@@ -558,13 +580,14 @@ export class Office3D extends window.Office {
     }, 256);
     // Floors region by region, as the plan lays them out; each later one
     // sits a hair above the one before.
-    const texFor = { wood: [planks, 3], carpet: [carpet, 1.5], tiles: [tiles, 1], work: [workTiles, 1.5] };
+    // A decor lays its own floors: [texture, metres per picture, roughness].
+    const texFor = this.decor ? this.decor.floors(dark) : { wood: [planks, 3], carpet: [carpet, 1.5], tiles: [tiles, 1], work: [workTiles, 1.5] };
     (plan.floors || []).forEach((f, i) => {
       const lift = 0.0005 * i;
       if (texFor[f.kind]) {
-        const [base, size] = texFor[f.kind];
+        const [base, size, rough = 0.95] = texFor[f.kind];
         const tex = base.clone(); tex.needsUpdate = true; tex.repeat.set(f.w / size, f.d / size);
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.d), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.d), new THREE.MeshStandardMaterial({ map: tex, roughness: rough }));
         m.rotation.x = -Math.PI / 2; m.position.set(f.x + f.w / 2, lift, f.y + f.d / 2); m.receiveShadow = true;
         this.room.add(m);
       } else if (f.kind === 'mat') {
@@ -575,7 +598,7 @@ export class Office3D extends window.Office {
         this.place('rugRectangle', f.x, f.y, f.w, f.d, { y0: 0.004, h: 0.016, stretch: true });
       }
       // A runner down each aisle of the work area.
-      if (f.kind === 'work') for (const a of plan.aisles || []) {
+      if (f.kind === 'work' && !(this.decor && this.decor.runner === false)) for (const a of plan.aisles || []) {
         const len = f.d - 1.5;
         const runner = new THREE.Mesh(new THREE.PlaneGeometry(a.w, len), soft(dark ? 0x7a4f3e : 0xcd8a68));
         runner.rotation.x = -Math.PI / 2; runner.position.set(a.x + a.w / 2, 0.006, f.y + 1.2 + len / 2); runner.receiveShadow = true;
@@ -587,7 +610,7 @@ export class Office3D extends window.Office {
 
     // walls: back (z=0) with windows, left (x=0) with a door
     const wallCol = dark ? 0x4a4640 : 0xf4efe6;
-    const wallMat = new THREE.MeshStandardMaterial({ color: wallCol, roughness: 0.95 });
+    const wallMat = this.decor ? this.decor.wall(dark) : new THREE.MeshStandardMaterial({ color: wallCol, roughness: 0.95 });
     const T = 0.12;
     let cx = -T;
     const sky = skyNow();
@@ -1105,6 +1128,13 @@ export class Office3D extends window.Office {
       case 'pendant': {
         const xs = p.span ? [p.x - p.span / 2, p.x + p.span / 2] : [p.x];
         for (const x of xs) {
+          if (this.decor && this.decor.pendant) {
+            const { group, glow } = this.decor.pendant(THREE, dark);
+            group.position.set(x, 1.95, p.y);
+            this.room.add(group);
+            this.pendantLamps.push({ x, y: p.y, glow });
+            continue;
+          }
           const g = new THREE.Group();
           const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.55, 4), soft(0x2b2420));
           cord.position.y = 0.27; g.add(cord);
@@ -2205,6 +2235,7 @@ export class Office3D extends window.Office {
     this.controls.update();
     this.steerView();
     this.followAbove();
+    if (this.shadowTick++ % 3 === 0) this.gl.shadowMap.needsUpdate = true;
     this.gl.render(this.scene, this.camera);
 
     // overlay: bubbles + name tags, reusing the 2D drawing code

@@ -11,11 +11,14 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { OUTLINE } from './chibi.js';
 
-const C = {
+const BASE_C = {
   oak: 0xc9a47e, oakDark: 0x8d6a4c, white: 0xe9e3d7, cream: 0xf3ecdf, char: 0x3a3e45, ink: 0x23262b,
   steel: 0xa3a9b0, sage: 0x8fb08c, terra: 0xcd8a68, mustard: 0xd7b260, blue: 0x7f9dbf, blush: 0xd8a6a2,
   leaf: 0x5e9a5b, leafDark: 0x447a46, pot: 0xd8c8b0, glass: 0x9fc4dd,
 };
+// The look being built (makeFurniture(decor) swaps it for a decor's).
+let C = BASE_C;
+let look = { material: null, outline: true };
 
 // Cartoon shading, softer than the people's so big surfaces never go muddy.
 let ramp = null;
@@ -32,7 +35,7 @@ export function soft(c) {
   mats.set(key, m);
   return m;
 }
-const mat = soft;
+const mat = (c) => (look.material ? look.material(c) : soft(c));
 const T = 0.009; // outline thickness
 
 // One shape with its outline; dims come from the geometry's own bounds.
@@ -42,7 +45,7 @@ function piece(g, geo, color, x, y, z, { rx = 0, ry = 0, rz = 0, outline = true,
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   grp.add(mesh);
-  if (outline) {
+  if (outline && look.outline) {
     geo.computeBoundingBox();
     const s = geo.boundingBox.getSize(new THREE.Vector3());
     const o = new THREE.Mesh(geo, OUTLINE);
@@ -315,13 +318,25 @@ export function outlineOf(mesh) {
 
 export { rb as roundedBox };
 
-export function makeFurniture() {
+// A decor (web/decor.js) brings its own colours, materials and, for some
+// pieces, its own way of making them; the rest are made as here.
+export function makeFurniture(decor = null) {
+  const f = decor && decor.furniture;
+  C = (f && f.palette) || BASE_C;
+  look = { material: (f && f.material) || null, outline: !f || f.outline !== false };
+  const kit = { box, cyl, ball, piece, C, THREE };
   const out = {};
-  for (const [name, build] of Object.entries(B)) {
-    const g = new THREE.Group();
-    build(g);
-    g.userData.made = true;
-    out[name] = g;
+  try {
+    for (const [name, build] of Object.entries(B)) {
+      const g = new THREE.Group();
+      const own = f && f.pieces && f.pieces[name];
+      if (own) own(g, kit); else build(g);
+      g.userData.made = true;
+      out[name] = g;
+    }
+  } finally {
+    C = BASE_C;
+    look = { material: null, outline: true };
   }
   return out;
 }

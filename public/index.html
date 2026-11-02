@@ -428,6 +428,13 @@
             <span class="setting-label" id="sceneLabel" data-t="scene"></span>
             <div class="seg" id="sceneSeg" role="group" aria-labelledby="sceneLabel"></div>
           </div>
+          <div class="setting-group" id="decorGroup">
+            <span class="setting-label" id="decorLabel">裝潢（3D）</span>
+            <div class="seg" id="decorSeg" role="group" aria-labelledby="decorLabel">
+              <button data-v="default">預設</button>
+              <button data-v="modern">極簡現代</button>
+            </div>
+          </div>
           <div class="setting-group">
             <span class="setting-label" id="filterLabel" data-t="agents"></span>
             <div class="seg" id="agentSeg" role="group" aria-labelledby="filterLabel">
@@ -866,6 +873,17 @@ companyInput.addEventListener('input', () => { clearTimeout(companyTimer); compa
 document.getElementById('qualSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   state.quality = b.dataset.v; store.set('quality', state.quality); hideTip(); syncControls(); makeOffice();
+});
+state.decor = ['default', 'modern'].includes(store.get('decor', 'default')) ? store.get('decor', 'default') : 'default';
+const decorSeg = document.getElementById('decorSeg');
+const syncDecor = () => decorSeg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.v === state.decor); b.setAttribute('aria-pressed', b.dataset.v === state.decor); });
+syncDecor();
+decorSeg.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === state.decor) return;
+  state.decor = b.dataset.v; store.set('decor', state.decor); syncDecor();
+  // A decor is 3D: picking one switches to 3D.
+  if (state.quality !== 'high') { state.quality = 'high'; store.set('quality', 'high'); syncControls(); }
+  hideTip(); makeOffice();
 });
 document.getElementById('viewSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1347,12 +1365,14 @@ function setLoading(on, text) {
 async function makeOffice() {
   const high = state.quality === 'high';
   const scene = high && state.scene !== 'office' && state.scenes.some((x) => x.id === state.scene) ? state.scene : 'office';
-  const kind = high ? `high:${scene}` : 'mid';
+  // Another decor (web/decor.js) is 3D and the built-in office only.
+  const decor = high && scene === 'office' && state.decor !== 'default' ? state.decor : null;
+  const kind = high ? `high:${scene}${decor ? `:${decor}` : ''}` : 'mid';
   if (kind === officeKind) return;
   officeKind = kind;
   setLoading(true, high ? L.loading3d : L.loading2d);
   let Cls = window.Office;
-  const opts = { ...officeOpts, showAgent: state.showAgent };
+  const opts = { ...officeOpts, showAgent: state.showAgent, decor };
   if (high) {
     try {
       Cls = (await import('/office3d.js')).Office3D;
