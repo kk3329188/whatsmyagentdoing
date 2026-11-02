@@ -196,6 +196,14 @@
   .office-gl, .office-overlay { position: absolute; inset: 0; }
   .floor-view { position: absolute; inset: 0; }
   .floor-view[hidden] { display: none; }
+  /* The floors stacked like the building: 2F sits right over 1F and covers
+     it. Looking at 1F, 2F floats up out of sight; picking 2F lowers it back
+     down. Only the floor you picked is drawn once the move is over. */
+  .office.stack .floor-view { background: var(--panel); transition: transform .6s cubic-bezier(.3, 1.25, .5, 1), box-shadow .6s; }
+  .office.stack .floor-view[data-floor="2"] { z-index: 2; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+  .office.stack[data-floor="1"] .floor-view[data-floor="2"] { transform: translateY(calc(-100% - 40px)); box-shadow: none; pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
+  .office.stack.settle .floor-view { transition: none; }
+  @media (prefers-reduced-motion: reduce) { .office.stack .floor-view { transition: none; } }
   .view-pad { position: absolute; right: 10px; bottom: 30px; display: grid; grid-template-columns: repeat(3, 26px); grid-template-rows: repeat(3, 26px); gap: 2px; opacity: .7; transition: opacity .15s; z-index: 2; }
   .view-pad:hover, .view-pad:focus-within { opacity: 1; }
   .view-pad button { all: unset; display: grid; place-items: center; border-radius: 6px; font-size: 11px; cursor: pointer; color: var(--ink); background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
@@ -695,10 +703,7 @@ function render() {
       floorPrev = floors;
       const on = (n) => officeList.filter((s) => (floors.get(s.key) || { floor: 1 }).floor === n);
       office2.showAgent = state.showAgent;
-      floorRoots[0].hidden = state.floor !== 1;
-      floorRoots[1].hidden = state.floor !== 2;
-      office.setVisible(officeMode && !poppedOut && state.floor === 1);
-      office2.setVisible(officeMode && !poppedOut && state.floor === 2);
+      stackFloors(officeMode && !poppedOut);
       office.update(on(1), { moved });
       office2.update(on(2), { moved });
       renderFloorTabs(floors, officeList);
@@ -706,6 +711,7 @@ function render() {
       floorRoots[0].hidden = false;
       floorRoots[1].hidden = true;
       floorTabs.hidden = true;
+      officeEl.classList.remove('stack');
       office.setVisible(officeMode && !poppedOut);
       office.update(officeList);
     }
@@ -973,6 +979,30 @@ floorTabs.hidden = true;
 officeEl.parentNode.insertBefore(floorTabs, officeEl);
 state.floor = store.get('floor', 1) === 2 ? 2 : 1;
 let floorPrev = new Map();
+// The floors are stacked (CSS .office.stack): 2F lies over 1F, floats up
+// when you look at 1F and comes down when you pick 2F. While it moves both
+// floors draw; after that only the one you see does, as before.
+const FLOOR_MOVE_MS = 700;
+let floorMoveUntil = 0, floorMoveTimer = 0;
+function stackFloors(show) {
+  // The first time (page load, a new renderer) the floors take their places
+  // without moving.
+  if (!officeEl.classList.contains('stack')) {
+    officeEl.classList.add('stack', 'settle');
+    officeEl.dataset.floor = state.floor;
+    requestAnimationFrame(() => requestAnimationFrame(() => officeEl.classList.remove('settle')));
+  }
+  if (officeEl.dataset.floor !== String(state.floor)) {
+    officeEl.dataset.floor = state.floor;
+    floorMoveUntil = Date.now() + FLOOR_MOVE_MS;
+    clearTimeout(floorMoveTimer);
+    floorMoveTimer = setTimeout(() => { if (state.data) render(); }, FLOOR_MOVE_MS + 20);
+  }
+  const moving = Date.now() < floorMoveUntil;
+  floorRoots[0].hidden = floorRoots[1].hidden = false;
+  office.setVisible(show && (state.floor === 1 || moving));
+  office2.setVisible(show && (state.floor === 2 || moving));
+}
 function renderFloorTabs(floors, list) {
   const count = (n) => {
     const c = { work: 0, wait: 0, error: 0, done: 0, idle: 0 };
@@ -982,7 +1012,7 @@ function renderFloorTabs(floors, list) {
   const KINDS = [['wait', '✋', '等你'], ['error', '⚠', '出錯'], ['work', '🖥', '工作中'], ['done', '✓', '剛做完'], ['idle', '🛋', '休息']];
   const chips = (c) => KINDS.filter(([k]) => c[k]).map(([k, i, t]) => `<span class="fchip" data-z="${k}">${i} ${c[k]} ${t}</span>`).join('') || '<span class="fchip">沒人</span>';
   const html = [1, 2].map((n) => `<button type="button" data-floor="${n}" class="${state.floor === n ? 'on' : ''}"><b>${n === 1 ? '1F 辦公室' : '2F 休息層'}</b>${chips(count(n))}</button>`).join('')
-    + '<span class="hub-muted">按 1／2 換樓層・閒置的在 2F，等你和出錯的一定在 1F</span>';
+    + '<span class="hub-muted">按 1／2 換樓層（2F 降下來蓋住 1F、看 1F 時 2F 浮上去）・閒置的在 2F，等你和出錯的一定在 1F</span>';
   if (floorTabs.innerHTML !== html) floorTabs.innerHTML = html;
   floorTabs.hidden = false;
 }

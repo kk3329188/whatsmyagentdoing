@@ -85,6 +85,30 @@ async function drawnLogos(target) {
   assert.equal(await page.locator('#agentLegend').isVisible(),false);
   await page.reload();await stable(page);assert.equal(await page.locator('#showAgent').isChecked(),false);
   await openSettings(page);await page.check('#showAgent');check('badge toggle hides markers and legend and persists across reload');
+  // The floors are stacked: 2F lies over 1F. Looking at 1F, 2F has floated up
+  // out of the box; picking 2F lowers it to cover 1F. One floor at a time.
+  const floorsNow=()=>page.evaluate(()=>{const box=officeEl.getBoundingClientRect();return {floor:state.floor,stack:officeEl.classList.contains('stack'),visible:[office.visible,office2.visible],
+   top:floorRoots.map(r=>r.getBoundingClientRect().top-box.top),h:box.height,z:floorRoots.map(r=>+getComputedStyle(r).zIndex||0)}});
+  const settled=(n)=>page.waitForFunction(n=>state.floor===n&&office.visible===(n===1)&&office2.visible===(n===2),n,{timeout:5000});
+  await page.keyboard.press('1');await settled(1);
+  let fl=await floorsNow();
+  assert.ok(fl.stack&&Math.abs(fl.top[0])<2&&fl.top[1]<=-fl.h,JSON.stringify(fl));
+  assert.ok(fl.z[1]>fl.z[0],'2F lies over 1F');
+  await page.click('.floor-tabs [data-floor="2"]');
+  const mid=await page.evaluate(async()=>{await new Promise(r=>setTimeout(r,250));const box=officeEl.getBoundingClientRect();return {t:floorRoots[1].getBoundingClientRect().top-box.top,v:[office.visible,office2.visible]}});
+  assert.ok(mid.t<-1&&mid.t>-fl.h&&mid.v.every(Boolean),`2F on its way down, both drawn: ${JSON.stringify(mid)}`);
+  await settled(2);fl=await floorsNow();
+  assert.ok(Math.abs(fl.top[1])<2&&Math.abs(fl.top[0])<2,'2F came down over 1F');
+  // Someone on 2F can be clicked open (the demo keeps everyone downstairs, so move one up).
+  await page.evaluate(()=>{Hub.close&&Hub.close();OfficeFloors.split=((split)=>(list,prev,o)=>{const r=split(list,prev,o);const f=r.floors.get('claude:done');if(f)r.floors.set('claude:done',{...f,floor:2});return r})(OfficeFloors.split);render()});
+  const who=await page.waitForFunction(()=>{const p=office2.people.get('claude:done');if(!p||p.path.length)return null;const r=office2.canvas.getBoundingClientRect();const h=office2.hit.find(b=>b.key==='claude:done');return h&&{x:r.left+(h.x0+h.x1)/2,y:r.top+(h.y0+h.y1)/2}},{},{timeout:20000}).then(h=>h.jsonValue());
+  await page.mouse.click(who.x,who.y);
+  await page.waitForFunction(()=>{const p=document.querySelector('.hub-panel');return p&&!p.hidden&&p.getClientRects().length>0});
+  await page.evaluate(()=>Hub.close&&Hub.close());
+  await page.keyboard.press('1');await settled(1);fl=await floorsNow();
+  assert.ok(fl.top[1]<=-fl.h,'2F floated back up');
+  await page.reload();await stable(page);
+  check('floors stack: 2F comes down over 1F and floats up again, both drawn only while it moves, people upstairs open on click');
   await page.click('#qualSeg [data-v=high]');
   await page.waitForFunction(()=>officeKind==='high:office'&&office?.loaded&&office.framesShown>4,{},{timeout:30000});
   assert.deepEqual([...new Set(await badges(page))].sort(),['Cl','Cx','G']);
