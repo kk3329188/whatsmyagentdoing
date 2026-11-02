@@ -817,12 +817,14 @@
         }
       }
       if (un.has('tv')) {
-        const vx = lx + 3.2, vy = ly + 2.2;
-        if (fits(vx, vy, 1.1, 0.4)) {
-          add(vx + 0.55 + vy + 0.2, () => this.tv(vx, vy));
-          prop('tv', { x: vx, y: vy });
-          solid(vx, vy, 1.1, 0.4);
-          poi(vx + 0.55, Math.min(D - 0.3, vy + 1.05), 'tv', 'back', { zone: 'idle' });
+        // Hung on the left wall by the sofa's end, between the notice board
+        // and the lift, its screen to the room: whoever watches stands in
+        // front of it, turned to the wall.
+        const vx = 0, vy = ly + 1.05, vw = 0.9;
+        if (fits(0.55, vy + 0.2, 0.3, 0.5)) {
+          add(vx + 0.1 + vy + vw / 2, () => this.tv(vx, vy, '+x', vw));
+          prop('tv', { x: vx, y: vy, face: '+x', wall: true, w: vw });
+          poi(0.75, vy + vw / 2, 'tv', 'back', { zone: 'idle', yaw: -Math.PI / 2 });
         }
       }
       if (un.has('trophy') && fits(0.1, MD + 0.3, 0.45, 0.9)) {
@@ -3693,14 +3695,24 @@
     }
 
     // Unlocked furniture.
-    tv(x, y) {
+    // A TV on its low cabinet, the screen facing +y (front) or, with face
+    // '+x', facing the room from the left wall (hung on it, over a floating
+    // cabinet). The picture changes now and then.
+    tv(x, y, face = '+y', w = 1.1) {
       const pal = this.pal;
-      this.box(x, y, 0, 1.1, 0.4, 0.42, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR);
-      this.box(x + 0.08, y + 0.14, 0.42, 0.94, 0.1, 0.62, '#222', '#1a1a1e', '#2a2a2e');
-      // The picture changes now and then.
+      const P = (a, b, z) => this.iso(a, b, z);
       const k = Math.floor(this.t / 2600) % 4;
       const col = ['#3b8ee0', '#5f9a4c', '#c96442', '#8b6be6'][k];
-      const P = (a, b, z) => this.iso(a, b, z);
+      if (face === '+x') {
+        const h = (w - 0.06) * 0.5625 + 0.06;
+        this.box(x + 0.01, y, 1.0, 0.05, w, h, '#222', '#1a1a1e', '#2a2a2e');
+        const sx = x + 0.065, y0 = y + 0.03, y1 = y + w - 0.03, z0 = 1.03, z1 = 1.0 + h - 0.03;
+        this.poly([P(sx, y0, z0), P(sx, y1, z0), P(sx, y1, z1), P(sx, y0, z1)], col);
+        this.poly([P(sx, y0, (z0 + z1) / 2), P(sx, (y0 + y1) / 2, (z0 + z1) / 2), P(sx, (y0 + y1) / 2, z1), P(sx, y0, z1)], 'rgba(255,255,255,.18)');
+        return;
+      }
+      this.box(x, y, 0, 1.1, 0.4, 0.42, this.shade(pal.deskTop, -5), pal.deskL, pal.deskR);
+      this.box(x + 0.08, y + 0.14, 0.42, 0.94, 0.1, 0.62, '#222', '#1a1a1e', '#2a2a2e');
       const sy = y + 0.245;
       this.poly([P(x + 0.13, sy, 0.47), P(x + 0.97, sy, 0.47), P(x + 0.97, sy, 0.99), P(x + 0.13, sy, 0.99)], col);
       this.poly([P(x + 0.13, sy, 0.47), P(x + 0.55, sy, 0.47), P(x + 0.55, sy, 0.7), P(x + 0.13, sy, 0.7)], 'rgba(255,255,255,.18)');
@@ -5356,7 +5368,7 @@
   // to (a yaw for 3D, front/back for the 2D drawing).
   function orientSeats(pois, props) {
     const centres = props.filter((o) => /^(roundTable|meetingTable|coffeeTable|tv)$/.test(o.t)).map((o) => (
-      o.t === 'roundTable' ? { x: o.x, y: o.y } : o.t === 'tv' ? { x: o.x + 0.55, y: o.y + 0.2 } : { x: o.x + (o.w || 0) / 2, y: o.y + (o.d || 0) / 2 }));
+      o.t === 'roundTable' ? { x: o.x, y: o.y } : o.t === 'tv' ? (o.face === '+x' ? { x: o.x + 0.2, y: o.y + (o.w || 1.1) / 2 } : { x: o.x + 0.55, y: o.y + 0.2 }) : { x: o.x + (o.w || 0) / 2, y: o.y + (o.d || 0) / 2 }));
     for (const q of pois) {
       if (!q.sit || q.yaw != null || q.pair) continue;
       let best = null, bd = 2.4;

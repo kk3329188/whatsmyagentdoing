@@ -67,6 +67,45 @@ function skyNow() {
   return { sky: 0x1d2747, sun: 0.9, amb: 1.05, night: true };
 }
 
+// The lounge TV's programmes, by turns: football, the news, a nature film,
+// a cartoon (the same palette as the 2D TV's picture).
+function tvProgramme(c, w, h, t) {
+  const k = Math.floor(t / 2.6) % 4, f = t % 2.6;
+  if (k === 0) { // football: the pitch, a ball going back and forth, the score
+    c.fillStyle = '#3f8f45'; c.fillRect(0, 0, w, h);
+    for (let i = 0; i < 6; i++) { c.fillStyle = i % 2 ? '#3a8540' : '#449a4a'; c.fillRect(i * w / 6, 0, w / 6, h); }
+    c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = 1.5;
+    c.strokeRect(6, 8, w - 12, h - 16); c.beginPath(); c.moveTo(w / 2, 8); c.lineTo(w / 2, h - 8); c.stroke();
+    c.beginPath(); c.arc(w / 2, h / 2, 12, 0, 6.283); c.stroke();
+    const bx = w / 2 + Math.sin(t * 2.2) * (w * 0.35), by = h / 2 + Math.sin(t * 3.1) * h * 0.25;
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(bx, by, 3, 0, 6.283); c.fill();
+    c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(4, 4, 46, 12);
+    c.fillStyle = '#fff'; c.font = 'bold 9px sans-serif'; c.fillText('TPE 1 - 0', 7, 13);
+  } else if (k === 1) { // the news: a desk, a presenter, a ticker
+    c.fillStyle = '#1d3b6e'; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#2b5aa8'; c.fillRect(w * 0.55, 10, w * 0.38, h * 0.45);
+    c.fillStyle = '#f2c9a0'; c.beginPath(); c.arc(w * 0.3, h * 0.42, 11, 0, 6.283); c.fill();
+    c.fillStyle = '#2b2f3a'; c.fillRect(w * 0.18, h * 0.52, w * 0.24, h * 0.3);
+    c.fillStyle = '#c0392b'; c.fillRect(0, h - 18, w, 18);
+    c.fillStyle = '#fff'; c.font = 'bold 9px sans-serif';
+    c.fillText('BREAKING · 今日新聞 · 天氣晴 · ', w - ((t * 40) % (w * 2.2)), h - 6);
+  } else if (k === 2) { // a nature film: mountains at sunset, a bird
+    const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#f6a35c'); g.addColorStop(1, '#f9d58b');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#ffe9b0'; c.beginPath(); c.arc(w * 0.7, h * 0.55, 13, 0, 6.283); c.fill();
+    c.fillStyle = '#7a5a8c'; c.beginPath(); c.moveTo(0, h); c.lineTo(w * 0.3, h * 0.45); c.lineTo(w * 0.55, h); c.fill();
+    c.fillStyle = '#5b4470'; c.beginPath(); c.moveTo(w * 0.35, h); c.lineTo(w * 0.75, h * 0.5); c.lineTo(w, h * 0.8); c.lineTo(w, h); c.fill();
+    const bx = (f / 2.6) * w * 1.2 - 10, by = h * 0.3 + Math.sin(t * 6) * 2;
+    c.strokeStyle = '#3a2a40'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(bx - 5, by - 2); c.lineTo(bx, by); c.lineTo(bx + 5, by - 2); c.stroke();
+  } else { // a cartoon: a bouncing face on bright stripes
+    for (let i = 0; i < 8; i++) { c.fillStyle = i % 2 ? '#8b6be6' : '#a58bf0'; c.fillRect(0, i * h / 8, w, h / 8); }
+    const by = h * 0.62 - Math.abs(Math.sin(t * 4)) * h * 0.35;
+    c.fillStyle = '#ffd23f'; c.beginPath(); c.arc(w / 2, by, 14, 0, 6.283); c.fill();
+    c.fillStyle = '#2b2f3a'; c.fillRect(w / 2 - 6, by - 4, 3, 4); c.fillRect(w / 2 + 3, by - 4, 3, 4);
+    c.beginPath(); c.arc(w / 2, by + 3, 5, 0, Math.PI); c.stroke();
+  }
+}
+
 // The scene pack for the instance being constructed. The base constructor
 // builds the floor plan before our fields exist, so it's passed this way.
 let PENDING_SCENE = null;
@@ -248,6 +287,13 @@ export class Office3D extends window.Office {
     const m = new THREE.Mesh(drawn && small >= 0.05 ? roundedBox(w, h, d, 0.018) : new THREE.BoxGeometry(w, h, d), mat);
     if (drawn && small >= 0.03 && opts.shadow !== false) outlineOf(m);
     m.position.set(x + w / 2, z + h / 2, y + d / 2);
+    // A patterned wall (a decor's material with userData.worldUV = metres
+    // per picture) is laid along the wall instead of stretched over each box.
+    if (mat.userData && mat.userData.worldUV) {
+      const k = mat.userData.worldUV, pos = m.geometry.attributes.position, uv = m.geometry.attributes.uv;
+      for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + m.position.x + pos.getZ(i) + m.position.z) / k, (pos.getY(i) + m.position.y) / k);
+      uv.needsUpdate = true;
+    }
     m.castShadow = opts.shadow !== false;
     m.receiveShadow = true;
     (opts.group || this.room).add(m);
@@ -514,7 +560,7 @@ export class Office3D extends window.Office {
     this.scene.add(this.room);
     this.screens.clear();
     this.blinkers = [];
-    this.tvScreen = this.neonMat = this.liftDoors = this.slotRig = null;
+    this.tvScreen = this.tvShow = this.neonMat = this.liftDoors = this.slotRig = null;
     this.appliances = [];
     this.pendantLamps = [];
     this.boardAt = this.jamLight = null;
@@ -652,7 +698,7 @@ export class Office3D extends window.Office {
     // Standing on the floor below (fitBelow): that floor's outside, plain.
     if (this.fitBelow) this.storeyBelow(wallMat);
     // Framed prints between the back windows.
-    (plan.art || []).forEach((a, n) => this.room.add(this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
+    (plan.art || []).forEach((a, n) => this.room.add(this.decor && this.decor.art ? this.decor.art(a.x, 1.45, a.w, a.w * 1.25, n) : this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
     for (const ps of plan.posters) {
       const m = this.textPlane(ps.text, ps.color, 0.9, 1.0);
@@ -730,6 +776,50 @@ export class Office3D extends window.Office {
     m.rotation.x = -Math.PI / 2;
     m.renderOrder = 1;
     return m;
+  }
+
+  // The lounge TV: a low cabinet and a slim TV whose screen is part of it
+  // and shows a little programme (tvProgramme). Built facing +z, then turned:
+  // p.face '+x' is the one hung on the left wall over a floating cabinet.
+  tvSet(p) {
+    const g = new THREE.Group(), wall = !!p.wall, W = p.w || 1.1;
+    const pw = W - 0.1, ph = (pw - 0.06) * 0.5625 + 0.06;
+    if (!wall) this.place('cabinetTelevision', -0.55, -0.2, 1.1, 0.4, { h: 0.42, group: g });
+    const body = soft(0x1b1d22);
+    const panelY = wall ? 1.0 + ph / 2 : 0.42 + 0.08 + ph / 2, panelZ = wall ? -0.18 : -0.02;
+    const panel = new THREE.Mesh(roundedBox(pw, ph, 0.035, 0.012), body);
+    panel.position.set(0, panelY, panelZ); panel.castShadow = true; g.add(panel);
+    outlineOf(panel);
+    if (!wall) {
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.03), body);
+      neck.position.set(0, 0.47, panelZ - 0.01);
+      const foot = new THREE.Mesh(roundedBox(0.34, 0.015, 0.16, 0.006), body);
+      foot.position.set(0, 0.43, panelZ);
+      g.add(neck, foot);
+    }
+    // The picture: a small canvas drawn a few times a second (animateTV).
+    const cv = document.createElement('canvas');
+    cv.width = 160; cv.height = 90;
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(pw - 0.06, ph - 0.06), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    screen.position.set(0, panelY, panelZ + 0.019);
+    g.add(screen);
+    this.tvScreen = screen;
+    this.tvShow = { cv, ctx: cv.getContext('2d'), tex, at: -1 };
+    if (p.face === '+x') { g.rotation.y = Math.PI / 2; g.position.set(p.x + 0.2, 0, p.y + W / 2); }
+    else g.position.set(p.x + 0.55, 0, p.y + 0.2);
+    return g;
+  }
+
+  // What is on: four programmes in turn, a new one every 2.6 s, redrawn
+  // about six times a second (a 160 × 90 picture: next to nothing to draw).
+  animateTV() {
+    const s = this.tvShow;
+    if (!s || this.t - s.at < 160) return;
+    s.at = this.t;
+    tvProgramme(s.ctx, s.cv.width, s.cv.height, this.t / 1000);
+    s.tex.needsUpdate = true;
   }
 
   // A framed print: soft abstract shapes in the office palette.
@@ -1088,9 +1178,7 @@ export class Office3D extends window.Office {
         break;
       // Unlocked by the office's experience.
       case 'tv': {
-        this.place('cabinetTelevision', p.x, p.y, 1.1, 0.4, { h: 0.42 });
-        this.place('televisionModern', p.x + 0.1, p.y + 0.08, 0.9, 0.25, { y0: 0.42, h: 0.6 });
-        this.tvScreen = this.boxMesh(p.x + 0.17, p.y + 0.34, 0.5, 0.76, 0.005, 0.44, 0x000000, { emissive: 0x3b8ee0, ei: 0.8, shadow: false });
+        this.room.add(this.tvSet(p));
         break;
       }
       case 'trophy': {
@@ -2157,6 +2245,9 @@ export class Office3D extends window.Office {
     this.sun.intensity = sky.sun;
     this.hemi.intensity = sky.amb;
     // After hours: dim the room, a desk lamp over everyone still working.
+    // The room's own soft light (scene.environment) goes down with them.
+    if (this.envBase == null) this.envBase = this.scene.environmentIntensity ?? 1;
+    this.scene.environmentIntensity = this.envBase * (this.closedNow ? 0.35 : 1);
     if (this.closedNow) { this.sun.intensity *= 0.3; this.hemi.intensity *= 0.4; }
     this.deskLamps(!!this.closedNow);
     if (this.windowMat) {
@@ -2225,7 +2316,7 @@ export class Office3D extends window.Office {
       this.liftDoors[1].position.z = ly + 0.275 + open;
     }
     this.officeLife();
-    if (this.tvScreen) this.tvScreen.material.emissive.setHSL((Math.floor(t / 2.6) * 0.27) % 1, 0.6, 0.45);
+    this.animateTV();
     if (this.neonMat) { this.neonMat.emissive.setHSL((t * 0.11) % 1, 1, 0.55); this.neonMat.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.25; }
     const fbPlaying = this.plan.pois.filter((q) => q.pair === 'fb' && q.taken).length === 2;
     if (this.rods) this.rods.forEach((r, k) => { r.position.z = this.plan.props.find((q) => q.t === 'foosball').y + 0.4 + (fbPlaying ? Math.sin(t * 8 + k) * 0.06 : 0); r.rotation.z = fbPlaying ? Math.sin(t * 12 + k) * 0.6 : 0; });
