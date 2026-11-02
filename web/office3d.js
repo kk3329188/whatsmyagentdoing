@@ -570,7 +570,7 @@ export class Office3D extends window.Office {
     const { W, D } = plan;
     const dark = this.pal.dark;
     DECOR = this.decor;
-    this.casinoWheels = []; this.casinoLamps = [];
+    this.casinoWheels = []; this.casinoLamps = []; this.casinoSpin = []; this.casinoDice = []; this.casinoSlots = [];
 
     // floors
     const floor = (x, y, w, d, color, tex) => {
@@ -895,6 +895,11 @@ export class Office3D extends window.Office {
 
   buildProp(p) {
     const dark = this.pal.dark;
+    // A decor may build some pieces its own way (decor.handles, decor.build).
+    if (this.decor && this.decor.build && this.decor.handles && this.decor.handles.includes(p.t)) {
+      const made = this.decor.build(p, this);
+      if (made) { this.room.add(made); return; }
+    }
     switch (p.t) {
       case 'panel':
         this.boxMesh(p.x, p.y, 0, p.w, p.d, p.h, new THREE.Color(p.color).getHex(), { rough: 1 });
@@ -1186,12 +1191,9 @@ export class Office3D extends window.Office {
         this.room.add(this.tvSet(p));
         break;
       }
-      // The casino layout's tables (decor.js builds them).
-      case 'pokerTable': case 'pokerSeat': case 'roulette': {
-        const made = this.decor && this.decor.build && this.decor.build(p, this);
-        if (made) this.room.add(made);
+      // The casino layout's tables are built by its decor (decor.handles).
+      case 'pokerTable': case 'pokerSeat': case 'roulette': case 'bigSix': case 'blackjack': case 'craps':
         break;
-      }
       case 'trophy': {
         this.boxMesh(p.x, p.y, 0, 0.45, 0.9, 1.25, dark ? 0x6e533b : 0xa8825a);
         const gold = new THREE.MeshStandardMaterial({ color: 0xf2c230, metalness: 0.8, roughness: 0.25 });

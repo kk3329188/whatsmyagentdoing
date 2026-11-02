@@ -1545,7 +1545,7 @@ test('desks: the pod dividers are low enough to see whoever sits across (and the
   for (const p of o.plan.props.filter((x) => x.t === 'planter')) assert.equal(p.h, panels[0].h, 'planters on top of the divider');
 });
 
-test('the casino layout: a hold\'em table with six seats turned to it and a roulette wheel instead of ping-pong and foosball', () => {
+test('the casino layout: a hold\'em table with six seats turned to it, a roulette wheel and a big six instead of ping-pong, foosball and the arcade', () => {
   const o = load(true);
   o.layout = 'casino';
   o.plan = o.buildPlan(0);
@@ -1563,9 +1563,33 @@ test('the casino layout: a hold\'em table with six seats turned to it and a roul
     assert.ok(Math.abs(Math.atan2(Math.sin(q.yaw - want), Math.cos(q.yaw - want))) < 1e-6);
     assert.ok(!o.plan.grid.blocked(q.x, q.y), 'a seat can be reached');
   }
-  assert.equal(o.plan.pois.filter((q) => q.act === 'roulette').length, 2);
+  // two by the roulette table, one at the big six wheel (where the arcade was)
+  assert.equal(t('bigSix').length, 1);
+  assert.equal(t('arcade').length, 0);
+  assert.equal(o.plan.pois.filter((q) => q.act === 'roulette').length, 3);
   // the plain office is unchanged
   const plain = load(true);
   assert.equal(plain.plan.props.filter((p) => p.t === 'pingpong').length, 1);
   assert.equal(plain.plan.pois.filter((q) => q.act === 'poker').length, 0);
+});
+
+test('upstairs in the casino: a blackjack table with three seats and a craps table instead of foosball and the gym', () => {
+  const o = loadFloor(2);
+  o.layout = 'casino';
+  o.plan = o.buildPlan(0);
+  const t = (k) => o.plan.props.filter((p) => p.t === k);
+  assert.equal(t('blackjack').length, 1);
+  assert.equal(t('craps').length, 1);
+  assert.equal(t('foosball').length + t('treadmill').length, 0);
+  const seats = o.plan.pois.filter((q) => q.act === 'poker');
+  assert.equal(seats.length, 3);
+  for (const q of [...seats, ...o.plan.pois.filter((q) => q.act === 'roulette')]) assert.ok(!o.plan.grid.blocked(q.x, q.y), `${q.act} at ${q.x},${q.y} can be reached`);
+});
+
+test('the phone booth stands by the left wall, out of the street, and its seat can be reached', () => {
+  const o = load(true);
+  const b = o.plan.props.find((p) => p.t === 'booth');
+  assert.ok(b.x < 0.5, 'against the left wall');
+  const q = o.plan.pois.find((p) => p.act === 'phone');
+  assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length > 0);
 });

@@ -699,7 +699,7 @@
       // ---- the play corner: ping-pong, foosball, vending machines (or, in
       // the casino layout, a Texas hold'em table and a roulette wheel)
       const casino = this.layout === 'casino';
-      const tx = 1.5, ty = MD + 1.1;
+      const tx = 2.1, ty = MD + 1.1; // clear of the phone booth by the left wall
       let pp = null; // the ping-pong table's line of play (the ball follows it)
       if (casino) {
         // Six seats round an oval table, each turned to its middle.
@@ -743,10 +743,17 @@
         poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
       }
       const ax = MW - 1.55, ay = MD + 2.6;
-      add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
-      prop('arcade', { x: ax, y: ay });
-      solid(ax, ay, 0.7, 0.7);
-      poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
+      if (casino) {
+        // The big six: a money wheel on a stand; whoever is in front watches it go.
+        prop('bigSix', { x: ax, y: ay });
+        solid(ax, ay, 0.7, 0.7);
+        poi(ax + 0.35, ay + 1.15, 'roulette', 'back', { zone: 'idle', yaw: Math.PI });
+      } else {
+        add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
+        prop('arcade', { x: ax, y: ay });
+        solid(ax, ay, 0.7, 0.7);
+        poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
+      }
       // A modern video slot machine, with a stool in front of it.
       const slx = MW - 0.75, sly = MD + 2.6;
       add(slx + 0.45 + sly + 0.35, () => this.slotMachine(slx, sly));
@@ -756,8 +763,9 @@
       prop('barStool', { x: slx + 0.45, y: sly + 1.0 });
       poi(slx + 0.45, sly + 1.0, 'slot', 'back', { sit: 0.47, zone: 'idle', yaw: Math.PI });
 
-      // ---- the front street, left: the phone booth
-      const bx = WX - 1.6, by = FY + 0.3;
+      // ---- the phone booth: in the corner by the left wall, past the trophy
+      // case, its door to the front (out of the way of the street and lounge)
+      const bx = 0.05, by = MD + 1.4;
       this.booth(add, bx, by);
       prop('booth', { x: bx, y: by });
       solid(bx - 0.05, by - 0.05, 1.4, 0.1, 0.03);
@@ -924,9 +932,10 @@
         { id: 'door', x: 0.9, y: D - 1.2, hint: '先不顯示，有事再出現' },
       ];
 
+      // On the meeting room's side wall (the phone booth stands where they were).
       const posters = [
-        { y: MD + 1.4, color: '#c96442', text: 'SHIP IT' },
-        { y: MD + 2.6, color: '#10a37f', text: 'TESTS ✓' },
+        { y: 1.6, color: '#c96442', text: 'SHIP IT' },
+        { y: 2.8, color: '#10a37f', text: 'TESTS ✓' },
       ].filter((ps) => !board || ps.y + 0.9 < board.y || ps.y > board.y + board.w);
       const art = [];
       {
@@ -973,16 +982,22 @@
           poi(x + 0.35, y + 0.75, 'yoga', 'front', { zone: 'idle' });
         });
       }
-      // gym: two treadmills and a weight bench
+      // gym: two treadmills and a weight bench (in the casino, a craps table
+      // with people round it instead)
+      const casino = this.layout === 'casino';
       const tx = 2.4, ty = OD + 1.0;
-      for (let k = 0; k < 2; k++) {
+      if (casino) {
+        prop('craps', { x: tx, y: ty, w: 2.6, d: 1.1 });
+        solid(tx, ty, 2.6, 1.1, 0.05);
+        for (const [sx, sy, yaw] of [[tx - 0.4, ty + 0.55, Math.PI / 2], [tx + 3.0, ty + 0.55, -Math.PI / 2], [tx + 0.7, ty + 1.5, Math.PI], [tx + 1.9, ty + 1.5, Math.PI]]) poi(sx, sy, 'roulette', 'back', { zone: 'idle', yaw });
+      } else for (let k = 0; k < 2; k++) {
         const x = tx + k * 1.2;
         add(x + 0.35 + ty + 0.7, () => this.treadmill(x, ty));
         prop('treadmill', { x, y: ty });
         solid(x, ty, 0.7, 0.35);
         poi(x + 0.35, ty + 0.8, 'run', 'back', { zone: 'idle', lift: 0.16 });
       }
-      for (let k = 0; k < 2; k++) {
+      if (!casino) for (let k = 0; k < 2; k++) {
         const x = tx + 2.6 + k * 1.05, y = ty + 0.1;
         add(x + y, () => this.yogaMat(x, y, k ? '#c9a24c' : '#8b6be6'));
         prop('yoga', { x, y, color: k ? '#c9a24c' : '#8b6be6' });
@@ -997,11 +1012,23 @@
         solid(2.0, fy + 0.6, 0.75, 0.75);
         poi(2.4, fy + 1.75, 'vending', 'back', { zone: 'idle' });
         const fx = 3.6, fby = fy + 0.6;
-        add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
-        prop('foosball', { x: fx, y: fby });
-        solid(fx, fby, 1.6, 0.8, 0.05);
-        poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
-        poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
+        if (casino) {
+          // A blackjack table: the dealer's side to the back, three seats round the curve.
+          prop('blackjack', { x: fx, y: fby, w: 1.6, d: 0.8 });
+          solid(fx, fby, 1.6, 0.8, 0.03);
+          const cx = fx + 0.8, cy = fby + 0.1;
+          for (const [sx, sy] of [[fx + 0.15, fby + 1.05], [fx + 0.8, fby + 1.3], [fx + 1.45, fby + 1.05]]) {
+            const yaw = Math.atan2(cx - sx, cy - sy);
+            prop('pokerSeat', { x: sx, y: sy, yaw });
+            poi(sx, sy, 'poker', 'back', { sit: 0.47, zone: 'idle', yaw });
+          }
+        } else {
+          add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
+          prop('foosball', { x: fx, y: fby });
+          solid(fx, fby, 1.6, 0.8, 0.05);
+          poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
+          poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb', zone: 'idle' });
+        }
       }
       for (const [x, y] of [[0.45, 0.45], [OW - 0.45, 0.45], [OW - 0.45, D - 0.6]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
       const logo = this.company ? { x: Math.max(0.6, OW / 2 - 1.6), w: 3.2 } : null;
