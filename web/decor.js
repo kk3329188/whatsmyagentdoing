@@ -898,9 +898,18 @@ function vegasBuild(p, o) {
     rail.rotation.x = Math.PI / 2; rail.scale.set(rx * 0.97, rz * 0.94, 1); g.add(rail);  // padded leather rail
     const felt = oval(0.9, 0.02, new THREE.MeshStandardMaterial({ map: baize('pokerfelt', 1, 1, true), roughness: 1 }), 0.76);
     g.add(felt);
-    // the flop, turn and river, the pot, and a stack in front of each seat
-    const card = new THREE.MeshStandardMaterial({ color: 0xfaf8f2, roughness: 0.6 });
-    for (let k = 0; k < 5; k++) { const c = mesh(new THREE.BoxGeometry(0.09, 0.004, 0.13), card, -0.24 + k * 0.12, 0.774, 0); g.add(c); }
+    // The game being played (office.js stepPoker) shows here: the board,
+    // two cards in front of each player (yours face up), the pot, the dealer
+    // button. Updated by vegasAnimate when the game changes.
+    const cardGeo = new THREE.PlaneGeometry(0.09, 0.13);
+    const flat = (x, z, rot = 0) => { const m = new THREE.Mesh(cardGeo, new THREE.MeshStandardMaterial({ map: cardBack(), roughness: 0.6 })); m.rotation.set(-Math.PI / 2, 0, rot); m.position.set(x, 0.773, z); m.visible = false; g.add(m); return m; };
+    const board = [0, 1, 2, 3, 4].map((k) => flat(-0.24 + k * 0.12, 0));
+    const HOLE = [[-0.6, -0.34], [0.6, -0.34], [-0.6, 0.34], [0.6, 0.34], [-0.86, 0], [0.86, 0]];
+    const hole = HOLE.map(([x, z]) => [flat(x - 0.05, z, 0.15), flat(x + 0.05, z, -0.15)]);
+    const potMat = new THREE.MeshStandardMaterial({ color: 0xb3262f, roughness: 0.5 });
+    const pot = mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 16), potMat, 0, 0.78, 0.17); pot.visible = false; g.add(pot);
+    const button = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.01, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }), 0, 0.776, 0); button.visible = false; g.add(button);
+    o.casinoPoker = { board, hole, pot, button, HOLE, sig: '' };
     // a stack is one cylinder with stripes painted round it (cheap to draw)
     const chipMats = [0xb3262f, 0x1f4fb3, 0x16181b, 0x1f8a4c, 0xf0e6d2].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
     const chip = (x, z, n, col) => g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.009 * n, 14), chipMats[Math.abs(col) % 5], x, 0.772 + 0.0045 * n, z));
@@ -1033,6 +1042,25 @@ function vegasBuild(p, o) {
   }
   return null;
 }
+// Playing cards: one small picture per card, drawn when first needed.
+const SUIT_CH = '♠♥♦♣', RANK_CH = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+function cardFace(c) {
+  return canvasTex(`card${c}`, 64, (g, s) => {
+    const red = Math.floor(c / 13) === 1 || Math.floor(c / 13) === 2;
+    g.fillStyle = '#fbfaf6'; g.fillRect(0, 0, s, s);
+    g.fillStyle = red ? '#c0262f' : '#16181b';
+    g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(RANK_CH[c % 13], s / 2, s * 0.32);
+    g.font = '28px sans-serif'; g.fillText(SUIT_CH[Math.floor(c / 13)], s / 2, s * 0.72);
+  }, { repeat: false });
+}
+const cardBack = () => canvasTex('cardback', 64, (g, s) => {
+  g.fillStyle = '#fbfaf6'; g.fillRect(0, 0, s, s);
+  g.fillStyle = '#8e1b2b'; g.fillRect(4, 4, s - 8, s - 8);
+  g.strokeStyle = 'rgba(255,215,130,.8)'; g.lineWidth = 2;
+  for (let k = -s; k < s; k += 8) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + s, s); g.stroke(); }
+}, { repeat: false });
+
 // The big six's face: 24 coloured slots with their payouts.
 const bigSixFace = () => canvasTex('bigsix', 256, (c, s) => {
   const R = s / 2, n = 24, vals = ['1', '2', '1', '5', '1', '2', '10', '1', '2', '1', '5', '★', '1', '2', '1', '5', '1', '20', '2', '1', '5', '1', '2', '★'];
@@ -1138,6 +1166,34 @@ function vegasAnimate(fx, t, closed, o) {
     texCache.get('reels').needsUpdate = true;
   }
   for (const [k, top] of (o.casinoSlots || []).entries()) top.material.color.setHSL(closed ? 0.9 : (0.9 + Math.sin(t * 2 + k) * 0.05) % 1, closed ? 0.3 : 0.9, closed ? 0.12 : 0.55);
+  // the hold'em table shows the game (office.js stepPoker): only redrawn when it changes
+  const P = o.casinoPoker, game = o.poker;
+  if (P) {
+    const sig = !game || !game.hands ? 'none' : `${game.stage}|${game.board.length}|${[...game.folded].join()}|${Object.keys(game.hands).join()}|${game.pot}|${(game.seats || []).join()}`;
+    if (sig !== P.sig) {
+      P.sig = sig;
+      const show = game && game.hands && game.stage !== 'idle';
+      P.board.forEach((m, k) => {
+        m.visible = !!show && k < game.board.length;
+        if (m.visible) m.material.map = cardFace(game.board[k]), m.material.needsUpdate = true;
+      });
+      P.hole.forEach((pair, i) => {
+        const key = show ? (game.seats || [])[i] : null, cards = key && game.hands[key];
+        const inHand = !!cards && !game.folded.has(key);
+        pair.forEach((m, k) => {
+          m.visible = inHand;
+          if (!inHand) return;
+          const up = key === 'me' || game.stage === 'done';
+          m.material.map = up ? cardFace(cards[k]) : cardBack(); m.material.needsUpdate = true;
+        });
+      });
+      P.pot.visible = !!show && game.pot > 0;
+      if (P.pot.visible) { const h = Math.min(0.2, 0.01 + game.pot / 2000); P.pot.scale.y = h; P.pot.position.y = 0.772 + h / 2; }
+      const d = show && game.order && game.order.length ? (game.seats || []).indexOf(game.order[game.order.length - 1]) : -1;
+      P.button.visible = d >= 0;
+      if (d >= 0) P.button.position.set(P.HOLE[d][0] * 0.75 + 0.12, 0.776, P.HOLE[d][1] * 0.75);
+    }
+  }
   // the lamp over the poker table: off after hours, like the rest
   for (const l of o.casinoLamps || []) l.material.color.setHex(closed ? 0x2a2418 : 0xffe2a8);
   // the roulette wheels turn (and stop after hours), the ball runs the other way

@@ -81,6 +81,56 @@
     tv: ['watch', 'laugh', 'watch'],
     poker: ['think', 'sip', 'laugh', 'think', 'chat', 'scroll'],
   };
+  // ---- Texas hold'em at the casino's poker table ----------------------------
+  // Whoever sits there plays, you too (your stand-in sits down when you stop
+  // by a free seat). Pretend chips only: 1000 each, kept on this page and
+  // nowhere else, topped up when someone runs out. Cards are 0..51: rank
+  // c % 13 (0 = 2 … 12 = ace), suit c / 13.
+  const HAND_NAMES = ['高牌', '一對', '兩對', '三條', '順子', '同花', '葫蘆', '四條', '同花順'];
+  const RANKS = '23456789TJQKA', SUITS = '♠♥♦♣';
+  const cardName = (c) => `${RANKS[c % 13].replace('T', '10')}${SUITS[Math.floor(c / 13)]}`;
+  // The best five of up to seven cards, as a number (bigger wins) and a name.
+  function handScore(cards) {
+    const byRank = Array.from({ length: 13 }, () => 0), bySuit = [[], [], [], []];
+    for (const c of cards) { byRank[c % 13]++; bySuit[Math.floor(c / 13)].push(c % 13); }
+    // The top card of the best run of five (the wheel A-2-3-4-5 counts as 5-high), or -1.
+    const straightTop = (ranks) => {
+      const has = new Set(ranks);
+      for (let top = 12; top >= 4; top--) {
+        let ok = true;
+        for (let k = 0; k < 5; k++) if (!has.has(top - k)) { ok = false; break; }
+        if (ok) return top;
+      }
+      return [12, 0, 1, 2, 3].every((r) => has.has(r)) ? 3 : -1;
+    };
+    const score = (cat, ...ks) => ks.slice(0, 5).reduce((a, k) => a * 15 + k, cat) * Math.pow(15, Math.max(0, 5 - ks.length));
+    const flush = bySuit.find((x) => x.length >= 5);
+    if (flush) { const t = straightTop(flush); if (t >= 0) return { score: score(8, t), name: HAND_NAMES[8] }; }
+    const groups = byRank.map((n, r) => [n, r]).filter(([n]) => n).sort((a, b) => b[0] - a[0] || b[1] - a[1]);
+    const desc = (except = []) => groups.map(([, r]) => r).filter((r) => !except.includes(r)).sort((a, b) => b - a);
+    if (groups[0][0] === 4) return { score: score(7, groups[0][1], ...desc([groups[0][1]])), name: HAND_NAMES[7] };
+    const trips = groups.filter(([n]) => n === 3).map(([, r]) => r), pairs = groups.filter(([n]) => n === 2).map(([, r]) => r);
+    if (trips.length && (trips.length > 1 || pairs.length)) return { score: score(6, trips[0], trips.length > 1 ? trips[1] : pairs[0]), name: HAND_NAMES[6] };
+    if (flush) return { score: score(5, ...[...flush].sort((a, b) => b - a)), name: HAND_NAMES[5] };
+    const st = straightTop(byRank.map((n, r) => (n ? r : -1)).filter((r) => r >= 0));
+    if (st >= 0) return { score: score(4, st), name: HAND_NAMES[4] };
+    if (trips.length) return { score: score(3, trips[0], ...desc([trips[0]])), name: HAND_NAMES[3] };
+    if (pairs.length >= 2) return { score: score(2, pairs[0], pairs[1], ...desc([pairs[0], pairs[1]])), name: HAND_NAMES[2] };
+    if (pairs.length) return { score: score(1, pairs[0], ...desc([pairs[0]])), name: HAND_NAMES[1] };
+    return { score: score(0, ...desc()), name: HAND_NAMES[0] };
+  }
+  const POKER = { stack: 1000, small: 10, big: 20, raise: 40, thinkMs: [1200, 2600], youMs: 25_000, streetMs: 1400, showMs: 4500 };
+  // How good a hand looks to a player who can't see the others' cards (0..1).
+  function handFeel(hole, board) {
+    if (!board.length) {
+      const [a, b] = hole.map((c) => c % 13), hi = Math.max(a, b);
+      return Math.min(1, (a === b ? 0.55 + a / 30 : 0.15 + hi / 26 + (Math.floor(hole[0] / 13) === Math.floor(hole[1] / 13) ? 0.08 : 0) + (Math.abs(a - b) === 1 ? 0.05 : 0)));
+    }
+    const cat = Math.floor(handScore([...hole, ...board]).score / Math.pow(15, 5));
+    return Math.min(1, 0.12 + cat * 0.17);
+  }
+  window.OfficePoker = { handScore, handFeel, cardName, HAND_NAMES };
+
   // ---- The slot machine: a Seth-style "pay anywhere" game ------------------
   // 6 columns x 5 rows. Eight or more of one symbol anywhere on the screen
   // pay; they burst, everything above falls, new symbols drop in, and it goes
@@ -708,7 +758,7 @@
         solid(tx + 0.1, ty, pw, pd, 0.02);
         for (const [sx, sy] of [[cx - 0.6, ty - 0.42], [cx + 0.6, ty - 0.42], [cx - 0.6, ty + pd + 0.42], [cx + 0.6, ty + pd + 0.42], [tx - 0.32, cy], [tx + pw + 0.52, cy]]) {
           prop('pokerSeat', { x: sx, y: sy, yaw: Math.atan2(cx - sx, cy - sy) });
-          poi(sx, sy, 'poker', Math.cos(Math.atan2(cx - sx, cy - sy)) >= 0 ? 'front' : 'back', { sit: 0.47, zone: 'idle', yaw: Math.atan2(cx - sx, cy - sy) });
+          poi(sx, sy, 'poker', Math.cos(Math.atan2(cx - sx, cy - sy)) >= 0 ? 'front' : 'back', { sit: 0.47, zone: 'idle', yaw: Math.atan2(cx - sx, cy - sy), table: 'holdem' });
         }
         floors.push({ kind: 'mat', x: tx - 0.8, y: ty - 0.9, w: pw + 1.8, d: pd + 1.8 });
       } else {
@@ -2261,7 +2311,7 @@
       const k = key.toLowerCase();
       if ('wasd'.includes(k) && k.length === 1) { if (down) this.meKeys.add(k); else this.meKeys.delete(k); return true; }
       if (!down) return false;
-      if (k === 'r') { if (me.atSlot) this.meOffSlot(); me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
+      if (k === 'r') { if (me.atSlot) this.meOffSlot(); this.meOffPoker(); me.path = this.plan.grid.path(me.x, me.y, this.plan.boss.seat.x, this.plan.boss.seat.y); me.homing = true; return true; }
       if (k === ' ' || k === 'e') { const p = this.meNear(); if (p) this.onHover(p.s, null, true); return !!p; }
       return false;
     }
@@ -2289,6 +2339,7 @@
       if (sig !== me.keySig) { me.keySig = sig; me.detour = null; } // a new direction: a new way round
       if (dx || dy) {
         if (me.atSlot) this.meOffSlot();
+        if (me.atPoker) this.meOffPoker();
         me.path = []; me.homing = false; me.seated = false;
         const ax = this.screenAxes();
         let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
@@ -2323,6 +2374,7 @@
         return;
       }
       if (me.path.length) {
+        if (!me.homing) me.seated = false; // walking somewhere: up from your desk
         const nx = me.path[0], ddx = nx.x - me.x, ddy = nx.y - me.y, d = Math.hypot(ddx, ddy), v = SPEED * dt;
         me.walkFace = ddx + ddy >= 0 ? 'front' : 'back';
         if (d <= v) { me.x = nx.x; me.y = nx.y; me.path.shift(); } else { me.x += ddx / d * v; me.y += ddy / d * v; }
@@ -2343,6 +2395,158 @@
           me.event = { text: '來一把 🎰', at: Date.now(), zone: 'held' };
         }
       } else me.slotWait = 0;
+      // Stopped by a free seat at the poker table: sit in.
+      if (!me.atPoker && !me.atSlot && !me.seated) {
+        const seat = this.holdemSeats().find((s) => (!s.taken || s.taken === 'me') && Math.hypot(me.x - s.x, me.y - s.y) < 0.7);
+        if (seat) {
+          me.pokerWait = (me.pokerWait || 0) + dt;
+          if (me.pokerWait >= 0.4) {
+            seat.taken = 'me'; me.atPoker = seat; me.pokerWait = 0;
+            me.x = seat.x; me.y = seat.y; me.path = [];
+            me.event = { text: '發牌吧 🃏', at: Date.now(), zone: 'held' };
+          }
+        } else me.pokerWait = 0;
+      }
+    }
+
+    // ---- the hold'em table (casino layout) --------------------------------
+
+    holdemSeats() { return (this.plan && this.plan.pois || []).filter((q) => q.table === 'holdem'); }
+
+    // Who is sitting in each seat right now (null = empty), you included.
+    pokerSitters() {
+      return this.holdemSeats().map((q) => {
+        if (q.taken === 'me') return this.me && this.me.atPoker === q && !this.me.moving ? 'me' : null;
+        const p = q.taken && this.people.get(q.taken);
+        return p && !p.leaving && p.poi === q && !p.path.length ? p.key : null;
+      });
+    }
+
+    bodyOf(key) { return key === 'me' ? this.me : this.people.get(key); }
+
+    say(key, text) { const b = this.bodyOf(key); if (b) b.event = { text, at: Date.now(), zone: 'held' }; }
+
+    // One step of the game: deal when two or more sit, play the streets,
+    // show down, pay the pot, start again.
+    stepPoker() {
+      if (this.layout !== 'casino' || this.floor !== 1) return;
+      const seats = this.pokerSitters(), now = Date.now();
+      const g = this.poker || (this.poker = { stage: 'idle', stacks: {}, dealer: 0, at: now, log: [] });
+      g.seats = seats;
+      const sitting = seats.filter(Boolean);
+      for (const k of sitting) if (!(g.stacks[k] > 0)) g.stacks[k] = POKER.stack;
+      if (g.stage === 'idle' || g.stage === 'done') {
+        if (sitting.length >= 2 && now - g.at > (g.stage === 'done' ? POKER.showMs : 1500)) this.pokerDeal(g, seats);
+        else if (sitting.length < 2) g.stage = 'idle';
+        return;
+      }
+      // Someone got up: they fold.
+      for (const k of Object.keys(g.hands)) if (!seats.includes(k) && !g.folded.has(k)) { g.folded.add(k); g.queue = g.queue.filter((x) => x.key !== k); }
+      const live = Object.keys(g.hands).filter((k) => !g.folded.has(k));
+      if (live.length <= 1) { this.pokerShowdown(g, live); return; }
+      if (g.pause > now) return;
+      const turn = g.queue[0];
+      if (!turn) { this.pokerStreet(g); return; }
+      if (turn.key === 'me') {
+        if (!g.youSince) g.youSince = now;
+        if (now - g.youSince > POKER.youMs) this.pokerAct(g.toCall(turn.key) ? 'fold' : 'call');
+        return;
+      }
+      if (!turn.at) turn.at = now + POKER.thinkMs[0] + Math.random() * (POKER.thinkMs[1] - POKER.thinkMs[0]);
+      if (now < turn.at) return;
+      // A bot decides by how its hand feels, with a little bluff.
+      const feel = handFeel(g.hands[turn.key], g.board), owe = g.toCall(turn.key), r = Math.random();
+      let act = 'call';
+      if (!turn.noRaise && feel > 0.62 && r < 0.45) act = 'raise';
+      else if (owe > 0 && feel < 0.3 && r < 0.65) act = 'fold';
+      else if (!turn.noRaise && feel < 0.25 && r < 0.06) act = 'raise';
+      this.pokerMove(g, turn.key, act);
+    }
+
+    pokerDeal(g, seats) {
+      const deck = Array.from({ length: 52 }, (_, i) => i);
+      for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+      const order = [];
+      const n = seats.length;
+      g.dealer = (g.dealer + 1) % n;
+      for (let k = 1; k <= n; k++) { const key = seats[(g.dealer + k) % n]; if (key) order.push(key); }
+      Object.assign(g, { stage: 'preflop', deck, board: [], hands: {}, bets: {}, put: {}, pot: 0, folded: new Set(), order, winners: null, at: Date.now(), youSince: 0, pause: Date.now() + 900 });
+      for (const k of order) { g.hands[k] = [deck.pop(), deck.pop()]; g.bets[k] = 0; g.put[k] = 0; }
+      g.toCall = (k) => Math.max(0, g.high - g.bets[k]);
+      // blinds from the two after the dealer
+      g.high = 0;
+      const blind = (k, amt) => { const a = Math.min(amt, g.stacks[k]); g.stacks[k] -= a; g.bets[k] += a; g.put[k] += a; g.pot += a; g.high = Math.max(g.high, g.bets[k]); };
+      blind(order[0], POKER.small); blind(order[1 % order.length], POKER.big);
+      this.say(order[1 % order.length], `大盲 ${POKER.big}`);
+      const first = order.length > 2 ? 2 : 0;
+      g.queue = order.slice(first).concat(order.slice(0, first)).map((key) => ({ key }));
+    }
+
+    // A player's move: 'call' (or check), 'raise', 'fold'.
+    pokerMove(g, key, act) {
+      const turn = g.queue[0];
+      if (!turn || turn.key !== key) return false;
+      g.queue.shift();
+      g.youSince = 0;
+      const owe = g.toCall(key);
+      const put = (a) => { a = Math.min(a, g.stacks[key]); g.stacks[key] -= a; g.bets[key] += a; g.put[key] += a; g.pot += a; };
+      if (act === 'fold') { g.folded.add(key); this.say(key, '棄牌 🙅'); }
+      else if (act === 'raise' && !turn.noRaise && g.stacks[key] > owe) {
+        put(owe + POKER.raise);
+        g.high = g.bets[key];
+        this.say(key, `加注 ${POKER.raise} 🔥`);
+        // everyone still in who already acted gets one more say (no re-raise)
+        const waiting = new Set(g.queue.map((x) => x.key));
+        for (const k of g.order) if (k !== key && !g.folded.has(k) && !waiting.has(k)) g.queue.push({ key: k, noRaise: true });
+        g.queue.forEach((x) => { x.noRaise = true; });
+      } else { put(owe); this.say(key, owe ? `跟注 ${owe}` : '過牌 👌'); }
+      // keep the turn order round the table
+      const pos = (k) => (g.order.indexOf(k) - g.order.indexOf(key) + g.order.length) % g.order.length;
+      g.queue.sort((a, b) => pos(a.key) - pos(b.key));
+      g.pause = Date.now() + 500;
+      return true;
+    }
+
+    // Your move from the page (buttons): 'call', 'raise' or 'fold'.
+    pokerAct(act) {
+      const g = this.poker;
+      if (!g || !g.queue || !g.queue[0] || g.queue[0].key !== 'me') return false;
+      return this.pokerMove(g, 'me', act);
+    }
+
+    // Everyone has had their say: the next card(s), or the showdown.
+    pokerStreet(g) {
+      const live = g.order.filter((k) => !g.folded.has(k));
+      for (const k of g.order) g.bets[k] = 0;
+      g.high = 0;
+      const next = { preflop: ['flop', 3], flop: ['turn', 1], turn: ['river', 1], river: ['showdown', 0] }[g.stage];
+      if (!next || next[0] === 'showdown') { this.pokerShowdown(g, live); return; }
+      g.stage = next[0];
+      for (let k = 0; k < next[1]; k++) g.board.push(g.deck.pop());
+      g.queue = live.filter((k) => g.stacks[k] > 0).map((key) => ({ key }));
+      g.pause = Date.now() + POKER.streetMs;
+    }
+
+    pokerShowdown(g, live) {
+      let best = -1, winners = [], name = '';
+      if (live.length === 1) winners = live;
+      else for (const k of live) {
+        const h = handScore([...g.hands[k], ...g.board]);
+        if (h.score > best) { best = h.score; winners = [k]; name = h.name; } else if (h.score === best) winners.push(k);
+      }
+      const share = Math.floor(g.pot / Math.max(1, winners.length));
+      for (const k of winners) { g.stacks[k] += share; this.say(k, `🏆 ${name || '大家都棄牌了'} +${share}`); }
+      g.winners = winners; g.winName = name; g.stage = 'done'; g.at = Date.now(); g.queue = [];
+      // broke: a fresh stack next hand (pretend chips)
+      for (const k of Object.keys(g.stacks)) if (g.stacks[k] <= 0) g.stacks[k] = POKER.stack;
+    }
+
+    // You stood up from the poker table.
+    meOffPoker() {
+      const me = this.me;
+      if (!me || !me.atPoker) return;
+      if (me.atPoker.taken === 'me') me.atPoker.taken = null;
+      me.atPoker = null;
     }
 
     // You got up from the slot machine.
@@ -4033,6 +4237,10 @@
           const won = this.slot && this.slot.player === 'me' && this.slotWinning();
           return { pose: 'sit', face: 'back', act: won ? 'cheer' : 'slot', sitZ: (q && q.sit) || 0.47 };
         }
+        if (p.atPoker) {
+          const mine = this.poker && this.poker.queue && this.poker.queue[0] && this.poker.queue[0].key === 'me';
+          return { pose: 'sit', face: p.atPoker.face, act: mine ? 'think' : 'lookaround', sitZ: p.atPoker.sit || 0.47 };
+        }
         if (p.seated) return { pose: 'sit', face: 'back', act: 'type', sitZ: 0.34 };
         return { pose: 'stand', face: 'front', act: 'lookaround', sitZ: 0 };
       }
@@ -5316,6 +5524,7 @@
       this.stepMe(dt);
       this.stepVisitors(dt);
       this.stepSlot(dt);
+      this.stepPoker();
     }
 
     draw() {

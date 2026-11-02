@@ -199,6 +199,18 @@
   /* The floors stacked like the building: 2F stands on 1F (shown plain, from
      outside); looking at 1F, 2F floats up out of sight. */
   .office.stack .floor-view { transition: transform .6s cubic-bezier(.3, 1.2, .5, 1); }
+  /* Your hand at the casino's poker table (pretend chips). */
+  .poker-hud { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 40; width: min(420px, calc(100vw - 32px)); padding: 12px 14px; border-radius: 14px; background: rgba(14,16,28,.92); color: #f2f1ec; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,.4); backdrop-filter: blur(6px); }
+  .poker-hud[hidden] { display: none; }
+  .poker-hud .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+  .poker-hud .cards { display: inline-flex; gap: 4px; }
+  .poker-hud .card { display: inline-grid; place-items: center; width: 34px; height: 48px; border-radius: 6px; background: #fbfaf6; color: #16181b; font: 800 15px ui-sans-serif, system-ui, sans-serif; line-height: 1.05; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  .poker-hud .card.red { color: #c0262f; }
+  .poker-hud .card.none { background: rgba(255,255,255,.12); box-shadow: none; }
+  .poker-hud .muted { color: #9aa3b5; }
+  .poker-hud button { border: 0; border-radius: 999px; padding: 6px 14px; font: 700 13px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+  .poker-hud button:disabled { opacity: .4; cursor: default; }
+  .poker-hud .call { background: #3fb36b; color: #fff; } .poker-hud .raise { background: #ffc845; color: #3a2a00; } .poker-hud .fold { background: #e14c4c; color: #fff; }
   .office.stack .floor-view[data-floor="2"] { z-index: 2; }
   .office.stack[data-floor="1"] .floor-view[data-floor="2"] { transform: translateY(calc(-100% - 40px)); pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
   .office.stack[data-floor="2"] .floor-view[data-floor="1"] { pointer-events: none; }
@@ -493,6 +505,7 @@
 </div>
 <div class="conn" id="conn" data-t="disconnected"></div>
 <div class="tip" id="tip"></div>
+<div class="poker-hud" id="pokerHud" hidden></div>
 <div class="ver" id="ver"></div>
 <script>if (new URLSearchParams(location.search).get('k')) { document.documentElement.dataset.theme = 'dark'; window.OFFICE_FORCE_DARK = true; }</script>
 <script src="/i18n.js"></script>
@@ -1339,6 +1352,46 @@ function stopRecording() {
   if (r.rec.state !== 'inactive') r.rec.stop();
 }
 document.getElementById('replayStop').addEventListener('click', stopReplay);
+
+// Sitting at the casino's poker table: your cards, the board and your move.
+// Pretend chips only (office.js stepPoker), nothing kept anywhere.
+const pokerHud = document.getElementById('pokerHud');
+const STAGE = { preflop: '發手牌', flop: '翻牌', turn: '轉牌', river: '河牌', done: '攤牌', idle: '等人入座' };
+let pokerHtml = '';
+function cardHtml(c) {
+  if (c == null) return '<span class="card none"></span>';
+  const red = Math.floor(c / 13) === 1 || Math.floor(c / 13) === 2;
+  const n = OfficePoker.cardName(c);
+  return `<span class="card${red ? ' red' : ''}">${n.slice(0, -1)}<br>${n.slice(-1)}</span>`;
+}
+setInterval(() => {
+  const me = office && office.me, g = office && office.poker;
+  const on = !!(me && me.atPoker);
+  if (pokerHud.hidden !== !on) pokerHud.hidden = !on;
+  if (!on) { pokerHtml = ''; return; }
+  const mine = g && g.hands && g.hands.me, board = (g && g.board) || [];
+  const myTurn = !!(g && g.queue && g.queue[0] && g.queue[0].key === 'me');
+  const owe = myTurn ? g.toCall('me') : 0;
+  const folded = !!(g && g.folded && g.folded.has('me'));
+  const players = (g && g.seats || []).filter(Boolean).length;
+  let status = !g || g.stage === 'idle' ? (players < 2 ? '等其他人入座（至少兩人）' : '馬上發牌…') : STAGE[g.stage] || '';
+  if (g && g.stage === 'done' && g.winners) status = g.winners.includes('me') ? `你贏了 🎉 ${g.winName || ''}` : `${g.winners.map((k) => (k === 'me' ? '你' : Hub.label(office.people.get(k)?.s || {}))).join('、')} 贏了 ${g.winName || ''}`;
+  else if (folded) status += '・你棄牌了';
+  else if (myTurn) status += '・輪到你（<span data-left></span> 秒）';
+  const html = `<div class="row"><b>🃏 德州撲克</b><span class="muted">${status}</span></div>`
+    + `<div class="row"><span class="muted">公牌</span><span class="cards">${[0, 1, 2, 3, 4].map((k) => cardHtml(board[k])).join('')}</span></div>`
+    + `<div class="row"><span class="muted">你的牌</span><span class="cards">${mine ? mine.map(cardHtml).join('') : cardHtml(null) + cardHtml(null)}</span>`
+    + `<span class="muted">底池 <b style="color:#ffd76a">${g && g.pot || 0}</b>・你的籌碼 <b style="color:#ffd76a">${g && g.stacks && g.stacks.me != null ? g.stacks.me : 1000}</b></span></div>`
+    + `<div class="row"><button class="call" data-poker="call"${myTurn ? '' : ' disabled'}>${owe ? `跟注 ${owe}` : '過牌'}</button>`
+    + `<button class="raise" data-poker="raise"${myTurn && !g.queue[0].noRaise ? '' : ' disabled'}>加注 40</button>`
+    + `<button class="fold" data-poker="fold"${myTurn ? '' : ' disabled'}>棄牌</button>`
+    + `<span class="muted">WASD 走開就離桌・假籌碼</span></div>`;
+  // Rebuilt only when something changes, so a button is never swapped under your click.
+  if (html !== pokerHtml) { pokerHtml = html; pokerHud.innerHTML = html; }
+  const left = pokerHud.querySelector('[data-left]');
+  if (left) left.textContent = Math.max(0, Math.ceil((25_000 - (Date.now() - (g.youSince || Date.now()))) / 1000));
+}, 300);
+pokerHud.addEventListener('click', (e) => { const b = e.target.closest('[data-poker]'); if (b && office && office.pokerAct) office.pokerAct(b.dataset.poker); });
 
 // The stand-up: everyone downstairs (upstairs comes down by the lift), one
 // after another says where they are; the minutes pop up at the end.

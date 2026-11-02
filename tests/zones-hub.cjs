@@ -1593,3 +1593,77 @@ test('the phone booth stands by the left wall, out of the street, and its seat c
   const q = o.plan.pois.find((p) => p.act === 'phone');
   assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length > 0);
 });
+
+// ---- the casino's Texas hold'em
+const pokerOf = () => { const window = {}; vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), { window, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} }); return window.OfficePoker; };
+// 'As' -> card number (rank 2..A = 0..12, suits s h d c)
+const C = (t) => '23456789TJQKA'.indexOf(t[0]) + 'shdc'.indexOf(t[1]) * 13;
+const H = (...ts) => ts.map(C);
+
+test('hold\'em: every kind of hand is named and ranked in the right order', () => {
+  const { handScore } = pokerOf();
+  const hands = [
+    ['高牌', H('As', 'Jd', '9c', '6h', '4s', '3d', '2c')],
+    ['一對', H('As', 'Ad', '9c', '6h', '4s', '3d', 'Tc')],
+    ['兩對', H('As', 'Ad', '9c', '9h', '4s', '3d', 'Tc')],
+    ['三條', H('As', 'Ad', 'Ac', '9h', '4s', '3d', 'Tc')],
+    ['順子', H('5s', '6d', '7c', '8h', '9s', 'Kd', '2c')],
+    ['同花', H('2h', '7h', '9h', 'Jh', 'Kh', '3d', '4c')],
+    ['葫蘆', H('As', 'Ad', 'Ac', '9h', '9s', '3d', 'Tc')],
+    ['四條', H('As', 'Ad', 'Ac', 'Ah', '9s', '3d', 'Tc')],
+    ['同花順', H('5h', '6h', '7h', '8h', '9h', 'Ad', 'Ac')],
+  ];
+  let last = -1;
+  for (const [name, cards] of hands) {
+    const h = handScore(cards);
+    assert.equal(h.name, name, cards.join());
+    assert.ok(h.score > last, `${name} beats the one before`);
+    last = h.score;
+  }
+});
+
+test('hold\'em: the wheel is a 5-high straight; kickers decide between pairs; equal hands tie', () => {
+  const { handScore } = pokerOf();
+  const wheel = handScore(H('As', '2d', '3c', '4h', '5s', 'Kd', 'Qc'));
+  assert.equal(wheel.name, '順子');
+  assert.ok(wheel.score < handScore(H('2s', '3d', '4c', '5h', '6s', 'Kd', 'Qc')).score, 'a 6-high straight beats the wheel');
+  const board = H('Ks', '9d', '7c', '4h', '2s');
+  const aceKicker = handScore([...H('9s', 'Ad'), ...board]), jackKicker = handScore([...H('9h', 'Jd'), ...board]);
+  assert.equal(aceKicker.name, '一對');
+  assert.ok(aceKicker.score > jackKicker.score);
+  assert.equal(handScore([...H('Qs', '3d'), ...board]).score, handScore([...H('Qh', '3c'), ...board]).score);
+});
+
+test('hold\'em at the casino table: two sitting play a hand to the end; the pot goes to the winner and no chip is made or lost', () => {
+  const o = load(true);
+  o.layout = 'casino'; o.floor = 1;
+  o.plan = o.buildPlan(0);
+  const seats = o.holdemSeats();
+  assert.equal(seats.length, 6);
+  // two people in two seats
+  for (const [i, key] of [[0, 'claude:a'], [3, 'claude:b']]) {
+    const q = seats[i];
+    o.people.set(key, { key, x: q.x, y: q.y, path: [], poi: q, s: { key }, phase: 0 });
+    q.taken = key;
+  }
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    let hands = 0;
+    for (let i = 0; i < 4000 && hands < 3; i++) {
+      clock += 200;
+      const before = o.poker && o.poker.stage;
+      o.stepPoker();
+      const g = o.poker;
+      if (before !== 'done' && g.stage === 'done') {
+        hands++;
+        assert.ok(g.winners.length >= 1);
+        const total = Object.values(g.stacks).reduce((a, b) => a + b, 0);
+        // a split pot can leave an odd chip on the table; nothing else is made or lost
+        assert.ok(total <= 2000 && total >= 1999, `chips add up (${total})`);
+      }
+    }
+    assert.equal(hands, 3, 'three hands were played');
+  } finally { Date.now = real; }
+});
