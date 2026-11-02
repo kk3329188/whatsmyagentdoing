@@ -79,7 +79,7 @@ Touch ID 要用到 Swift：沒有 Command Line Tools 時請使用者自己跑 `x
 丟到別人身上＝轉話：開對方面板、填好前一人最後的回覆（`〔轉自「…」〕` 開頭），按 Enter 才送；送出後前一人走過去聊。
 等你超過 3 分鐘舉牌冒汗、超過 10 分鐘到畫面最前面敲螢幕；音效（叮／警報／敲門／升等）圖例旁可關，存在 localStorage `wmad.sound`。
 兩層樓（內建辦公室、非子母畫面）：index.html 建兩個 Office（`floor: 1|2`，各自一個 `.floor-view` 容器，沒看的那層 setVisible(false) 不畫）；
-兩層照樓層疊成一棟（`.office.stack`，2F 的 `.floor-view` z-index 在上）：看 1F 時 2F 往上浮出框外（translateY）；選 2F 時 2F 降下來站在 1F 上——2F 的 `fitBelow` 讓鏡頭留出下一層、`storeyBelow()`（2D／3D 各一份）在地板下畫 1F 外牆與窗，1F 的 `setBeneath(office2)` 讓它的鏡頭滑到 2F 鏡頭下一層（3D `followAbove()` 每格覆寫 camera，放開時滑回 `ownView`），落地時牆頂剛好接 2F 地板。只有移動的 0.7 秒（`FLOOR_MOVE_MS`）兩層都畫，之後只畫看得到那層（2F 落定後 1F 的 `.floor-view` visibility hidden）。
+兩層照樓層疊成一棟（`.office.stack`，2F 的 `.floor-view` z-index 在上）：看 1F 時 2F 往上浮出框外（translateY）；選 2F 時 2F 降下來、用柱子架在 1F 上方（`STOREY_GAP` 2.4，office.js 與 web/office3d.js 各一份要同步），下面照常看得到 1F 的內部與人。2F 的 `fitBelow` 讓鏡頭留出下一層、`storeyBelow()`（2D／3D 各一份）畫樓板與柱子；1F 的 `setBeneath(office2)` 讓它的鏡頭跟 2F 一樣、低一層＋間隔（3D `followAbove()` 每格覆寫 camera，放開時從 2F 下方滑回 `ownView`）。2F 時 1F 用 `drawEveryMs` 少畫（3D 100ms、2D 40ms，2F 鏡頭一動就立刻畫，`viewKey()`），人照常每格走；點 2F 沒人、又不在 2F 地板上的地方，`whoAt(office, at)` 找下面 1F 的人開面板。只有移動的 0.7 秒（`FLOOR_MOVE_MS`，`.office.moving`）兩層都每格畫。
 誰在哪層由 `OfficeFloors.split`（public/office.js）決定：等你／出錯／剛做完／工作（前 12 個）／秘書在 1F，閒置與超額工作在 2F，2F 的工作者做完前不下樓；換層的 key 傳給 `update(list, { moved })`，走電梯（plan.lift）不走門。
 2F 平面是 `upstairs()`（沒有你的桌與排隊，door＝電梯）；樓層分頁顯示各層人數，點分頁或按 1／2 切換，選的樓層存 `wmad.floor`。載入時等「看得見那層」畫好才收 loading。
 

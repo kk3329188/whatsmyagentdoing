@@ -196,13 +196,12 @@
   .office-gl, .office-overlay { position: absolute; inset: 0; }
   .floor-view { position: absolute; inset: 0; }
   .floor-view[hidden] { display: none; }
-  /* The floors stacked like the building: 2F stands on 1F (2F's picture
-     shows 1F's outside walls under it); looking at 1F, 2F floats up out of sight. */
+  /* The floors stacked like the building: 2F stands on 1F, and under it you
+     still see 1F from the front; looking at 1F, 2F floats up out of sight. */
   .office.stack .floor-view { transition: transform .6s cubic-bezier(.3, 1.2, .5, 1); }
   .office.stack .floor-view[data-floor="2"] { z-index: 2; }
   .office.stack[data-floor="1"] .floor-view[data-floor="2"] { transform: translateY(calc(-100% - 40px)); pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
   .office.stack[data-floor="2"] .floor-view[data-floor="1"] { pointer-events: none; }
-  .office.stack[data-floor="2"]:not(.moving) .floor-view[data-floor="1"] { visibility: hidden; } /* its last frame, under 2F's walls */
   .office.stack.settle .floor-view { transition: none; }
   @media (prefers-reduced-motion: reduce) { .office.stack .floor-view { transition: none; } }
   .view-pad { position: absolute; right: 10px; bottom: 30px; display: grid; grid-template-columns: repeat(3, 26px); grid-template-rows: repeat(3, 26px); gap: 2px; opacity: .7; transition: opacity .15s; z-index: 2; }
@@ -931,6 +930,13 @@ function refreshTip() {
   tip.innerHTML = card(s, Date.now() - state.skew);
   placeTip();
 }
+// The session drawn at a point on screen in that office, if any.
+function whoAt(o, at) {
+  const r = o.canvas.getBoundingClientRect(), mx = at.x - r.left, my = at.y - r.top;
+  const h = [...o.hit].reverse().find((b) => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1);
+  const p = h && o.people.get(h.key);
+  return p ? p.s : null;
+}
 function hideTip() { tipKey = null; tipPinned = false; tip.style.display = 'none'; tip.classList.remove('pinned'); }
 const officeOpts = {
   compact: PIP,
@@ -951,6 +957,9 @@ const officeOpts = {
     if (Hub.live) return; // on air: no tooltips, no panels
     // The secretary came over with news: clicking them shows it again.
     if (click && s && office && office.secKey === s.key && office.people.get(s.key)?.errand) { Hub.showAway(); return; }
+    // On 2F, 1F shows under it: a click there (nobody of 2F under the
+    // pointer) can still find someone downstairs.
+    if (click && !s && at && office2 && this === office2 && office && office.beneath === office2 && !office2.onFloorAt(at.x, at.y)) s = whoAt(office, at);
     if (click) {
       // Clicking a person opens their session panel.
       hideTip();
@@ -981,12 +990,13 @@ officeEl.parentNode.insertBefore(floorTabs, officeEl);
 state.floor = store.get('floor', 1) === 2 ? 2 : 1;
 let floorPrev = new Map();
 // The floors are stacked like the building (CSS .office.stack): 2F stands
-// on 1F, and its picture includes 1F's outside walls under it (fitBelow).
-// Picking 2F brings it down onto 1F while 1F's camera slides under it
-// (office.setBeneath: the 2F camera, one floor lower), so the walls land
-// right over 1F's room; picking 1F sends 2F up and away. Only while a floor
-// moves do both draw; otherwise just the one you see, as before.
-const FLOOR_MOVE_MS = 700;
+// on 1F. Picking 2F brings it down onto 1F, whose camera slides right under
+// 2F's (office.setBeneath: one storey lower, fitBelow leaves room for it), so
+// 1F's wall tops meet 2F's floor and you still see 1F from the front, people
+// and all; picking 1F sends 2F up and away. Under 2F, 1F is drawn about 10
+// times a second in 3D (25 in 2D, which costs little), at once when the 2F
+// camera moves; its people still walk every frame.
+const FLOOR_MOVE_MS = 700, BENEATH_DRAW_MS = { gl: 100, flat: 40 };
 let floorMoveUntil = 0, floorMoveTimer = 0;
 function stackFloors(show) {
   // The first time (page load, a new renderer) the floors take their places
@@ -1006,8 +1016,9 @@ function stackFloors(show) {
   officeEl.classList.toggle('moving', moving);
   floorRoots[0].hidden = floorRoots[1].hidden = false;
   office.setBeneath(up ? office2 : null);
+  office.drawEveryMs = up && !moving ? BENEATH_DRAW_MS[office.gl ? 'gl' : 'flat'] : 0;
   if (up) office.follow = false; // the camera is 2F's
-  office.setVisible(show && (!up || moving));
+  office.setVisible(show);
   office2.setVisible(show && (up || moving));
 }
 function renderFloorTabs(floors, list) {
@@ -1019,7 +1030,7 @@ function renderFloorTabs(floors, list) {
   const KINDS = [['wait', '✋', '等你'], ['error', '⚠', '出錯'], ['work', '🖥', '工作中'], ['done', '✓', '剛做完'], ['idle', '🛋', '休息']];
   const chips = (c) => KINDS.filter(([k]) => c[k]).map(([k, i, t]) => `<span class="fchip" data-z="${k}">${i} ${c[k]} ${t}</span>`).join('') || '<span class="fchip">沒人</span>';
   const html = [1, 2].map((n) => `<button type="button" data-floor="${n}" class="${state.floor === n ? 'on' : ''}"><b>${n === 1 ? '1F 辦公室' : '2F 休息層'}</b>${chips(count(n))}</button>`).join('')
-    + '<span class="hub-muted">按 1／2 換樓層（看 2F 時 2F 疊在 1F 上、看 1F 時 2F 浮上去）・閒置的在 2F，等你和出錯的一定在 1F</span>';
+    + '<span class="hub-muted">按 1／2 換樓層（看 2F 時 2F 疊在 1F 上、下面看得到 1F；看 1F 時 2F 浮上去）・閒置的在 2F，等你和出錯的一定在 1F</span>';
   if (floorTabs.innerHTML !== html) floorTabs.innerHTML = html;
   floorTabs.hidden = false;
 }

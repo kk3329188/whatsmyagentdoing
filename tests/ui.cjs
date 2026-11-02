@@ -85,14 +85,14 @@ async function drawnLogos(target) {
   assert.equal(await page.locator('#agentLegend').isVisible(),false);
   await page.reload();await stable(page);assert.equal(await page.locator('#showAgent').isChecked(),false);
   await openSettings(page);await page.check('#showAgent');check('badge toggle hides markers and legend and persists across reload');
-  // The floors are stacked like the building: 2F stands on 1F. Looking at 1F,
-  // 2F has floated up out of the box; picking 2F brings it down onto 1F, whose
-  // camera slides under it, and 2F draws 1F's outside walls under its floor.
+  // The floors are stacked like the building: 2F stands on posts over 1F.
+  // Looking at 1F, 2F has floated up out of the box; picking 2F brings it down
+  // over 1F, whose camera slides under it, so 1F still shows underneath.
   const floorsNow=()=>page.evaluate(()=>{const box=officeEl.getBoundingClientRect();return {floor:state.floor,stack:officeEl.classList.contains('stack'),visible:[office.visible,office2.visible],
    top:floorRoots.map(r=>r.getBoundingClientRect().top-box.top),h:box.height,z:floorRoots.map(r=>+getComputedStyle(r).zIndex||0),shown:floorRoots.map(r=>getComputedStyle(r).visibility)}});
-  const settled=(n)=>page.waitForFunction(n=>state.floor===n&&office.visible===(n===1)&&office2.visible===(n===2),n,{timeout:5000});
-  // Where 1F's wall tops and 2F's floor are on screen (they meet when 2F stands on 1F).
-  const meet=()=>page.evaluate(()=>{const y=(o,z)=>o.iso(0,0,z).y*o.cam.zoom+o.cam.oy;return {wallTop1:y(office,2.4),floor2:y(office2,0),beneath:office.beneath===office2}});
+  const settled=(n)=>page.waitForFunction(n=>state.floor===n&&office.visible&&office2.visible===(n===2)&&!officeEl.classList.contains('moving'),n,{timeout:5000});
+  // Where 1F's post tops (wall 2.4 + gap 2.4) and 2F's floor are on screen.
+  const meet=()=>page.evaluate(()=>{const y=(o,z)=>o.iso(0,0,z).y*o.cam.zoom+o.cam.oy;return {wallTop1:y(office,4.8),floor2:y(office2,0),beneath:office.beneath===office2}});
   await page.keyboard.press('1');await settled(1);
   let fl=await floorsNow();
   assert.ok(fl.stack&&Math.abs(fl.top[0])<2&&fl.top[1]<=-fl.h,JSON.stringify(fl));
@@ -102,11 +102,17 @@ async function drawnLogos(target) {
   assert.ok(mid.t<-1&&mid.t>-fl.h&&mid.v.every(Boolean),`2F on its way down, both drawn: ${JSON.stringify(mid)}`);
   await page.waitForTimeout(500);
   const m=await meet();
-  assert.ok(m.beneath&&Math.abs(m.wallTop1-m.floor2)<1,`2F's floor lands on 1F's walls: ${JSON.stringify(m)}`);
+  assert.ok(m.beneath&&Math.abs(m.wallTop1-m.floor2)<1,`2F's floor lands on 1F's posts: ${JSON.stringify(m)}`);
   await settled(2);fl=await floorsNow();
-  assert.ok(Math.abs(fl.top[1])<2&&fl.shown[0]==='hidden','2F stands on 1F; only 2F is drawn');
+  assert.ok(Math.abs(fl.top[1])<2&&fl.shown[0]==='visible'&&fl.visible.every(Boolean),'2F stands over 1F, and 1F is still drawn under it');
+  // Someone downstairs, in view under 2F, opens on a click too.
+  const down=await page.waitForFunction(()=>{const r=office.canvas.getBoundingClientRect();for(const h of office.hit){const p=office.people.get(h.key);if(!p||p.path.length)continue;const x=r.left+(h.x0+h.x1)/2,y=r.top+(h.y0+h.y1)/2;if(!office2.onFloorAt(x,y)&&!office2.hit.some(b=>x-r.left>=b.x0&&x-r.left<=b.x1&&y-r.top>=b.y0&&y-r.top<=b.y1))return {x,y}}return null},{},{timeout:20000}).then(h=>h.jsonValue());
+  await page.evaluate(()=>Hub.close&&Hub.close());
+  await page.mouse.click(down.x,down.y);
+  await page.waitForFunction(()=>{const p=document.querySelector('.hub-panel');return p&&!p.hidden&&p.getClientRects().length>0});
+  await page.evaluate(()=>Hub.close&&Hub.close());
   const walls=await page.evaluate(()=>{let n=0;const f=office2.storeyBelow;office2.storeyBelow=function(){n++;return f.call(this)};office2.frame(performance.now());office2.storeyBelow=f;return n});
-  assert.equal(walls,1,'2F draws the storey under it');
+  assert.equal(walls,1,'2F draws its slab and posts');
   // Someone on 2F can be clicked open (the demo keeps everyone downstairs, so move one up).
   await page.evaluate(()=>{Hub.close&&Hub.close();OfficeFloors.split=((split)=>(list,prev,o)=>{const r=split(list,prev,o);const f=r.floors.get('claude:done');if(f)r.floors.set('claude:done',{...f,floor:2});return r})(OfficeFloors.split);render()});
   const who=await page.waitForFunction(()=>{const p=office2.people.get('claude:done');if(!p||p.path.length)return null;const r=office2.canvas.getBoundingClientRect();const h=office2.hit.find(b=>b.key==='claude:done');return h&&{x:r.left+(h.x0+h.x1)/2,y:r.top+(h.y0+h.y1)/2}},{},{timeout:20000}).then(h=>h.jsonValue());
@@ -116,7 +122,7 @@ async function drawnLogos(target) {
   await page.keyboard.press('1');await settled(1);fl=await floorsNow();
   assert.ok(fl.top[1]<=-fl.h&&fl.shown[0]==='visible'&&!(await meet()).beneath,'2F floated back up, 1F on its own');
   await page.reload();await stable(page);
-  check('floors stack: 2F comes down onto 1F (its floor on 1F\'s walls) and floats up again, people upstairs open on click');
+  check('floors stack: 2F comes down over 1F on posts, 1F stays in view under it, both floors\' people open on click, 2F floats up again');
   await page.click('#qualSeg [data-v=high]');
   await page.waitForFunction(()=>officeKind==='high:office'&&office?.loaded&&office.framesShown>4,{},{timeout:30000});
   assert.deepEqual([...new Set(await badges(page))].sort(),['Cl','Cx','G']);
