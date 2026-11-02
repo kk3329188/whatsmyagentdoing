@@ -7,9 +7,9 @@
   const TW = 64; // tile width px
   const TH = 32; // tile height px; one z unit is TH px too
   const WALL_H = 2.4;
-  // 2F stands this high over 1F's wall tops when you look at it, on posts,
-  // so 1F shows underneath (the same in web/office3d.js).
-  const STOREY_GAP = 2.4;
+  // Looking at 2F, it stands this high over 1F's outside walls, on short
+  // posts, so you can tell the floors apart (the same in web/office3d.js).
+  const STOREY_GAP = 0.6;
   const STOREY = WALL_H + STOREY_GAP;
   const WORKING = new Set(['thinking', 'tool', 'typing', 'waiting', 'error']);
   const MAX_WANDERERS = 7;
@@ -2643,23 +2643,8 @@
       if (!top && up) this.cam = { zoom: up.zoom, ox: up.ox, oy: up.oy + STOREY * TH * up.zoom };
       this.beneath = top;
       this.beneathAt = this.t || 0;
-      this.drawnView = null;
     }
 
-    // Whether a point on screen falls on this floor's boards.
-    onFloorAt(cx, cy) {
-      if (!this.cam) return false;
-      const r = this.canvas.getBoundingClientRect();
-      const a = (cx - r.left - this.cam.ox) / this.cam.zoom / (TW / 2), b = (cy - r.top - this.cam.oy) / this.cam.zoom / (TH / 2);
-      const x = (a + b) / 2, y = (b - a) / 2;
-      return x >= 0 && x <= this.plan.W && y >= 0 && y <= this.plan.D;
-    }
-
-    // Where the floor on top is looking, as a string (changes when it moves).
-    viewKey() {
-      const c = this.beneath && this.beneath.cam;
-      return c ? `${c.zoom.toFixed(4)},${c.ox.toFixed(1)},${c.oy.toFixed(1)}` : '';
-    }
 
     // ------------------------------------------------------------ camera / input
 
@@ -2673,13 +2658,13 @@
       this.canvas.style.width = this.cw + 'px';
       this.canvas.style.height = this.ch + 'px';
       this.dpr = dpr;
-      this.drawnAt = 0; // a new size clears the canvas: draw on the next frame
     }
 
     fitCamera() {
       const { W, D } = this.plan;
-      // Under another floor (beneath = the one on top): the same camera as
-      // that floor, one storey (and the gap) lower, so it stands over us.
+      // Under another floor (beneath = the one on top, only while it comes
+      // down or goes up): the same camera as that floor, one storey (and the
+      // gap) lower, so its picture of us lands right over us.
       // Glides there and back (beneathAt) instead of jumping.
       const up = this.beneath && this.beneath.cam;
       if (up) {
@@ -2872,18 +2857,24 @@
       this.box(x + 0.68, y + 0.1, 0.32, 0.12, 0.65, 0.16, this.shade(col, 8), l, r);
     }
 
-    // Standing over the floor below: the slab under our floor and the posts
-    // down to that floor's wall tops, along the two open sides and at the
-    // corners (that floor itself is drawn under this one, beneath).
+    // The floor below, seen from outside and kept plain (it is not the one
+    // you look at): its two front walls with a row of windows, a short gap
+    // on posts, and the slab under our floor.
     storeyBelow() {
       const { W, D } = this.plan;
-      const pal = this.pal, P = (x, y, z) => this.iso(x, y, z), g = -STOREY_GAP, w = 0.22;
+      const pal = this.pal, P = (x, y, z) => this.iso(x, y, z), g = -STOREY_GAP, H = -STOREY, w = 0.22;
+      const glass = skyColor().night ? '#f3d58a' : pal.dark ? '#3c4a5c' : '#b9cbd8';
+      this.poly([P(0, D, g), P(W, D, g), P(W, D, H), P(0, D, H)], pal.wallL);
+      this.poly([P(W, 0, g), P(W, D, g), P(W, D, H), P(W, 0, H)], pal.wallR);
+      for (let x = 0.8; x + 1.5 < W - 0.4; x += 2.4) this.poly([P(x, D, H + 0.45), P(x + 1.5, D, H + 0.45), P(x + 1.5, D, H + 2.0), P(x, D, H + 2.0)], glass);
+      for (let y = 0.8; y + 1.5 < D - 0.4; y += 2.4) this.poly([P(W, y, H + 0.45), P(W, y + 1.5, H + 0.45), P(W, y + 1.5, H + 2.0), P(W, y, H + 2.0)], glass);
+      // its roof, seen through the gap
+      this.poly([P(0, 0, g), P(W, 0, g), P(W, D, g), P(0, D, g)], pal.wallTop);
       const post = (x, y) => {
         this.poly([P(x, y + w, 0), P(x + w, y + w, 0), P(x + w, y + w, g), P(x, y + w, g)], pal.wallL);
         this.poly([P(x + w, y, 0), P(x + w, y + w, 0), P(x + w, y + w, g), P(x + w, y, g)], pal.wallR);
       };
-      const along = (n) => Array.from({ length: Math.max(1, Math.round(n / 6)) + 1 }, (_, i) => (i * (n - w)) / Math.max(1, Math.round(n / 6)));
-      post(0, 0);
+      const along = (n) => { const k = Math.max(1, Math.round(n / 6)); return Array.from({ length: k + 1 }, (_, i) => (i * (n - w)) / k); };
       for (const x of along(W)) post(x, D - w);
       for (const y of along(D)) post(W - w, y);
       this.poly([P(0, D, 0), P(W, D, 0), P(W, D, -0.18), P(0, D, -0.18)], pal.trim);
@@ -2896,7 +2887,7 @@
       const P = (x, y, z) => this.iso(x, y, z);
       const t = this.t / 1000;
 
-      // Standing on the floor below (fitBelow): the slab under our floor.
+      // Standing on the floor below (fitBelow): that floor's outside, plain.
       if (this.fitBelow) this.storeyBelow();
 
       // floors, region by region as the plan lays them out (plan.floors)
@@ -4950,12 +4941,6 @@
       this.t = now;
       if (!this.visible) return;
       this.step(dt);
-      // The floor under the one you look at is drawn less often
-      // (drawEveryMs), but at once when that floor's camera moves (it has to
-      // stay right under it); its people still walk every frame.
-      if (this.drawEveryMs && now - (this.drawnAt || 0) < this.drawEveryMs && this.viewKey() === this.drawnView) return;
-      this.drawnAt = now;
-      this.drawnView = this.drawEveryMs ? this.viewKey() : null;
       if (this.draw() !== false) {
         if (!this.first && ++this.framesShown === 3) this.markReady(true);
         // Capture immediately: a WebGL drawing buffer may be cleared after

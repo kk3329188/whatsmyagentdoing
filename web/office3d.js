@@ -18,9 +18,9 @@ const STATUS_COLOR = {
 const CHAR_HEIGHT = 0.92; // world units (≈ tiles)
 const HELD_LIFT = 0.45;   // how high a picked-up person dangles
 const WALL_H = 2.4;
-// 2F stands this high over 1F's wall tops when you look at it, on posts,
-// so 1F shows underneath (the same in public/office.js).
-const STOREY_GAP = 2.4;
+// Looking at 2F, it stands this high over 1F's outside walls, on short
+// posts, so you can tell the floors apart (the same in public/office.js).
+const STOREY_GAP = 0.6;
 const STOREY = WALL_H + STOREY_GAP;
 const SIT_FORWARD = 0.06;
 const DESK_H = 0.6;
@@ -233,20 +233,31 @@ export class Office3D extends window.Office {
     return m;
   }
 
-  // Standing over the floor below: the slab under our floor and posts down
-  // to that floor's wall tops (that floor itself is drawn under this one,
-  // beneath; the same as the 2D storeyBelow()).
-  storeyBelow() {
+  // The floor below, seen from outside and kept plain (it is not the one
+  // you look at): a block with a row of windows on its two front walls, a
+  // short gap on posts, and the slab under our floor (as the 2D storeyBelow()).
+  storeyBelow(mat) {
     const { W, D } = this.plan, T = 0.12, w = 0.22, dark = this.pal.dark;
+    this.boxMesh(-T, -T, -STOREY, W + T, D + T, WALL_H, 0, { mat, shadow: false });
     this.boxMesh(-T, -T, -0.18, W + T + 0.03, D + T + 0.03, 0.16, dark ? 0x2b2926 : 0xcfc5b3, { shadow: false });
-    const along = (n) => { const k = Math.max(1, Math.round(n / 6)); return Array.from({ length: k + 1 }, (_, i) => -T + (i * (n + T - w)) / k); };
-    const col = dark ? 0x4a4640 : 0xf4efe6;
-    const posts = new Set();
-    for (const x of along(W)) for (const y of along(D)) {
-      const edge = x === along(W)[0] || x === along(W).at(-1) || y === along(D)[0] || y === along(D).at(-1);
-      if (edge) posts.add(`${x},${y}`);
+    const glass = new THREE.MeshStandardMaterial({ color: dark ? 0x3c4a5c : 0xb9cbd8, emissive: skyNow().night ? 0xf3d58a : 0x000000, emissiveIntensity: 0.5, roughness: 0.3 });
+    for (let x = 0.8; x + 1.5 < W - 0.4; x += 2.4) {
+      const g = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.55), glass);
+      g.position.set(x + 0.75, -STOREY + 1.22, D + 0.005);
+      this.room.add(g);
     }
-    for (const k of posts) { const [x, y] = k.split(',').map(Number); this.boxMesh(x, y, -STOREY_GAP, w, w, STOREY_GAP - 0.18, col, { shadow: false }); }
+    for (let y = 0.8; y + 1.5 < D - 0.4; y += 2.4) {
+      const g = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.55), glass);
+      g.rotation.y = Math.PI / 2;
+      g.position.set(W + 0.005, -STOREY + 1.22, y + 0.75);
+      this.room.add(g);
+    }
+    const along = (n) => { const k = Math.max(1, Math.round(n / 6)); return Array.from({ length: k + 1 }, (_, i) => -T + (i * (n + T - w)) / k); };
+    const xs = along(W), ys = along(D);
+    for (const x of xs) for (const y of ys) {
+      if (x !== xs[0] && x !== xs.at(-1) && y !== ys[0] && y !== ys.at(-1)) continue;
+      this.boxMesh(x, y, -STOREY_GAP, w, w, STOREY_GAP - 0.18, dark ? 0x4a4640 : 0xf4efe6, { shadow: false });
+    }
   }
 
   // ---- appliances people use (office.js USE / applianceAt) ------------------
@@ -615,8 +626,8 @@ export class Office3D extends window.Office {
       this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
       this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
     }
-    // Standing on the floor below (fitBelow): the slab under our floor.
-    if (this.fitBelow) this.storeyBelow();
+    // Standing on the floor below (fitBelow): that floor's outside, plain.
+    if (this.fitBelow) this.storeyBelow(wallMat);
     // Framed prints between the back windows.
     (plan.art || []).forEach((a, n) => this.room.add(this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
@@ -1658,11 +1669,6 @@ export class Office3D extends window.Office {
     return { x: o.x + d.x * k, z: o.z + d.z * k };
   }
 
-  onFloorAt(cx, cy) {
-    const at = this.floorAt({ clientX: cx, clientY: cy });
-    return !!at && at.x >= 0 && at.x <= this.plan.W && at.z >= 0 && at.z <= this.plan.D;
-  }
-
   focusAt(x, z) {
     const from = this.controls.target.clone();
     this.fly = { from, to: new THREE.Vector3(x, from.y, z), t0: performance.now() };
@@ -1900,11 +1906,6 @@ export class Office3D extends window.Office {
     c.updateMatrixWorld(true);
   }
 
-  viewKey() {
-    const c = this.beneath && this.beneath.camera;
-    return c ? `${c.position.x.toFixed(3)},${c.position.y.toFixed(3)},${c.position.z.toFixed(3)},${c.zoom.toFixed(4)},${c.left.toFixed(3)},${c.top.toFixed(3)}` : '';
-  }
-
   followAbove() {
     const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
     const k = Math.min(1, ((this.t || 0) - (this.beneathAt || 0)) / 600);
@@ -2118,8 +2119,7 @@ export class Office3D extends window.Office {
       for (const a of this.actors.values()) this.scene.remove(a.obj, a.laptop, a.blob);
       this.actors.clear();
     }
-    // Drawn less often under another floor (drawEveryMs): the limbs keep their pace.
-    const dt = Math.min(this.drawEveryMs ? 0.1 : 0.05, this.clock.getDelta());
+    const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.t / 1000;
 
     // lighting follows the time of day
