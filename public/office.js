@@ -2630,6 +2630,17 @@
 
     setVisible(v) { this.visible = v; if (v) this.resize(); }
 
+    // Put this floor under another one (or back on its own with null): its
+    // camera follows that floor's, one storey lower (fitCamera). Let go, it
+    // starts from right under that floor, where it was last seen.
+    setBeneath(top) {
+      if (top === (this.beneath || null)) return;
+      const up = this.beneath && this.beneath.cam;
+      if (!top && up) this.cam = { zoom: up.zoom, ox: up.ox, oy: up.oy + WALL_H * TH * up.zoom };
+      this.beneath = top;
+      this.beneathAt = this.t || 0;
+    }
+
     // ------------------------------------------------------------ camera / input
 
     resize() {
@@ -2646,8 +2657,20 @@
 
     fitCamera() {
       const { W, D } = this.plan;
+      // Under another floor (beneath = the one on top): the same camera as
+      // that floor, one storey lower, so its floor rests on our walls.
+      // Glides there and back (beneathAt) instead of jumping.
+      const up = this.beneath && this.beneath.cam;
+      if (up) {
+        const want = { zoom: up.zoom, ox: up.ox, oy: up.oy + WALL_H * TH * up.zoom };
+        const k = this.cam ? Math.min(1, ((this.t || 0) - (this.beneathAt || 0)) / 600) : 1;
+        if (k >= 1 || !this.cam) { this.cam = want; return; }
+        for (const key of ['zoom', 'ox', 'oy']) this.cam[key] += (want[key] - this.cam[key]) * Math.max(0.12, k);
+        return;
+      }
       const left = this.iso(0, D, 0).x, right = this.iso(W, 0, 0).x;
-      const top = this.iso(0, 0, WALL_H).y - 20, bottom = this.iso(W, D, 0).y + 10;
+      // fitBelow: room for the storey under this one (2F standing on 1F).
+      const top = this.iso(0, 0, WALL_H).y - 20, bottom = this.iso(W, D, -(this.fitBelow ? WALL_H : 0)).y + 10;
       const zoom = Math.min(this.cw / (right - left + 30), this.ch / (bottom - top + 30), 2);
       let want = { zoom, ox: this.cw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
       const sp = this.spotPerson();
@@ -2828,11 +2851,28 @@
       this.box(x + 0.68, y + 0.1, 0.32, 0.12, 0.65, 0.16, this.shade(col, 8), l, r);
     }
 
+    // The storey under this one seen from outside: its two front walls, a
+    // row of windows each, and the slab between the floors.
+    storeyBelow() {
+      const { W, D } = this.plan;
+      const pal = this.pal, P = (x, y, z) => this.iso(x, y, z), H = -WALL_H;
+      const glass = skyColor().night ? '#f3d58a' : pal.dark ? '#3c4a5c' : '#b9cbd8';
+      this.poly([P(0, D, 0), P(W, D, 0), P(W, D, H), P(0, D, H)], pal.wallL);
+      this.poly([P(W, 0, 0), P(W, D, 0), P(W, D, H), P(W, 0, H)], pal.wallR);
+      for (let x = 0.8; x + 1.5 < W - 0.4; x += 2.4) this.poly([P(x, D, H + 0.45), P(x + 1.5, D, H + 0.45), P(x + 1.5, D, H + 2.0), P(x, D, H + 2.0)], glass);
+      for (let y = 0.8; y + 1.5 < D - 0.4; y += 2.4) this.poly([P(W, y, H + 0.45), P(W, y + 1.5, H + 0.45), P(W, y + 1.5, H + 2.0), P(W, y, H + 2.0)], glass);
+      this.poly([P(0, D, 0), P(W, D, 0), P(W, D, -0.14), P(0, D, -0.14)], pal.trim);
+      this.poly([P(W, 0, 0), P(W, D, 0), P(W, D, -0.14), P(W, 0, -0.14)], pal.trim);
+    }
+
     drawRoom() {
       const { W, D } = this.plan;
       const pal = this.pal;
       const P = (x, y, z) => this.iso(x, y, z);
       const t = this.t / 1000;
+
+      // Standing on the floor below (fitBelow): that storey's outside walls.
+      if (this.fitBelow) this.storeyBelow();
 
       // floors, region by region as the plan lays them out (plan.floors)
       for (const f of this.plan.floors || []) this.floorPatch(f);

@@ -229,6 +229,27 @@ export class Office3D extends window.Office {
     return m;
   }
 
+  // The storey under this one seen from outside: a block the size of the
+  // room under the floor, a row of windows on its two front walls and the
+  // slab between the floors (the same as the 2D storeyBelow()).
+  storeyBelow(mat) {
+    const { W, D } = this.plan, T = 0.12, H = WALL_H, dark = this.pal.dark;
+    this.boxMesh(-T, -T, -H, W + T, D + T, H - 0.03, 0, { mat, shadow: false });
+    this.boxMesh(-T, -T, -0.17, W + T + 0.03, D + T + 0.03, 0.15, dark ? 0x2b2926 : 0xcfc5b3, { shadow: false });
+    const glass = new THREE.MeshStandardMaterial({ color: dark ? 0x3c4a5c : 0xb9cbd8, emissive: skyNow().night ? 0xf3d58a : 0x000000, emissiveIntensity: 0.5, roughness: 0.3 });
+    for (let x = 0.8; x + 1.5 < W - 0.4; x += 2.4) {
+      const g = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.55), glass);
+      g.position.set(x + 0.75, -H + 1.22, D + 0.005);
+      this.room.add(g);
+    }
+    for (let y = 0.8; y + 1.5 < D - 0.4; y += 2.4) {
+      const g = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.55), glass);
+      g.rotation.y = Math.PI / 2;
+      g.position.set(W + 0.005, -H + 1.22, y + 0.75);
+      this.room.add(g);
+    }
+  }
+
   // ---- appliances people use (office.js USE / applianceAt) ------------------
   //
   // Each has real moving parts: a microwave door on its hinge, a fridge door,
@@ -595,6 +616,8 @@ export class Office3D extends window.Office {
       this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
       this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
     }
+    // Standing on the floor below (fitBelow): that storey's outside walls.
+    if (this.fitBelow) this.storeyBelow(wallMat);
     // Framed prints between the back windows.
     (plan.art || []).forEach((a, n) => this.room.add(this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
@@ -1729,7 +1752,8 @@ export class Office3D extends window.Office {
     // Fit the room's corners into the view.
     const inv = this.camera.matrixWorldInverse;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const x of [0, W]) for (const y of [0, this.plan.viewH || WALL_H]) for (const z of [0, D]) {
+    // fitBelow: room for the storey under this one (2F standing on 1F).
+    for (const x of [0, W]) for (const y of [this.fitBelow ? -WALL_H : 0, this.plan.viewH || WALL_H]) for (const z of [0, D]) {
       const v = new THREE.Vector3(x, y, z).applyMatrix4(inv);
       minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x); minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
     }
@@ -1853,6 +1877,48 @@ export class Office3D extends window.Office {
       Object.assign(c, { left: cx - per * this.cw / 2, right: cx + per * this.cw / 2, top: cy + per * this.ch / 2, bottom: cy - per * this.ch / 2 });
       c.updateProjectionMatrix();
     } else this.fitCamera3D(false);
+  }
+
+  // Under another floor (setBeneath): the camera of the floor on top, one
+  // storey higher here, so that floor's boards rest on our walls. Glides
+  // there from our own view and back to it when let go.
+  viewOf() {
+    const c = this.camera;
+    return { p: c.position.clone(), q: c.quaternion.clone(), l: c.left, r: c.right, t: c.top, b: c.bottom, z: c.zoom };
+  }
+
+  showView(a, b = a, k = 1) {
+    const c = this.camera, n = (x, y) => x + (y - x) * k;
+    c.position.lerpVectors(a.p, b.p, k);
+    c.quaternion.slerpQuaternions(a.q, b.q, k);
+    Object.assign(c, { left: n(a.l, b.l), right: n(a.r, b.r), top: n(a.t, b.t), bottom: n(a.b, b.b), zoom: n(a.z, b.z) });
+    c.updateProjectionMatrix();
+    c.updateMatrixWorld(true);
+  }
+
+  followAbove() {
+    const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+    const k = Math.min(1, ((this.t || 0) - (this.beneathAt || 0)) / 600);
+    if (this.beneath && this.beneath.camera) {
+      if (!this.ownView) this.ownView = this.viewOf();
+      const want = this.beneath.viewOf();
+      want.p.y += WALL_H;
+      this.showView(this.ownView, want, ease(k));
+    } else if (this.ownView) {
+      if (!this.leftView) this.leftView = this.viewOf();
+      this.showView(this.leftView, this.ownView, ease(k));
+      if (k >= 1) this.ownView = this.leftView = null;
+    }
+  }
+
+  setBeneath(top) {
+    if (top === (this.beneath || null)) return;
+    // Let go: glide back from right under that floor, where it was last
+    // seen (the view to go back to stays ownView).
+    let from = null;
+    if (!top && this.beneath && this.beneath.camera && this.ownView) { from = this.beneath.viewOf(); from.p.y += WALL_H; }
+    super.setBeneath(top);
+    this.leftView = from;
   }
 
   // ------------------------------------------------------------ actors
@@ -2128,6 +2194,7 @@ export class Office3D extends window.Office {
     this.syncActors(dt);
     this.controls.update();
     this.steerView();
+    this.followAbove();
     this.gl.render(this.scene, this.camera);
 
     // overlay: bubbles + name tags, reusing the 2D drawing code
