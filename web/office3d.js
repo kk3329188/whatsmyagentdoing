@@ -12,6 +12,7 @@ import { wheelIntent, clampShift, keyPan, glide } from './camera.mjs';
 import { makeChibi, animateChibi, dressChibi, HAIR_STYLES } from './chibi.js';
 import { makeFurniture, soft as toonSoft, outlineOf as toonOutline, roundedBox } from './furniture.js';
 import { decorOf } from './decor.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // The decor being built (web/decor.js; null = the cartoon look): plain
 // pieces take its materials, and it has no outlines. Set by build().
@@ -608,6 +609,7 @@ export class Office3D extends window.Office {
     this.pendantLamps = [];
     this.boardAt = this.jamLight = null;
     this.boardShown = -1; this.tables = [];
+    this.skylineMat = null; this.sheenMat = null; this.canteenMats = null;
     const { W, D } = plan;
     const dark = this.pal.dark;
     DECOR = this.decor;
@@ -700,11 +702,14 @@ export class Office3D extends window.Office {
 
     // walls: back (z=0) with windows, left (x=0) with a door
     const wallCol = dark ? 0x4a4640 : 0xf4efe6;
-    const wallMat = this.decor ? this.decor.wall(dark) : new THREE.MeshStandardMaterial({ color: wallCol, roughness: 0.95 });
+    const wallMat = this.decor ? this.decor.wall(dark) : this.wallpaper(dark);
     const T = 0.12;
     let cx = -T;
     const sky = skyNow();
     this.windowMat = new THREE.MeshStandardMaterial({ color: sky.sky, emissive: sky.sky, emissiveIntensity: 0.6 });
+    // The windows' and walls' finishing pieces gather here, then go in as a
+    // few merged meshes (bakeStatic): one draw per material, not per piece.
+    this.wallBin = new THREE.Group();
     for (const wx of plan.windows) {
       this.boxMesh(cx, -T, 0, wx - cx, T, WALL_H, 0, { mat: wallMat });
       // Tall windows: a low sill, glass up to near the ceiling, black frames.
@@ -713,6 +718,7 @@ export class Office3D extends window.Office {
       const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.7), this.windowMat);
       glass.position.set(wx + 0.75, 1.3, -T / 2);
       this.room.add(glass);
+      this.windowDressing(wx, T, plan.windows.indexOf(wx), dark);
       const frame = dark ? 0x1e2024 : 0x2f3236;
       this.boxMesh(wx + 0.73, -0.03, 0.45, 0.04, 0.04, 1.7, frame);
       this.boxMesh(wx, -0.03, 1.28, 1.5, 0.04, 0.035, frame, { shadow: false });
@@ -739,18 +745,24 @@ export class Office3D extends window.Office {
       this.boxMesh(0, 0, 0, 0.025, dy0, 0.11, trim, { shadow: false });
       this.boxMesh(0, dy1, 0, 0.025, D - dy1, 0.11, trim, { shadow: false });
     }
+    // A wainscot under the sills with a rail on top, a moulding along the
+    // ceiling (the plain walls, and a decor that asks: decor.trim).
+    const trim = this.decor ? this.decor.trim && this.decor.trim(dark) : { panel: dark ? 0x3f3a34 : 0xe9dfcd, edge: dark ? 0x2e2a26 : 0xd3c5ad, rail: dark ? 0x2b2926 : 0xfbf7ef };
+    if (trim) this.wallTrim(trim, plan);
+    this.room.add(this.bakeStatic(this.wallBin));
+    this.wallBin = null;
     // Standing on the floor below (fitBelow): that floor's outside, plain.
-    if (this.fitBelow) this.storeyBelow(wallMat);
+    if (this.fitBelow) this.storeyBelow(this.decor ? wallMat : new THREE.MeshStandardMaterial({ color: wallCol, roughness: 0.95 }));
     // A decor's own touches: lights, signs (decor.extras), animated by decor.animate.
     this.decorFx = this.decor && this.decor.extras ? this.decor.extras(this, wallMat) : null;
     // Framed prints between the back windows.
     (plan.art || []).forEach((a, n) => this.room.add(this.decor && this.decor.art ? this.decor.art(a.x, 1.45, a.w, a.w * 1.25, n) : this.artPrint(a.x, 1.45, a.w, a.w * 1.25, n)));
     // posters + whiteboard
-    for (const ps of plan.posters) {
-      const m = this.textPlane(ps.text, ps.color, 0.9, 1.0);
-      m.rotation.y = Math.PI / 2; m.position.set(0.005, 1.45, ps.y + 0.45);
+    plan.posters.forEach((ps, i) => {
+      const m = this.posterBoard(ps, i);
+      m.rotation.y = Math.PI / 2; m.position.set(0.025, 1.45, ps.y + 0.45);
       this.room.add(m);
-    }
+    });
     if (plan.whiteboard) {
       const wb = this.textPlane('', '#fdfdfb', 2.6, 1.15);
       wb.position.set(plan.whiteboard.x + 1.3, 1.4, 0.005);
@@ -870,6 +882,228 @@ export class Office3D extends window.Office {
   }
 
   // A framed print: soft abstract shapes in the office palette.
+  // The canteen's materials: the decor's own (decor.canteen names a palette
+  // role for each part: walnut and marble, mahogany and velvet…), or the
+  // plain office's steel and oak.
+  canteenLook() {
+    if (this.canteenMats) return this.canteenMats;
+    const d = this.decor, P = d && d.furniture && d.furniture.palette, roles = d && d.canteen;
+    const plain = { body: 0xc7cdd3, top: 0xdfe3e7, trim: 0x8e969e, table: this.pal.dark ? 0x8a6a4c : 0xc9a47e, bench: this.pal.dark ? 0x7a5c44 : 0xc9a47e, legs: 0x3a3e45, trayA: 0xc96442, trayB: 0x3f7fbf };
+    const metal = { body: 1, top: 1, trim: 1 };
+    const out = {};
+    for (const k of Object.keys(plain)) {
+      out[k] = P && roles ? d.material(P[roles[k]])
+        : metal[k] ? new THREE.MeshStandardMaterial({ color: plain[k], metalness: 0.55, roughness: 0.35 }) : toonSoft(plain[k]);
+    }
+    return (this.canteenMats = out);
+  }
+
+  // ---- the walls: wallpaper, windows, posters ---------------------------
+
+  // Static pieces merged by material (their own positions baked in).
+  bakeStatic(g) {
+    g.updateMatrixWorld(true);
+    const by = new Map(), out = new THREE.Group();
+    for (const m of g.children) {
+      if (!m.isMesh) { out.add(m); continue; }
+      let l = by.get(m.material);
+      if (!l) by.set(m.material, (l = { list: [], order: m.renderOrder }));
+      const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrixWorld);
+      for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv'].includes(k)) geo.deleteAttribute(k);
+      l.list.push(geo);
+    }
+    for (const [mat, { list, order }] of by) {
+      const mm = new THREE.Mesh(mergeGeometries(list), mat);
+      mm.receiveShadow = true; mm.renderOrder = order;
+      out.add(mm);
+    }
+    return out;
+  }
+
+  // The plain office's wallpaper: a warm plaster with a fine tone-on-tone
+  // stripe and a little speckle, laid in metres (worldUV).
+  wallpaper(dark) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 256;
+    const c = cv.getContext('2d');
+    c.fillStyle = dark ? '#4a4640' : '#f4efe6'; c.fillRect(0, 0, 256, 256);
+    for (let x = 0; x < 256; x += 32) {
+      c.fillStyle = dark ? 'rgba(255,255,255,.025)' : 'rgba(170,140,100,.07)'; c.fillRect(x, 0, 14, 256);
+      c.fillStyle = dark ? 'rgba(0,0,0,.08)' : 'rgba(150,120,85,.09)'; c.fillRect(x + 14, 0, 1, 256); c.fillRect(x + 31, 0, 1, 256);
+    }
+    for (let i = 0; i < 1600; i++) { c.fillStyle = i % 2 ? (dark ? 'rgba(255,255,255,.03)' : 'rgba(255,255,255,.35)') : (dark ? 'rgba(0,0,0,.08)' : 'rgba(120,100,80,.05)'); c.fillRect((i * 97) % 256, (i * 61 + (i >> 5) * 13) % 256, 2, 2); }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
+    const m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 });
+    m.userData.worldUV = 1.0;
+    return m;
+  }
+
+  // Wainscot panels under the sills (0.42 m), a rail on top of them and a
+  // moulding at the ceiling, along the back wall and the left one (not across
+  // the doorway). `t`: { panel, edge, rail } colours.
+  wallTrim(t, plan) {
+    const bin = this.wallBin;
+    const { W, D } = plan, H = 0.42, dy0 = plan.door.y - 0.6, dy1 = plan.door.y + 0.6;
+    const cv = document.createElement('canvas');
+    cv.width = 128; cv.height = 64;
+    const c = cv.getContext('2d'), hex = (n) => '#' + n.toString(16).padStart(6, '0');
+    c.fillStyle = hex(t.panel); c.fillRect(0, 0, 128, 64);
+    // a raised panel: lit top and left edges, shaded bottom and right
+    c.fillStyle = 'rgba(255,255,255,.22)'; c.fillRect(14, 12, 100, 3); c.fillRect(14, 12, 3, 40);
+    c.fillStyle = 'rgba(0,0,0,.16)'; c.fillRect(14, 49, 100, 3); c.fillRect(111, 12, 3, 40);
+    c.strokeStyle = hex(t.edge); c.lineWidth = 2; c.strokeRect(20, 18, 88, 28);
+    const base = new THREE.CanvasTexture(cv);
+    base.colorSpace = THREE.SRGBColorSpace; base.wrapS = THREE.RepeatWrapping; base.anisotropy = 4;
+    const run = (x, y, len, alongX) => {
+      const tex = base.clone(); tex.needsUpdate = true; tex.repeat.set(len / 0.85, 1);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(len, H), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }));
+      m.position.set(alongX ? x + len / 2 : 0.012, H / 2, alongX ? 0.012 : y + len / 2);
+      if (!alongX) m.rotation.y = Math.PI / 2;
+      m.receiveShadow = true;
+      bin.add(m);
+      const r = this.boxMesh(alongX ? x : 0, alongX ? 0 : y, H, alongX ? len : 0.035, alongX ? 0.035 : len, 0.04, t.rail, { shadow: false, group: bin });
+      const k = this.boxMesh(alongX ? x : 0, alongX ? 0 : y, WALL_H - 0.08, alongX ? len : 0.05, alongX ? 0.05 : len, 0.08, t.rail, { shadow: false, group: bin });
+      return [r, k];
+    };
+    run(0, 0, W, true);
+    if (dy0 > 0.1) run(0, 0, dy0, false);
+    if (D - dy1 > 0.1) run(0, dy1, D - dy1, false);
+  }
+
+  // A window, finished: the reveal round the glass, the city outside, a
+  // roller blind part way down and a sheen on the glass.
+  windowDressing(wx, T, i, dark) {
+    const bin = this.wallBin;
+    const jamb = dark ? 0x3a3631 : 0xf6f1e7;
+    this.boxMesh(wx - 0.05, -T, 0.43, 0.05, T + 0.02, 1.72, jamb, { shadow: false, group: bin });
+    this.boxMesh(wx + 1.5, -T, 0.43, 0.05, T + 0.02, 1.72, jamb, { shadow: false, group: bin });
+    this.boxMesh(wx - 0.05, -T, 2.15, 1.6, T + 0.02, 0.05, jamb, { shadow: false, group: bin });
+    // the city: one long picture, each window showing its own stretch of it
+    if (!this.skylineMat) {
+      this.skylineView = null;
+      this.skylineMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, fog: false });
+    }
+    const geo = new THREE.PlaneGeometry(1.5, 1.7), uv = geo.attributes.uv, u0 = (i * 0.29) % 1;
+    for (let k = 0; k < uv.count; k++) uv.setX(k, u0 + uv.getX(k) * 0.27);
+    const city = new THREE.Mesh(geo, this.skylineMat);
+    city.position.set(wx + 0.75, 1.3, -T / 2 + 0.004);
+    city.renderOrder = 1;
+    bin.add(city);
+    // the blind, rolled down a little, with its bar and a pull cord
+    const drop = 0.22 + (i % 3) * 0.12;
+    this.boxMesh(wx + 0.02, -0.005, 2.15 - drop, 1.46, 0.012, drop, dark ? 0x6a6256 : 0xfaf3e3, { shadow: false, group: bin });
+    this.boxMesh(wx + 0.01, -0.012, 2.15 - drop - 0.025, 1.48, 0.025, 0.025, dark ? 0x2b2926 : 0xb8a888, { shadow: false, group: bin });
+    this.boxMesh(wx - 0.02, -0.03, 2.13, 1.54, 0.06, 0.07, dark ? 0x2b2926 : 0xe2d8c4, { shadow: false, group: bin });
+    this.boxMesh(wx + 1.38, 0.0, 2.15 - drop - 0.32, 0.006, 0.006, 0.3, 0x8a8a8a, { shadow: false, group: bin });
+    // light catching the glass: two soft diagonal streaks
+    if (!this.sheenMat) this.sheenMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: dark ? 0.05 : 0.13, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    for (const [dx, w] of [[0.32, 0.16], [0.58, 0.06]]) {
+      const sh = new THREE.Mesh(new THREE.PlaneGeometry(w, 1.5), this.sheenMat);
+      sh.rotation.z = -0.5; sh.position.set(wx + dx + (i % 2) * 0.5, 1.3, -T / 2 + 0.008);
+      sh.renderOrder = 2;
+      bin.add(sh);
+    }
+  }
+
+  // The skyline seen through the windows (transparent above the roofs, so
+  // the sky and the weather show through): blue-grey towers by day, warm at
+  // dusk, dark with lit windows at night.
+  skylineTex(view) {
+    this.skyTex = this.skyTex || {};
+    if (this.skyTex[view]) return this.skyTex[view];
+    const cv = document.createElement('canvas');
+    cv.width = 1024; cv.height = 256;
+    const c = cv.getContext('2d');
+    let seed = 7;
+    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const tones = { day: [['#b9c7d3', '#a9b9c8'], ['#8ea2b4', '#7d93a8']], dusk: [['#c99a8e', '#b88c86'], ['#8f6f78', '#7d6170']], night: [['#2a3150', '#252b47'], ['#161b30', '#121628']] }[view];
+    // two rows of towers: the far ones paler and lower, the near ones darker
+    for (const [row, [far, near]] of [[0, tones[0]], [1, tones[1]]]) {
+      void near;
+      let x = -10;
+      while (x < 1024) {
+        const w = 26 + r() * (row ? 60 : 44), h = (row ? 70 : 110) + r() * (row ? 110 : 80);
+        const top = 256 - h;
+        c.fillStyle = row ? tones[1][Math.floor(r() * 2)] : far;
+        c.fillRect(x, top, w, h);
+        if (r() < 0.25) c.fillRect(x + w * 0.4, top - 14, 3, 14); // a mast
+        // the windows: a grid, lit at night, glinting by day
+        const lit = view === 'night', glint = view === 'day' ? 'rgba(255,255,255,.18)' : 'rgba(255,220,180,.12)';
+        for (let yy = top + 8; yy < 250; yy += 10) for (let xx = x + 5; xx < x + w - 6; xx += 8) {
+          if (lit) { if (r() < 0.38) { c.fillStyle = r() < 0.8 ? 'rgba(255,214,140,.85)' : 'rgba(190,220,255,.8)'; c.fillRect(xx, yy, 4, 5); } }
+          else if (row && r() < 0.5) { c.fillStyle = glint; c.fillRect(xx, yy, 4, 5); }
+        }
+        x += w + (row ? 2 : 6) + r() * 10;
+      }
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping;
+    return (this.skyTex[view] = tex);
+  }
+
+  // A poster on the wall: a printed sheet with a picture and its title, a
+  // white border, a thin frame and a glint of glass.
+  posterBoard(ps, i) {
+    const w = 0.9, h = 1.0;
+    const cv = document.createElement('canvas');
+    cv.width = 360; cv.height = 400;
+    const c = cv.getContext('2d'), W = 360, H = 400;
+    const col = new THREE.Color(ps.color), deep = '#' + col.clone().multiplyScalar(0.62).getHexString(), light = '#' + col.clone().lerp(new THREE.Color(0xffffff), 0.35).getHexString();
+    const g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, light); g.addColorStop(1, deep);
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+    // a sunburst behind the picture
+    c.save(); c.translate(W / 2, H * 0.4); c.fillStyle = 'rgba(255,255,255,.08)';
+    for (let k = 0; k < 12; k++) { c.rotate(Math.PI / 6); c.beginPath(); c.moveTo(0, 0); c.lineTo(-24, -300); c.lineTo(24, -300); c.fill(); }
+    c.restore();
+    const text = ps.text.replace(/[^\x20-\x7e]/g, '').trim();
+    const ink = '#fffaf0', cx = W / 2, cy = H * 0.4;
+    c.lineCap = c.lineJoin = 'round';
+    if (/SHIP/.test(text)) { // a rocket taking off
+      c.fillStyle = '#ffb347'; c.beginPath(); c.moveTo(cx - 18, cy + 60); c.quadraticCurveTo(cx, cy + 130, cx + 18, cy + 60); c.fill();
+      c.fillStyle = ink; c.beginPath(); c.moveTo(cx, cy - 90); c.quadraticCurveTo(cx + 46, cy - 30, cx + 30, cy + 64); c.lineTo(cx - 30, cy + 64); c.quadraticCurveTo(cx - 46, cy - 30, cx, cy - 90); c.fill();
+      c.fillStyle = deep; c.beginPath(); c.arc(cx, cy - 18, 16, 0, 6.283); c.fill();
+      c.fillStyle = '#e0544a'; for (const s of [-1, 1]) { c.beginPath(); c.moveTo(cx + s * 30, cy + 20); c.lineTo(cx + s * 58, cy + 70); c.lineTo(cx + s * 26, cy + 64); c.fill(); }
+    } else if (/TEST/.test(text)) { // a big tick in a ring
+      c.strokeStyle = ink; c.lineWidth = 16; c.beginPath(); c.arc(cx, cy, 82, 0, 6.283); c.stroke();
+      c.lineWidth = 22; c.beginPath(); c.moveTo(cx - 42, cy + 2); c.lineTo(cx - 10, cy + 36); c.lineTo(cx + 48, cy - 32); c.stroke();
+    } else if (/BREAK|LUNCH/.test(text)) { // a steaming cup or a bowl
+      const bowl = /LUNCH/.test(text);
+      c.fillStyle = ink;
+      if (bowl) { c.beginPath(); c.arc(cx, cy + 10, 78, 0, Math.PI); c.fill(); c.fillRect(cx - 86, cy + 2, 172, 12); c.strokeStyle = '#6b4a2a'; c.lineWidth = 7; c.beginPath(); c.moveTo(cx + 20, cy - 70); c.lineTo(cx + 70, cy + 6); c.moveTo(cx + 40, cy - 78); c.lineTo(cx + 84, cy + 4); c.stroke(); }
+      else { c.beginPath(); c.moveTo(cx - 60, cy - 20); c.lineTo(cx + 60, cy - 20); c.lineTo(cx + 48, cy + 70); c.lineTo(cx - 48, cy + 70); c.fill(); c.strokeStyle = ink; c.lineWidth = 12; c.beginPath(); c.arc(cx + 66, cy + 18, 22, -1.2, 1.2); c.stroke(); }
+      c.strokeStyle = 'rgba(255,250,240,.8)'; c.lineWidth = 7;
+      for (const dx of [-26, 0, 26]) { c.beginPath(); c.moveTo(cx + dx, cy - 34); c.bezierCurveTo(cx + dx - 14, cy - 54, cx + dx + 14, cy - 70, cx + dx, cy - 92); c.stroke(); }
+    } else if (/RECHARGE/.test(text)) { // a battery filling up
+      c.strokeStyle = ink; c.lineWidth = 12; c.strokeRect(cx - 80, cy - 40, 150, 84); c.fillStyle = ink; c.fillRect(cx + 72, cy - 16, 16, 36);
+      for (let k = 0; k < 3; k++) c.fillRect(cx - 66 + k * 44, cy - 26, 34, 56);
+    } else { // a leaf (EAT WELL) or rings
+      c.fillStyle = ink; c.beginPath(); c.moveTo(cx - 70, cy + 70); c.bezierCurveTo(cx - 80, cy - 40, cx + 20, cy - 90, cx + 80, cy - 80); c.bezierCurveTo(cx + 70, cy + 10, cx, cy + 80, cx - 70, cy + 70); c.fill();
+      c.strokeStyle = deep; c.lineWidth = 6; c.beginPath(); c.moveTo(cx - 60, cy + 60); c.quadraticCurveTo(cx, cy, cx + 60, cy - 60); c.stroke();
+    }
+    c.fillStyle = ink; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+    let size = 58;
+    const font = (n) => `900 ${n}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+    c.font = font(size); while (c.measureText(text).width > W - 50 && size > 20) c.font = font(--size);
+    c.fillText(text, cx, H - 62);
+    c.fillStyle = 'rgba(255,250,240,.7)'; c.font = '700 15px ui-sans-serif, system-ui, sans-serif';
+    c.fillText(['TEAM · SINCE DAY ONE', 'ONE STEP AT A TIME', 'TAKE IT EASY', 'GOOD FOOD · GOOD WORK'][i % 4], cx, H - 32);
+    for (let k = 0; k < 900; k++) { c.fillStyle = k % 2 ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.04)'; c.fillRect((k * 97) % W, (k * 61 + (k >> 4) * 7) % H, 2, 2); }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const grp = new THREE.Group();
+    const frame = new THREE.Mesh(roundedBox(w + 0.06, h + 0.06, 0.03, 0.008), soft(this.pal.dark ? 0x2b2420 : 0x2f3236));
+    const mat = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ color: 0xfbf8f2, roughness: 0.9 }));
+    mat.position.z = 0.016;
+    const pic = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.1, h - 0.1), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }));
+    pic.position.z = 0.017;
+    const glint = new THREE.Mesh(new THREE.PlaneGeometry(0.12, h * 1.05), this.sheenMat || (this.sheenMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.13, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })));
+    glint.rotation.z = -0.45; glint.position.set(-0.18, 0.05, 0.019);
+    grp.add(frame, mat, pic, glint);
+    return grp;
+  }
+
   artPrint(cx, cy, w, h, k) {
     const cv = document.createElement('canvas');
     cv.width = 160; cv.height = Math.round(160 * h / w);
@@ -1120,13 +1354,15 @@ export class Office3D extends window.Office {
       }
       case 'sink':
         break; // part of the counter
-      // ---- the staff canteen (3F)
+      // ---- the staff canteen (3F), in the decor's own materials (canteenLook)
       case 'buffet': {
-        // Steel counter, hot pans of food under a glass guard and heat lamps.
-        const { x, y, w } = p, steel = { metal: 0.55, rough: 0.35 };
-        this.boxMesh(x, y, 0, w, 0.8, 0.86, 0xc7cdd3, steel);
-        this.boxMesh(x - 0.02, y - 0.02, 0.86, w + 0.04, 0.84, 0.035, 0xdfe3e7, steel);
-        this.boxMesh(x + 0.02, y + 0.8, 0.12, w - 0.04, 0.02, 0.05, 0x8e969e, steel);
+        // A counter, hot pans of food under a glass guard and heat lamps.
+        const { x, y, w } = p, steel = { metal: 0.55, rough: 0.35 }, M = this.canteenLook();
+        this.boxMesh(x, y, 0, w, 0.8, 0.86, 0, { mat: M.body });
+        this.boxMesh(x - 0.02, y - 0.02, 0.86, w + 0.04, 0.84, 0.035, 0, { mat: M.top });
+        this.boxMesh(x + 0.02, y + 0.8, 0.12, w - 0.04, 0.02, 0.05, 0, { mat: M.trim });
+        // front panels: a shadow line between each
+        for (let k = 1; k < Math.round(w / 0.9); k++) this.boxMesh(x + k * w / Math.round(w / 0.9) - 0.01, y + 0.805, 0.18, 0.02, 0.01, 0.62, 0, { mat: M.trim, shadow: false });
         this.boxMesh(x, y + 0.8, 0, w, 0.02, 0.1, dark ? 0x2b2d31 : 0x5a6068);
         const FOOD = [0xd98b3a, 0x5f9a4c, 0xe8d9a8, 0xb8432f, 0xf2c94c, 0x7a4a2a, 0xe7b07a];
         const n = Math.max(3, Math.round(w / 0.75)), pw = (w - 0.16) / n;
@@ -1157,21 +1393,23 @@ export class Office3D extends window.Office {
       }
       case 'diningTable': {
         const { x, y } = p;
-        // its own oak top (a decor's 'table' may be a card table)
-        this.boxMesh(x, y, 0.71, 2.6, 0.8, 0.045, dark ? 0x8a6a4c : 0xc9a47e);
+        // its own top (a decor's 'table' may be a card table), in the decor's materials
+        const M = this.canteenLook();
+        this.boxMesh(x, y, 0.71, 2.6, 0.8, 0.045, 0, { mat: M.table });
+        this.boxMesh(x + 0.04, y + 0.04, 0.69, 2.52, 0.72, 0.02, 0, { mat: M.legs, shadow: false });
         for (const lx of [x + 0.12, x + 2.4]) {
-          this.boxMesh(lx, y + 0.32, 0, 0.08, 0.16, 0.71, 0x3a3e45);
-          this.boxMesh(lx - 0.02, y + 0.08, 0, 0.12, 0.64, 0.04, 0x3a3e45);
+          this.boxMesh(lx, y + 0.32, 0, 0.08, 0.16, 0.71, 0, { mat: M.legs });
+          this.boxMesh(lx - 0.02, y + 0.08, 0, 0.12, 0.64, 0.04, 0, { mat: M.legs });
         }
         // a bench along each side
         for (const by of [y - 0.58, y + 1.06]) {
-          this.boxMesh(x + 0.05, by, 0.4, 2.5, 0.32, 0.05, dark ? 0x7a5c44 : 0xc9a47e);
-          for (const lx of [x + 0.15, x + 2.33]) this.boxMesh(lx, by + 0.06, 0, 0.06, 0.2, 0.4, 0x3a3e45);
+          this.boxMesh(x + 0.05, by, 0.4, 2.5, 0.32, 0.05, 0, { mat: M.bench });
+          for (const lx of [x + 0.15, x + 2.33]) this.boxMesh(lx, by + 0.06, 0, 0.06, 0.2, 0.4, 0, { mat: M.legs });
         }
         // trays set out, a plate, a bowl and chopsticks on each
-        for (let k = 0; k < 3; k++) for (const [ty, col] of [[y + 0.05, 0xc96442], [y + 0.47, 0x3f7fbf]]) {
+        for (let k = 0; k < 3; k++) for (const [ty, tray] of [[y + 0.05, M.trayA], [y + 0.47, M.trayB]]) {
           const tx = x + 0.27 + k * 0.85;
-          this.boxMesh(tx, ty, 0.75, 0.36, 0.28, 0.015, col, { shadow: false });
+          this.boxMesh(tx, ty, 0.75, 0.36, 0.28, 0.015, 0, { mat: tray, shadow: false });
           const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 0.05, 14), soft(0xfaf8f2));
           bowl.position.set(tx + 0.1, 0.79, ty + 0.14);
           const rice = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft(0xffffff));
@@ -1191,12 +1429,12 @@ export class Office3D extends window.Office {
         break;
       }
       case 'trayRack': {
-        const { x, y } = p, steel = { metal: 0.55, rough: 0.35 };
+        const { x, y } = p, steel = { metal: 0.55, rough: 0.35 }, M = this.canteenLook();
         for (const [ax, ay] of [[x, y], [x + 0.86, y], [x, y + 0.46], [x + 0.86, y + 0.46]]) this.boxMesh(ax, ay, 0, 0.04, 0.04, 1.3, 0xa9b0b8, steel);
         for (let k = 0; k < 5; k++) {
           const z = 0.15 + k * 0.27;
           this.boxMesh(x, y, z, 0.9, 0.5, 0.02, 0xc7cdd3, steel);
-          if (k < 4) for (let i = 0; i < 3 - (k % 2); i++) this.boxMesh(x + 0.08, y + 0.06, z + 0.025 + i * 0.022, 0.74, 0.38, 0.016, [0xc96442, 0x3f7fbf][(k + i) % 2]);
+          if (k < 4) for (let i = 0; i < 3 - (k % 2); i++) this.boxMesh(x + 0.08, y + 0.06, z + 0.025 + i * 0.022, 0.74, 0.38, 0.016, 0, { mat: (k + i) % 2 ? M.trayB : M.trayA });
         }
         // the bin for leftovers beside it
         const bin = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 0.6, 18), soft(0x5f9a4c));
@@ -2411,6 +2649,9 @@ export class Office3D extends window.Office {
     if (out === 'nap') { this.sun.intensity *= 0.7; this.hemi.intensity *= 0.45; }
     this.lightsOut = !!out;
     this.deskLamps(!!out);
+    // The city outside: by day, at dusk, at night with the windows lit.
+    const view = sky.night ? 'night' : sky.sun < 1.5 ? 'dusk' : 'day';
+    if (this.skylineMat && this.skylineView !== view) { this.skylineView = view; this.skylineMat.map = this.skylineTex(view); this.skylineMat.needsUpdate = true; }
     if (this.windowMat) {
       // The real weather: a grey sky, rain running down, snow, lightning.
       const wx = this.weatherKind();

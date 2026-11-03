@@ -143,5 +143,11 @@ v0.17（office-v2）：1F 重新規劃——左後玻璃會議室（`MW×MD` 6×
 人物多樣化：office.js `lookOf(h)` 從同一個 hash 決定體型（`build` 瘦／一般／圓）、身高（`tall` ±6%）、眼鏡（`specs` 圓框／方框／墨鏡）、鬍子（`beard` 鬍渣／落腮鬍／八字鬍）、雀斑、耳環、裙子、上衣（`top` T 恤／帽T／襯衫領／開襟衫）、鞋色，十分之一染髮（`DYE`）；膚色 10 種、髮色 10 種。都是一般欄位，跟著 worldState 送到外網，觀看端畫出同一群人。2D 在 `person()`／`beard2d()`／`specs2d()`，3D 在 chibi.js `makeChibi(look)`（`specsMesh`／`beardMesh`，莊家的眼鏡、鬍子也改走這裡）。
 3D 頭髮（chibi.js）：每種髮型由頭頂髮蓋（`hairCrown`，離頭皮 10%）、沿髮際的一撮撮瀏海（`fringe`，停在眉毛上方）、鬢角（`sides`）、後髮（`back`，長髮垂到肩）與一道亮面（`gleam`）組成，`lock(from, to)` 在頭上兩點間放一撮；最後 `bakeHair()` 依材質合併，一顆頭的頭髮 2～4 個 draw。
 幸運大轉輪（casino，1F）：office.js `stepBigSix()`：下注 10 秒 → 轉 6 秒 → 開獎 4 秒；24 格 `SIX`（順序與 decor.js `bigSixFace` 一致，測試比對），押 1／2／5／10／20／★，中了賠格子上的數字（★ 10 倍，`SIX_PAY`、`sixPay()`）；站在轉輪前的同事會押一次並 `say()`，開到 10、20、★ 有人中就放彩帶（`confetti`，`key: 'me'` 也行）。你站到轉輪前 0.4 秒就上桌（`me.atBigSix`），頁面 `#bigSixHud` 押注／收回（`bigSixBet()`／`bigSixClear()`），與撲克、輪盤共用假籌碼 `wallet()`。`bigSixWire()` 送外網（觀看端轉輪照轉、停同一格）。3D：一樓轉輪依局面轉、減速停在開出的格子正對指針，指針經過每根釘子會彈起，轉動時燈泡快速追逐、有人中獎時全亮閃爍。輪盤桌面畫出外圍注格（1-18／雙／紅／黑／單／19-36），下注的籌碼照位置疊在桌上（你的是金色、越大注越高），開獎後只留中的那注。
+
+晚上九點散場（casino，1F）：下班牌局只到 21:00（office.js `pokerNight()`，19–21 點）；過了九點 `dealerHome`（`closedNow && !pokerNight()`，送外網）為真：牌桌的人說「打完牌，回家囉 👋」從門口走，莊家也起身走出門（`dealerOn()` 設 `leaving`＋路徑，`stepAlong()` 走，到門口 `this.dealer = null`），查克說「下班囉，回家幫小孩洗澡 🛁」、梅西說「下班囉，明天見 ⚽」（`DEALERS[].bye`）；隔天早上 7 點回座。
+
+3F 員工餐廳：內建辦公室有三層（index.html `office3`，`floorRoots[2]`，分頁與 3 鍵，樓上疊在樓下上面）。office.js `canteen()`：後牆自助餐台（`buffet`，前面排隊點 `buffet`）、今日菜單黑板（`plan.menu`）、長桌配長椅（`diningTable`，座位 `dine`）、回收餐盤車（`trayRack`）、飲料冰箱。12:00–12:30（`canteenTime()`）`splitFloors(…, { canteen: true })` 把所有閒置的（與其子代理）送上 3F；`canteenWander()` 先去餐台拿餐（「拿餐囉 🍱」，動作 `fridge`）、再找位子吃（`SEAT_ACTS.dine`）；12:30 回原樓層，接著午休（`napTime`）。電梯台詞看去哪層（`moved` 是 Map `{ from, to }`）：上來「開飯囉！🍱」、去吃「吃飯去 🍱」、吃完回來「吃飽了 😋」。3D 餐廳家具用風格自己的材質（`decor.canteen` 指定調色盤角色；`canteenLook()`），外網一起送第三層（server.js `publicWorld` 收 1–3 樓）。
+
+牆面細節（3D）：窗戶加內側窗框、城市天際線（白天／黃昏／夜晚亮燈，`skylineTex()`）、捲簾、玻璃反光（`windowDressing()`）；海報改成有圖案、白邊、黑框、玻璃反光的印刷海報（`posterBoard()`）；預設風格牆面改成細條紋壁紙（`wallpaper()`），預設與賭場加腰板、扶手線、天花板線（`wallTrim()`，風格用 `decor.trim` 指定顏色）；賭場壁紙換成有立體感的金色棕櫚葉花紋（decor.js `damask(dark, bump)`）。這些靜態小件收進 `wallBin` 再依材質合併（`bakeStatic()`），每層只多約 15 個網格。
 watcher：被判出 24 小時範圍而丟掉的 log 記在 `stale`（檔案當時的寫入時間），沒再寫入前不重開。原本「檔案近期被動過、但最後事件早於範圍」的 log 每秒都被整份重讀再丟掉（實測 199 個、每輪 1.3 秒，事件迴圈滿載，頁面要 30 秒以上才載完），修後每輪約 20 ms。
 

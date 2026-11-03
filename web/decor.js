@@ -306,6 +306,8 @@ const MODERN = {
   name: 'modern',
   label: '極簡現代',
   furniture: { palette: MODERN_C, material: modernMat, outline: false, pieces: PIECES },
+  // The canteen (3F): which of the palette's materials each part is made of.
+  canteen: { body: 'white', top: 'steel', trim: 'char', table: 'oak', bench: 'oak', legs: 'char', trayA: 'terra', trayB: 'blue' },
   // Plain boxes (walls, partitions, counters made in office3d.js).
   material: (color) => modernMat(color),
   floors(dark) {
@@ -513,6 +515,7 @@ const TECH = {
   name: 'tech',
   label: '科技新創',
   furniture: { palette: TECH_C, material: techMat, outline: false, pieces: TECH_PIECES },
+  canteen: { body: 'white', top: 'steel', trim: 'char', table: 'white', bench: 'blue', legs: 'char', trayA: 'terra', trayB: 'sage' },
   material: (color) => techMat(color),
   floors(dark) {
     return { wood: [epoxy(dark), 2.5, 0.22], work: [brightTiles(dark), 2.0, 1], carpet: [ringCarpet(dark), 1.5, 1], tiles: [epoxy(dark, 'rubber', dark ? '#24403d' : '#a9d6cf'), 1.5, 0.6] };
@@ -751,6 +754,7 @@ const LUX = {
   name: 'lux',
   label: '現代奢華',
   furniture: { palette: LUX_C, material: luxMat, outline: false, pieces: LUX_PIECES },
+  canteen: { body: 'oak', top: 'white', trim: 'steel', table: 'white', bench: 'sage', legs: 'char', trayA: 'oakDark', trayB: 'terra' },
   material: (color) => luxMat(color),
   floors(dark) {
     return {
@@ -814,18 +818,42 @@ function casinoCarpet(dark, key, ground) {
     specks(c, s, 3000, ['rgba(255,255,255,.03)', 'rgba(0,0,0,.12)'], 1.6, 191);
   });
 }
-// Walls: burgundy damask over a dark wainscot with a gold rail (laid in
-// metres: the rail runs at the same height along the whole wall).
-function damask(dark) {
-  return canvasTex(`damask${dark}`, 256, (c, s) => {
-    c.fillStyle = dark ? '#3a1219' : '#6b1d2a'; c.fillRect(0, 0, s, s);
-    c.fillStyle = dark ? 'rgba(214,170,74,.14)' : 'rgba(232,190,110,.22)';
-    for (const [x, y] of [[s / 4, s / 4], [3 * s / 4, 3 * s / 4], [3 * s / 4, s / 4 - s / 2 + s], [s / 4, 3 * s / 4]]) {
-      c.beginPath(); c.moveTo(x, y - 28); c.bezierCurveTo(x + 20, y - 10, x + 20, y + 10, x, y + 28); c.bezierCurveTo(x - 20, y + 10, x - 20, y - 10, x, y - 28); c.fill();
-      c.beginPath(); c.arc(x, y, 6, 0, 6.283); c.fill();
-    }
-    specks(c, s, 800, ['rgba(0,0,0,.12)', 'rgba(255,255,255,.04)'], 1.4, 201);
-  });
+// Walls: a burgundy flocked damask, laid in metres. The motif: a tall
+// palmette (a fleur over a heart of mirrored scrolls), with smaller sprigs
+// between, in a soft gold flock; a faint satin stripe in the ground. `bump`
+// draws the same motif as a height map, so the flock stands off the paper.
+function damask(dark, bump = false) {
+  return canvasTex(`damask${dark}${bump}`, 512, (c, s) => {
+    c.fillStyle = bump ? '#000' : dark ? '#3a1219' : '#6b1d2a'; c.fillRect(0, 0, s, s);
+    if (!bump) for (let x = 0; x < s; x += 64) { c.fillStyle = dark ? 'rgba(255,255,255,.018)' : 'rgba(255,220,200,.035)'; c.fillRect(x, 0, 32, s); }
+    const ink = bump ? '#fff' : dark ? 'rgba(214,170,74,.22)' : 'rgba(232,190,110,.34)';
+    const line = bump ? '#bbb' : dark ? 'rgba(214,170,74,.3)' : 'rgba(240,200,120,.42)';
+    const tiled = (x, y, draw) => { for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) { c.save(); c.translate(x + dx, y + dy); draw(); c.restore(); } };
+    // one half of the palmette, drawn twice (mirrored)
+    const half = () => {
+      c.beginPath(); c.moveTo(0, -110);
+      c.bezierCurveTo(22, -90, 30, -60, 12, -40); c.bezierCurveTo(46, -52, 70, -20, 52, 8);
+      c.bezierCurveTo(40, 26, 18, 20, 20, 2); c.bezierCurveTo(28, 40, 60, 60, 44, 92);
+      c.bezierCurveTo(30, 110, 10, 104, 0, 120); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(14, -6); c.bezierCurveTo(70, -6, 96, 40, 76, 70); c.stroke();
+      c.beginPath(); c.arc(70, 76, 7, 0, 6.283); c.fill();
+    };
+    const palmette = () => {
+      c.fillStyle = ink; c.strokeStyle = line; c.lineWidth = 5; c.lineCap = 'round';
+      half(); c.scale(-1, 1); half(); c.scale(-1, 1);
+      // the heart cut back to the ground
+      c.fillStyle = bump ? '#000' : dark ? '#3a1219' : '#6b1d2a';
+      c.beginPath(); c.ellipse(0, 30, 9, 26, 0, 0, 6.283); c.fill();
+    };
+    const sprig = () => {
+      c.fillStyle = ink;
+      for (let k = 0; k < 4; k++) { c.beginPath(); c.ellipse(Math.cos(k * 1.571) * 14, Math.sin(k * 1.571) * 14, 12, 5, k * 1.571, 0, 6.283); c.fill(); }
+      c.beginPath(); c.arc(0, 0, 5, 0, 6.283); c.fill();
+    };
+    tiled(s / 4, s / 4, palmette); tiled(3 * s / 4, 3 * s / 4, palmette);
+    tiled(3 * s / 4, s / 4, sprig); tiled(s / 4, 3 * s / 4, sprig);
+    if (!bump) specks(c, s, 2600, ['rgba(0,0,0,.12)', 'rgba(255,255,255,.035)'], 1.4, 201);
+  }, { color: !bump });
 }
 // Green baize, a little lighter in the middle, with the gold racetrack line.
 function baize(key, w, h, line) {
@@ -1509,6 +1537,7 @@ const VEGAS = {
   label: '拉斯維加斯',
   layout: 'casino',
   furniture: { palette: VEGAS_C, material: vegasMat, outline: false, pieces: { ...LUX_PIECES, table: baccarat } },
+  canteen: { body: 'oak', top: 'steel', trim: 'char', table: 'oak', bench: 'terra', legs: 'char', trayA: 'oakDark', trayB: 'sage' },
   material: (color) => vegasMat(color),
   floors(dark) {
     return {
@@ -1520,10 +1549,12 @@ const VEGAS = {
     };
   },
   wall(dark) {
-    const m = new THREE.MeshStandardMaterial({ map: damask(dark), roughness: 0.8 });
+    const m = new THREE.MeshStandardMaterial({ map: damask(dark), bumpMap: damask(dark, true), bumpScale: 1.6, roughness: 0.78 });
     m.userData.worldUV = 1.2;
     return m;
   },
+  // A mahogany wainscot under the sills, a gold rail and cornice.
+  trim(dark) { return { panel: dark ? 0x2a1210 : 0x3c1a14, edge: 0xb8893a, rail: 0xc9a24c }; },
   runner: false,
   light: { exposure: 1.0, hemi: 0xffe2c4, sun: 0xffd6a0, env: 0.32 },
   // Over each pod: a small gold chandelier, its crystals lit together.
