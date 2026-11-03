@@ -2017,3 +2017,29 @@ test('upstairs at the casino: the pods nobody needs are a gaming floor (slots, t
   const plain = new Set(up(null).props.map((p) => p.t));
   assert.ok(plain.has('yoga') && !plain.has('slotBank') && !plain.has('sicbo'), 'the other decors keep their upstairs');
 });
+
+test('public replay: a walker on the viewer keeps pace with your page (no running ahead when you slow down, no lagging behind)', () => {
+  const host = load(true), view = load(true);
+  settle(host, [at('done', { n: 1 })]);
+  const p = host.people.get('claude:done1');
+  // a long straight walk along the bottom of the floor
+  p.x = 3; p.y = host.plan.D - 1.0; p.path = [{ x: 15, y: p.y }]; p.mode = 'wander'; p.poi = null; p.until = Infinity;
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  const ship = () => view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: clock })), new Map(), { hostNow: clock });
+  try {
+    ship();
+    const v = view.people.get('claude:done1');
+    v.x += 0.8; // the viewer got ahead (you stopped to let someone by)
+    let worst = 0;
+    for (let i = 0; i < 40; i++) {
+      clock += 100;
+      if (i < 10) { /* your page: standing still a second */ } else { p.x = Math.min(15, p.x + 2.1 * 0.1); if (p.x >= 15) p.path = []; }
+      if (i % 3 === 0) ship();
+      view.stepRemote(0.1);
+      if (i > 25) worst = Math.max(worst, Math.abs(v.x - p.x));
+    }
+    assert.ok(worst < 0.35, `the viewer settles onto your pace (off by ${worst.toFixed(2)} m)`);
+  } finally { Date.now = real; }
+});

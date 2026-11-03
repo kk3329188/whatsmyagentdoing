@@ -134,7 +134,7 @@ v0.17（office-v2）：1F 重新規劃——左後玻璃會議室（`MW×MD` 6×
 外網看到同一手牌：`worldState()` 帶 `poker: pokerWire()`（依座位排的陣列：seats／hands／folded／board／stage／pot／at，因為 world 不能有 Set、key 不能含冒號），觀眾 `applyWorld()` 用 `pokerUnwire()` 還原成 `this.poker`；`stepRemote()` 也跑 `stepDealer()`，所以外網的查克照樣發牌喊街，不會在午休因為「沒牌局」而趴著睡。
 
 外網的泡泡：過濾器（`src/server.js` publicWorld）讓辦公室自己寫的台詞照原樣通過（白名單在 `src/public-say.js`：固定句＋牌局／輪盤／升等的數字樣板），開會、閒聊、貼佈告欄、牌局喊話都和你的頁面一樣；會帶到名字或訊息的泡泡（「找 X 開會」、開會主題、訪客的話、站會內容、戳人時說在做什麼）由 office.js 附一句 `pub` 中性替代（「找同事開會」「來討論一下」…），其他不認得的一律換成按 zone 的固定句。`tests/public-hub.cjs` 會掃 office.js 所有泡泡台詞，新增台詞沒進白名單就紅。
-外網同步的還有：輪盤（`rouletteWire()`／`rouletteUnwire()`：stage／at／number／history／桌上籌碼、`won` 誰中了）、你桌上「N 個在等你」（queueCount）、「+N 下班」（offDuty）；坐著的小動作（伸懶腰、喝水、想事情）照主頁的頁面時鐘選（`poseT()`，觀眾端用 `w.t` 算出的 `tOff`，偏差超過 400ms 才調整，免得來回跳）。你自己的撲克／輪盤操作面板在外網重播時不顯示。
+外網同步的還有：輪盤（`rouletteWire()`／`rouletteUnwire()`：stage／at／number／history／桌上籌碼、`won` 誰中了）、你桌上「N 個在等你」（queueCount）、「+N 下班」（offDuty）；坐著的小動作（伸懶腰、喝水、想事情）照主頁的頁面時鐘選（`poseT()`，觀眾端用 `w.t` 算出的 `tOff`，偏差超過 400ms 才調整，免得來回跳）。你自己的撲克／輪盤操作面板在外網重播時不顯示。 觀眾端走路照主頁剩下的路程配速（`paceLeft`／`pathLeft()`，0.35～1.35 倍）：主頁讓路停下時不會跑到前面，落後時追上就停，不再用固定 2.5 秒加速。
 莊家：查克（眼鏡）或梅西（鬍子），設定「莊家（拉斯維加斯）」選輪班／查克／梅西（存 `dealer`，預設輪班＝查克週三、週日休假由梅西代班，`CHUCK_OFF`）；`dealerWho()` 決定今天誰，換人時新莊家說一句（「查克休假，我來代班 ⚽」）；外網跟主頁（world 帶 `dealerWho`）。
 點人物開的 session 視窗會貼在那人頭頂並跟著走（public/hub.js `panelFollow()`，用名牌位置 `peekAt()`），人不在畫面上或在另一層時回到右下角。
 辦公室聊天聲（public/ambient.js `word()`）：一個詞一口氣連著講（每個音節一聲嗶會像機器），每個音節有母音（三個共振峰）、聲調（平／升／降升／降）、顫音、氣聲，部分音節帶子音起頭。

@@ -50,6 +50,12 @@
     return 'idle';
   }
   const SPEED = 2.1; // tiles / second
+  // How far someone still has to walk along their path.
+  const pathLeft = (p) => {
+    let d = 0, x = p.x, y = p.y;
+    for (const n of p.path || []) { d += Math.hypot(n.x - x, n.y - y); x = n.x; y = n.y; }
+    return d;
+  };
   // Picked up with the mouse: how high they dangle, and what they say.
   const HOLD_Z = 0.55;
   const HELD_TEXT = ['哇！', '放我下來！', '欸欸欸', '咦？要去哪', '我還在忙耶'];
@@ -5735,10 +5741,14 @@
         const e1 = end(p.path), e2 = end(d.path);
         const sameWay = (!e1 && !e2) || (e1 && e2 && Math.hypot(e1.x - e2.x, e1.y - e2.y) < 0.05);
         const keep = near ? { x: p.x, y: p.y, path: sameWay ? p.path : d.path }
-          : behind ? { x: p.x, y: p.y, path: sameWay ? p.path : was.path, catchUp: Date.now() + 2500 } : null;
+          : behind ? { x: p.x, y: p.y, path: sameWay ? p.path : was.path } : null;
         for (const k of p.worldKeys || []) if (!(k in d)) delete p[k];
         Object.assign(p, d, keep || {});
         p.worldKeys = Object.keys(d);
+        // How far they still had to walk on your page: our pace follows it
+        // (stepRemote), so we neither run ahead (you stop to let someone by,
+        // we do not know) nor fall behind.
+        p.paceLeft = pathLeft(d); p.paceAt = Date.now();
         delete p.sk;
         // Kept our own spot: glide onto theirs once the walking is done (a
         // seat, the slot stool; you, walked with the keys, have no path at all).
@@ -5871,7 +5881,16 @@
         if (d > 0.05) p.walkFace = dx + dy >= 0 ? 'front' : 'back';
         p.x += (dx / d) * v; p.y += (dy / d) * v;
       };
-      for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1)); glide(p); }
+      // Our pace against theirs: where they should be by now along the same
+      // path (what was left when it came, less the walking since); ahead of
+      // that, slow down, behind it, hurry (up to 1.35x).
+      const pace = (p) => {
+        if (p.paceLeft == null || !p.path || !p.path.length) return 1;
+        const v = SPEED * (p.rush > wall ? 2.3 : 1);
+        const theirs = Math.max(0, p.paceLeft - v * (wall - p.paceAt) / 1000), mine = pathLeft(p);
+        return Math.max(0.35, Math.min(1.35, 1 + (mine - theirs) / 1.2));
+      };
+      for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * pace(p)); glide(p); }
       for (const v of (this.visitors || new Map()).values()) { walk(v, SPEED); glide(v); }
       if (this.me) { walk(this.me, SPEED); glide(this.me); }
       this.stepDealer();
