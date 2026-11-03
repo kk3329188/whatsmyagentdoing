@@ -132,3 +132,49 @@ test('footsteps while people walk; ping-pong in time with the ball; machines sou
   a.machineSounds([{ ...m, phase: 'ding' }], 6);
   assert.deepEqual(sounds.map((x) => x[0]), ['hum', 'thunk', 'bell'], 'hum once, then the door and the ding');
 });
+
+test('the recorded voice is cut where it pauses: each stretch of sound a slice, too-short blips left out', () => {
+  const { sliceVoice } = load();
+  const rate = 1000, d = new Float32Array(rate); // one second
+  const burst = (a, b, v) => { for (let i = a * rate; i < b * rate; i++) d[i] = Math.sin(i) * v; };
+  burst(0.1, 0.3, 0.02); burst(0.4, 0.5, 0.015); burst(0.7, 0.72, 0.02); // the last one only 20 ms
+  const { slices, gain } = sliceVoice(d, rate);
+  assert.equal(slices.length, 2);
+  assert.ok(Math.abs(slices[0].start - 0.1) < 0.011 && Math.abs(slices[0].len - 0.2) < 0.021, JSON.stringify(slices[0]));
+  assert.ok(Math.abs(slices[1].start - 0.4) < 0.011, JSON.stringify(slices[1]));
+  assert.ok(gain > 40, 'a quiet recording is brought up');
+  // the file itself ships with its credit (public domain)
+  const dir = path.join(__dirname, '../assets/sounds');
+  assert.ok(fs.statSync(path.join(dir, 'phone-voice.mp3')).size > 10_000);
+  assert.match(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), /Creative Commons 0/);
+});
+
+test('people talk in the recorded cartoon voice once it is loaded: slices one after another, a pitch per speaker, from where they stand', () => {
+  const window = {};
+  const made = [];
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime(v) { this.value = v; } });
+  const node = (kind) => { const n = { kind, connect(to) { n.to = to; }, disconnect() {}, gain: param(), playbackRate: param(), start(...a) { n.started = a; }, stop() {} }; made.push(n); return n; };
+  const ctx = { currentTime: 0, createBufferSource: () => node('src'), createGain: () => node('gain'), createOscillator: () => node('osc'), createBiquadFilter: () => Object.assign(node('filter'), { frequency: param(), Q: param() }),
+    createPanner: () => Object.assign(node('panner'), { positionX: param(), positionY: param(), positionZ: param() }) };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), { window, Math: seeded(5), setInterval, clearInterval, setTimeout });
+  const a = new window.OfficeAmbient.Ambient();
+  a.ctx = ctx; a.far = node('far'); a.master = node('master');
+  a.voice = { buf: { id: 'voice' }, slices: [{ start: 0.08, len: 0.17 }, { start: 0.5, len: 0.34 }, { start: 1.1, len: 0.12 }], gain: 40 };
+  let end;
+  a.from('voice0.1', { pan: 0.6, near: 0.5 }, () => { end = a.word(2, 220, 3); });
+  const srcs = made.filter((n) => n.kind === 'src');
+  assert.ok(srcs.length >= 4 && srcs.length <= 6, `${srcs.length} slices in a sentence`);
+  assert.ok(!made.some((n) => n.kind === 'osc'), 'no synthesized chirps');
+  let t = 2;
+  for (const s of srcs) {
+    assert.equal(s.buffer.id, 'voice');
+    assert.ok(s.started[0] >= t - 1e-9, 'one after another');
+    const rate = s.playbackRate.value;
+    assert.ok(rate > 1.1 && rate < 1.25, `the higher voice, about 1.18x (${rate.toFixed(2)})`);
+    t = s.started[0] + s.started[2] / rate;
+  }
+  assert.ok(end >= t && end - 2 < 2, `ends after the last slice (${(end - 2).toFixed(2)} s)`);
+  const pn = made.find((n) => n.kind === 'panner');
+  assert.ok(pn && pn.positionX.value > 0, 'from the right, where that speaker stands');
+  assert.ok(made.filter((n) => n.kind === 'gain' && n.to === pn).length === srcs.length, 'every slice through that spot');
+});

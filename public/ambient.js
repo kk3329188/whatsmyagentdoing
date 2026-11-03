@@ -9,7 +9,26 @@
   // How loud the keyboards are, heard from where the camera is.
   const KEY_LEVEL = 0.5;
   const PROG = [[53, 57, 60, 64], [52, 55, 59, 62], [50, 53, 57, 60], [48, 52, 55, 59]];
-  // Voices (cartoon-animal talk): the notes a syllable can land on (from the
+  // Voices: slices of a recorded cartoon phone voice (assets/sounds, CC0),
+  // cut where it pauses; strung together they sound like someone talking.
+  const VOICE_URL = '/assets/sounds/phone-voice.mp3';
+  // `d` one channel at `rate` Hz: the stretches between pauses (10 ms steps
+  // under 15% of the loudest, at least 30 ms of them), each at least 60 ms;
+  // and the gain that brings its loudest sample to 1.
+  function sliceVoice(d, rate) {
+    const W = Math.max(1, Math.round(rate / 100)), env = [];
+    let peak = 0;
+    for (const v of d) peak = Math.max(peak, Math.abs(v));
+    for (let i = 0; i + W <= d.length; i += W) { let q = 0; for (let k = 0; k < W; k++) q += d[i + k] * d[i + k]; env.push(Math.sqrt(q / W)); }
+    const loud = Math.max(0, ...env), on = env.map((v) => v > loud * 0.15), slices = [];
+    let a = -1, gap = 0;
+    const cut = (to) => { if (to - a >= 6) slices.push({ start: (a * W) / rate, len: ((to - a) * W) / rate }); a = -1; };
+    on.forEach((v, i) => { if (v) { if (a < 0) a = i; gap = 0; } else if (a >= 0 && ++gap >= 3) cut(i - gap + 1); });
+    if (a >= 0) cut(on.length);
+    return { slices, gain: peak ? 1 / peak : 1 };
+  }
+
+  // Voices (cartoon-animal talk, when the recording is not there): the notes a syllable can land on (from the
   // voice's own pitch) and the vowel each takes, oo / oh / ah (Hz).
   const CHIRP_STEPS = [1, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 6];
   const CHIRP_VOWELS = [420, 600, 900, 1100];
@@ -60,6 +79,19 @@
       this.bar = 0;
       this.on = true;
       this.timer = setInterval(() => this.tick(), 90);
+      this.loadVoice();
+    }
+
+    // The recorded voice (once): until it is here (or if it never comes),
+    // people talk in synthesized chirps.
+    loadVoice() {
+      if (this.voiceAsked || typeof fetch !== 'function') return;
+      this.voiceAsked = true;
+      const c = this.ctx;
+      fetch(VOICE_URL).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+        .then((b) => new Promise((ok, no) => { const p = c.decodeAudioData(b, ok, no); if (p && p.then) p.then(ok, no); }))
+        .then((buf) => { const v = sliceVoice(buf.getChannelData(0), buf.sampleRate); if (v.slices.length) this.voice = { buf, ...v }; })
+        .catch(() => {});
     }
 
     stop() {
@@ -316,8 +348,9 @@
     }
 
     // ---- voices: people talking, heard from across the room --------------
-    // Not words: cartoon-animal chatter (word), two people taking turns
-    // with pauses; a laugh now and then.
+    // Not words: a recorded cartoon phone voice cut up (phoneWord; chirps
+    // until it has loaded), two people taking turns with pauses; a laugh
+    // now and then.
     talkTick(now) {
       const pairs = Math.min(3, Math.ceil((this.scene.chat || 0) / 2));
       const ts = this.talks || (this.talks = []);
@@ -344,6 +377,7 @@
     // stepping round a few notes like a tune; an "oo", "oh" or "ah" each.
     // Returns when it ends.
     word(at, f0, n) {
+      if (this.voice) return this.phoneWord(at, f0, n);
       const c = this.ctx, base = f0 * 2.4;
       let t = at;
       for (let i = 0; i < n; i++) {
@@ -372,8 +406,35 @@
       return t;
     }
 
-    // A laugh: four quick "hee"s going up.
+    // A sentence in the recorded cartoon voice: a few of its slices one after
+    // another, nearly touching (a short breath now and then), a little higher
+    // or lower for each speaker (f0: about 100-140 Hz for one, 190-240 for the
+    // other). Returns when it ends.
+    phoneWord(at, f0, n, { pitch = 1, count = n + 1 + Math.floor(Math.random() * 3) } = {}) {
+      const c = this.ctx, v = this.voice;
+      const voice = Math.max(0.88, Math.min(1.18, f0 / 170)) * pitch;
+      let t = at;
+      for (let i = 0; i < count; i++) {
+        const sl = v.slices[Math.floor(Math.random() * v.slices.length)];
+        const rate = voice * (0.95 + Math.random() * 0.1), len = sl.len / rate;
+        const src = c.createBufferSource();
+        src.buffer = v.buf;
+        src.playbackRate.value = rate;
+        const g = c.createGain(), vol = 0.32 * v.gain; // as loud as the chirps were
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.006);
+        g.gain.setValueAtTime(vol, t + Math.max(0.007, len - 0.03));
+        g.gain.linearRampToValueAtTime(0.0001, t + len);
+        src.connect(g); g.connect(this.out());
+        src.start(t, sl.start, sl.len + 0.01);
+        t += len + 0.015 + (Math.random() < 0.2 ? 0.08 : 0);
+      }
+      return t;
+    }
+
+    // A laugh: a few quick bits, higher; or four "hee"s going up.
     laugh(at, f0) {
+      if (this.voice) { this.phoneWord(at, f0, 2, { pitch: 1.3, count: 3 }); return; }
       for (let i = 0; i < 4; i++) this.word(at + i * 0.1, f0 * (1.18 + i * 0.07), 1);
     }
 
@@ -549,5 +610,5 @@
     return Math.max(0.2, len * (1 - (m.k || 0)));
   }
 
-  window.OfficeAmbient = { Ambient, sceneOf };
+  window.OfficeAmbient = { Ambient, sceneOf, sliceVoice };
 })();
