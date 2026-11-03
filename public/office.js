@@ -77,6 +77,8 @@
   const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
   // Closing time: whoever is just resting goes home, the lights go down.
   const closing = () => { const h = hour(); return h >= 19 || h < 7; };
+  // The casino's after-hours game runs till nine; then the players and the dealer go home.
+  const pokerNight = () => { const h = hour(); return h >= 19 && h < 21; };
   // The lunchtime nap (12:30-13:30): the main lights go off, as in a Taiwanese office.
   const napTime = () => { const h = hour(); return h >= 12.5 && h < 13.5; };
   // Sitting somewhere off duty is not just sitting: what they get up to on
@@ -130,8 +132,8 @@
   }
   // The house dealers: Chuck, and Messi on Chuck's days off (office.js dealerOn).
   const DEALERS = {
-    chuck: { name: '查克', icon: '🎩', skin: '#e8b98f', hair: '#2a1d16', hairStyle: 1, glasses: true, hello: '我回來了，發牌 🎩' },
-    messi: { name: '梅西', icon: '⚽', skin: '#ebbd96', hair: '#4a2c19', hairStyle: 0, beard: true, hello: '查克休假，我來代班 ⚽' },
+    chuck: { name: '查克', icon: '🎩', skin: '#e8b98f', hair: '#2a1d16', hairStyle: 1, glasses: true, hello: '我回來了，發牌 🎩', bye: '下班囉，回家幫小孩洗澡 🛁' },
+    messi: { name: '梅西', icon: '⚽', skin: '#ebbd96', hair: '#4a2c19', hairStyle: 0, beard: true, hello: '查克休假，我來代班 ⚽', bye: '下班囉，明天見 ⚽' },
   };
   const CHUCK_OFF = [0, 3]; // Sunday and Wednesday
   const POKER = { stack: 1000, small: 10, big: 20, raise: 40, thinkMs: [1200, 2600], youMs: 25_000, streetMs: 1400, showMs: 4500 };
@@ -1413,6 +1415,8 @@
       const pretendKeys = new Set(pretend.map((s) => s.key));
       this.closedNow = zoned && !this.compact && !this.bossIn && !this.standup && closing();
       this.napNow = zoned && !this.compact && !this.bossIn && !this.standup && !this.closedNow && napTime();
+      // Past nine (till the morning) the casino's dealer is home too.
+      this.dealerHome = this.closedNow && !pokerNight();
       const working = sessions.filter(atDesk);
       const off = sessions
         .filter((s) => !atDesk(s) && !pretendKeys.has(s.key))
@@ -1420,7 +1424,7 @@
       // After hours only the ones that need you stay about (and the stand-up);
       // in the casino a few of the latest stay on for a game of poker.
       const offShift = (s) => zoneOf(s) === 'idle' || zoneOf(s) === 'done';
-      const nightCrew = new Set(this.closedNow && this.layout === 'casino' && this.floor === 1 ? off.filter(offShift).slice(0, POKER_CREW).map((s) => s.key) : []);
+      const nightCrew = new Set(this.closedNow && !this.dealerHome && this.layout === 'casino' && this.floor === 1 ? off.filter(offShift).slice(0, POKER_CREW).map((s) => s.key) : []);
       const after = (s) => this.closedNow && offShift(s) && !nightCrew.has(s.key);
       let wanderers;
       if (zoned && this.standup) {
@@ -1608,6 +1612,7 @@
       }
       for (const [k, p] of this.people) {
         if (!shown.has(k) && !p.leaving) {
+          const cards = this.closedNow && p.poi && p.poi.table === 'holdem';
           p.leaving = true;
           p.mode = 'leave';
           this.release(p);
@@ -1616,6 +1621,7 @@
           p.desk = null;
           p.viaLift = viaLift(k);
           if (p.viaLift) p.event = { text: this.floor === 2 ? '下樓去' : '上樓去', at: Date.now(), zone: 'held' };
+          else if (cards) p.event = { text: '打完牌，回家囉 👋', at: Date.now(), zone: 'held' };
           this.goTo(p, p.viaLift ? this.plan.lift : this.plan.door);
         }
       }
@@ -1679,6 +1685,15 @@
         // On the first snapshot everyone is placed directly, no stampede.
         placeOnArrive: this.first,
       };
+    }
+
+    // `v` further along `p`'s path (the dealer, who is not one of the people).
+    stepAlong(p, v) {
+      if (!p || !p.path || !p.path.length) return;
+      const n = p.path[0], dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy);
+      if (d > 0.001) p.walkFace = dx + dy >= 0 ? 'front' : 'back';
+      if (d <= v) { p.x = n.x; p.y = n.y; p.path.shift(); }
+      else { p.x += (dx / d) * v; p.y += (dy / d) * v; }
     }
 
     goTo(p, target) {
@@ -2717,6 +2732,9 @@
     // each street (the dealer button sits in front of him); between hands he
     // shuffles, checks his watch, looks round for players.
     //
+    // At nine the evening game is over: he gets up, says goodnight and walks
+    // out of the door; back in his chair in the morning.
+    //
     // Chuck has days off: then Messi deals (DEALERS). `dealerPick` (your
     // setting) is 'shift' (Chuck, but Messi on Chuck's days off), 'chuck' or
     // 'messi'; a replaying page shows whoever the host's page shows.
@@ -2730,6 +2748,17 @@
     dealerOn() {
       const at = this.layout === 'casino' && this.floor === 1 && !this.compact && this.plan && this.plan.dealer;
       if (!at) { this.dealer = null; return null; }
+      if (this.dealerHome) {
+        const d = this.dealer;
+        if (!d) return null;
+        if (!d.leaving) {
+          d.leaving = true;
+          d.path = this.plan.grid.path(d.x, d.y, this.plan.door.x, this.plan.door.y);
+          d.event = { text: DEALERS[d.who].bye, at: Date.now(), zone: 'held' };
+        } else if (!d.path.length) this.dealer = null;
+        return this.dealer;
+      }
+      if (this.dealer && this.dealer.leaving) this.dealer = null;
       const who = this.dealerWho();
       if (this.dealer && this.dealer.spot === at && this.dealer.who === who) return this.dealer;
       const D = DEALERS[who], swap = !!(this.dealer && this.dealer.spot === at);
@@ -2746,7 +2775,7 @@
 
     stepDealer() {
       const d = this.dealerOn();
-      if (!d) return;
+      if (!d || d.leaving) return;
       const g = this.poker, now = Date.now();
       const say = (text) => { d.event = { text, at: now, zone: 'held' }; };
       const sig = g && g.hands && g.stage !== 'idle' ? `${g.stage}|${g.board.length}` : 'idle';
@@ -3953,7 +3982,7 @@
     // ---- to the poker table ---------------------------------------------------
 
     // The lunch nap or after hours, in the casino downstairs: a break for poker.
-    pokerBreak() { return this.layout === 'casino' && this.floor === 1 && (this.napNow || this.closedNow); }
+    pokerBreak() { return this.layout === 'casino' && this.floor === 1 && (this.napNow || (this.closedNow && !this.dealerHome)); }
 
     // On a break: take a free seat at the hold'em table (a few at most).
     toPoker(p, now = Date.now()) {
@@ -4754,7 +4783,7 @@
 
     stateNow(p) {
       const s = p.s || {};
-      if (p.dealer) return { pose: 'sit', face: p.spot.face, act: this.dealerAct(p), sitZ: p.spot.sit };
+      if (p.dealer) return p.path.length ? { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 } : { pose: 'sit', face: p.spot.face, act: this.dealerAct(p), sitZ: p.spot.sit };
       if (p.visitor) {
         if (p.path.length) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
         return { pose: 'stand', face: 'back', act: p.stage === 'talk' ? 'chat' : 'lookaround', sitZ: 0 };
@@ -5873,6 +5902,7 @@
         // after hours by the host's clock (a viewer may be somewhere else)
         closedNow: !!this.closedNow,
         napNow: !!this.napNow,
+        dealerHome: !!this.dealerHome,
         // your desk sign (how many wait on you) and the "+N gone home" corner
         queueCount: this.queueCount || 0, offDuty: this.offDuty || 0,
         // who deals at the casino today
@@ -6014,6 +6044,7 @@
       this.bossIn = !!w.bossIn;
       this.closedNow = !!w.closedNow;
       this.napNow = !!w.napNow;
+      this.dealerHome = !!w.dealerHome;
       this.worldAt = Date.now();
     }
 
@@ -6089,6 +6120,7 @@
       for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * pace(p)); glide(p); }
       for (const v of (this.visitors || new Map()).values()) { walk(v, SPEED); glide(v); }
       if (this.me) { walk(this.me, SPEED); glide(this.me); }
+      walk(this.dealer, SPEED);
       this.stepDealer();
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);
@@ -6145,6 +6177,7 @@
       this.stepVisitors(dt);
       this.stepSlot(dt);
       this.stepPoker();
+      this.stepAlong(this.dealer, SPEED * dt);
       this.stepDealer();
       this.stepRoulette();
       this.stepBigSix();

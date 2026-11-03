@@ -524,6 +524,10 @@ test('on the treadmill they stand on the belt and run', () => {
 });
 
 // A Date whose "now" (new Date()) is the given local time today; Date.now stays real.
+// A clock the test can move: `ref.h` is the hour now.
+function clockVar(ref) {
+  return class extends Date { constructor(...a) { if (a.length) super(...a); else { const f = new Date(); f.setHours(Math.floor(ref.h), Math.round((ref.h % 1) * 60), 0, 0); super(f.getTime()); } } static now() { return Date.now(); } };
+}
 function clockAt(h) {
   const fixed = new Date(); fixed.setHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0); // 12.75 = 12:45
   return class extends Date { constructor(...a) { if (a.length) super(...a); else super(fixed.getTime()); } static now() { return Date.now(); } };
@@ -1731,7 +1735,7 @@ test('the lunch nap and after hours in the casino: a few of the ones off duty go
   const p = nap.players[0], seat = p.poi;
   p.path = []; p.until = 0; nap.o.wander(p, Date.now());
   assert.equal(p.poi, seat, 'still playing');
-  const night = crew(21);
+  const night = crew(20);
   assert.ok(night.o.closedNow);
   assert.ok(night.players.length >= 2 && night.players.length <= 4, `${night.players.length} stay late for poker`);
   assert.ok(night.o.people.size <= 4, 'the rest went home');
@@ -1740,6 +1744,58 @@ test('the lunch nap and after hours in the casino: a few of the ones off duty go
   const plainNight = load(true, clockAt(21));
   settle(plainNight, [at('idle'), at('done')]);
   assert.equal(plainNight.people.size, 0, 'after hours they all go home');
+});
+
+test('after-hours poker ends at nine: the players go home, and so does the dealer (Chuck goes to bath his kids)', () => {
+  const night = (pick) => {
+    const clock = { h: 20 };
+    const o = load(true, clockVar(clock));
+    o.layout = 'casino'; o.floor = 1; o.dealerPick = pick; o.plan = o.buildPlan(0);
+    const list = [1, 2, 3, 4, 5, 6].map((n) => at(n % 2 ? 'idle' : 'done', { n, ago: n * MIN }));
+    settle(o, list);
+    for (let i = 0; i < 3; i++) for (const p of o.people.values()) if (p.mode === 'wander') { p.until = 0; o.wander(p, Date.now()); }
+    return { o, clock, list, players: [...o.people.values()].filter((p) => p.poi && p.poi.table === 'holdem' && p.poi.taken === p.key) };
+  };
+  const { o, clock, list, players } = night('chuck');
+  assert.ok(players.length >= 2, `eight in the evening: ${players.length} still at the table`);
+  assert.ok(o.dealerOn() && !o.dealer.leaving, 'and the dealer deals');
+  clock.h = 21.1;
+  o.update(list);
+  assert.equal(o.pokerBreak(), false, 'no more games after nine');
+  for (const p of players) {
+    assert.ok(p.leaving, `${p.key} goes home`);
+    assert.equal(p.event && p.event.text, '打完牌，回家囉 👋');
+  }
+  o.stepDealer();
+  const d = o.dealer;
+  assert.ok(d && d.leaving && d.path.length, 'Chuck gets up and walks to the door');
+  assert.equal(d.event && d.event.text, '下班囉，回家幫小孩洗澡 🛁');
+  assert.equal(o.stateOf(d).pose, 'walk');
+  const x0 = d.x, y0 = d.y;
+  o.stepAlong(d, 0.4);
+  assert.ok(Math.hypot(d.x - x0, d.y - y0) > 0.3, 'he walks');
+  d.path = []; o.stepDealer();
+  assert.equal(o.dealer, null, 'out of the door: gone');
+  o.stepDealer();
+  assert.equal(o.dealer, null, 'and he stays home');
+  assert.ok(!o.bodies().some((b) => b.dealer));
+  // Messi goes home too, with his own line
+  const m = night('messi');
+  m.o.stepDealer(); m.clock.h = 21.1; m.o.update(m.list); m.o.stepDealer();
+  assert.ok(m.o.dealer.leaving);
+  assert.equal(m.o.dealer.event.text, '下班囉，明天見 ⚽');
+  // the next morning he is back in his chair
+  clock.h = 8; o.update(list);
+  const back = o.dealerOn();
+  assert.ok(back && !back.leaving, 'back in the morning');
+  assert.equal(back.x, o.plan.dealer.x);
+  // a public viewer: the dealer goes home there too, on the host's clock
+  const view = casinoAt(15);
+  clock.h = 21.1; o.update(list);
+  view.applyWorld(JSON.parse(JSON.stringify({ ...o.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  view.stepRemote(0.016);
+  assert.ok(!view.dealer || view.dealer.leaving, 'the viewer\'s dealer leaves as well');
+  assert.equal(view.pokerBreak(), false);
 });
 
 test('upstairs in the casino: a blackjack table with three seats and a craps table instead of foosball and the gym', () => {
