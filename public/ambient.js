@@ -167,8 +167,11 @@
         spots.set(id, s);
       }
       s.seen = c.currentTime;
-      // left/right across the screen, nearer the bottom of it (or zoomed in)
-      const x = pos.pan * 3, z = -(0.8 + (1 - pos.near) * 5);
+      // left/right across the screen, nearer the bottom of it (or zoomed in);
+      // never more than about 35 degrees off centre (further out, a voice
+      // jumped from ear to ear as people took turns), and the room's echo
+      // (the far bus) reaches both ears
+      const x = pos.pan, z = -(1.5 + (1 - pos.near) * 4);
       const pn = s.pn, now = c.currentTime;
       if (pn.positionX) { pn.positionX.setTargetAtTime(x, now, 0.15); pn.positionY.setTargetAtTime(0, now, 0.15); pn.positionZ.setTargetAtTime(z, now, 0.15); }
       else if (pn.setPosition) pn.setPosition(x, 0, z);
