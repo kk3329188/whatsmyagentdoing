@@ -2474,7 +2474,8 @@
     pokerSitters() {
       return this.holdemSeats().map((q) => {
         if (q.taken === 'me') return this.me && this.me.atPoker === q && !this.me.moving ? 'me' : null;
-        const p = q.taken && this.people.get(q.taken);
+        // (a replaying page has no seat marks: whoever's spot it is)
+        const p = q.taken ? this.people.get(q.taken) : this.remote ? [...this.people.values()].find((o) => o.poi === q || (o.run && o.run.poi === q)) : null;
         return p && !p.leaving && (p.poi === q || (p.run && p.run.poi === q)) && !p.path.length ? p.key : null;
       });
     }

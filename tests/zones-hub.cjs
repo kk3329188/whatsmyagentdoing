@@ -1551,6 +1551,7 @@ test('public replay at the casino: the viewer sees the same hand (cards, folds),
     assert.equal(JSON.stringify(g.hands['claude:done1']), JSON.stringify(host.poker.hands['claude:done1']));
     assert.equal(JSON.stringify(g.seats), JSON.stringify(host.poker.seats));
     view.stepRemote(0.016);
+    assert.equal(view.pokerSitters().filter(Boolean).length, 2, 'the viewer counts the two at the table (no seat marks come with the world)');
     assert.ok(view.dealer, 'Chuck is at the viewer\'s table too');
     assert.notEqual(view.stateOf(view.dealer).act, 'nap', 'a hand is on: he deals, not dozes');
     // the hand is over on the host and nobody plays: he may doze (it is the nap)
