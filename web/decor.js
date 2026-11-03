@@ -781,26 +781,30 @@ const LUX = {
 
 // ---- the Las Vegas casino decor --------------------------------------------
 
-// The famous loud carpet: a deep ground, gold scrolls and stars, a few jewel
-// colours, busy enough to hide every stain.
-function casinoCarpet(dark, key, ground, acc) {
-  return canvasTex(`casino${key}${dark}`, 256, (c, s) => {
+// The casino carpet: a deep ground under a big, quiet repeat: tone-on-tone
+// scrolls and a thin muted-gold medallion on a diagonal lattice (two a
+// picture). One accent colour, low contrast, so a whole floor of it still
+// reads as casino without shouting.
+function casinoCarpet(dark, key, ground) {
+  return canvasTex(`casino${key}${dark}`, 512, (c, s) => {
     c.fillStyle = ground; c.fillRect(0, 0, s, s);
-    const r = rnd(181 + key.length);
-    // scrolls
-    c.lineWidth = 3;
-    for (let i = 0; i < 10; i++) {
-      const x = r() * s, y = r() * s, rad = 14 + r() * 22;
-      c.strokeStyle = i % 2 ? 'rgba(214,170,74,.55)' : acc;
-      for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) { c.beginPath(); c.arc(x + dx, y + dy, rad, r() * 6.28, r() * 6.28 + 3.6); c.stroke(); }
-    }
-    // stars and diamonds
-    for (let i = 0; i < 26; i++) {
-      const x = r() * s, y = r() * s, k = 3 + r() * 4;
-      c.fillStyle = i % 3 ? 'rgba(232,192,96,.8)' : acc;
-      c.beginPath(); c.moveTo(x, y - k); c.lineTo(x + k * 0.6, y); c.lineTo(x, y + k); c.lineTo(x - k * 0.6, y); c.closePath(); c.fill();
-    }
-    specks(c, s, 1500, ['rgba(255,255,255,.05)', 'rgba(0,0,0,.2)'], 1.4, 191);
+    const h = s / 2, Q = Math.PI / 2;
+    const tiled = (x, y, draw) => { for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) draw(x + dx, y + dy); };
+    // scrolls in the ground's own colour, a shade lighter, between the medallions
+    c.lineWidth = 7; c.lineCap = 'round';
+    c.strokeStyle = dark ? 'rgba(255,240,220,.035)' : 'rgba(255,240,220,.06)';
+    for (const [x0, y0] of [[h, 0], [0, h]]) tiled(x0, y0, (x, y) => {
+      for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(x + Math.cos(k * Q) * 50, y + Math.sin(k * Q) * 50, 44, k * Q + Math.PI * 0.6, k * Q + Math.PI * 1.4); c.stroke(); }
+    });
+    // the medallions: two thin rings and a four-point star
+    const gold = dark ? 'rgba(201,160,74,.2)' : 'rgba(201,160,74,.3)';
+    c.strokeStyle = gold; c.fillStyle = gold;
+    for (const [x0, y0] of [[0, 0], [h, h]]) tiled(x0, y0, (x, y) => {
+      c.lineWidth = 3; c.beginPath(); c.arc(x, y, 60, 0, 6.283); c.stroke();
+      c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 50, 0, 6.283); c.stroke();
+      c.beginPath(); c.moveTo(x, y - 28); c.lineTo(x + 8, y - 8); c.lineTo(x + 28, y); c.lineTo(x + 8, y + 8); c.lineTo(x, y + 28); c.lineTo(x - 8, y + 8); c.lineTo(x - 28, y); c.lineTo(x - 8, y - 8); c.closePath(); c.fill();
+    });
+    specks(c, s, 3000, ['rgba(255,255,255,.03)', 'rgba(0,0,0,.12)'], 1.6, 191);
   });
 }
 // Walls: burgundy damask over a dark wainscot with a gold rail (laid in
@@ -910,24 +914,30 @@ function vegasBuild(p, o) {
     const cardGeo = new THREE.PlaneGeometry(0.09, 0.13);
     const flat = (x, z, rot = 0) => { const m = new THREE.Mesh(cardGeo, new THREE.MeshStandardMaterial({ map: cardBack(), roughness: 0.6 })); m.rotation.set(-Math.PI / 2, 0, rot); m.position.set(x, 0.773, z); m.visible = false; g.add(m); return m; };
     const board = [0, 1, 2, 3, 4].map((k) => flat(-0.24 + k * 0.12, 0));
-    const HOLE = [[-0.6, -0.34], [0.6, -0.34], [-0.6, 0.34], [0.6, 0.34], [-0.86, 0], [0.86, 0]];
+    // (the two far seats sit wider apart: the dealer's chair is between them)
+    const HOLE = [[-0.72, -0.3], [0.72, -0.3], [-0.6, 0.34], [0.6, 0.34], [-0.86, 0], [0.86, 0]];
     const hole = HOLE.map(([x, z]) => [flat(x - 0.05, z, 0.15), flat(x + 0.05, z, -0.15)]);
     const potMat = new THREE.MeshStandardMaterial({ color: 0xb3262f, roughness: 0.5 });
     const pot = mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 16), potMat, 0, 0.78, 0.17); pot.visible = false; g.add(pot);
     const button = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.01, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }), 0, 0.776, 0); button.visible = false; g.add(button);
-    o.casinoPoker = { board, hole, pot, button, HOLE, sig: '' };
+    o.casinoPoker = { board, hole, pot, button, HOLE, sig: '', at: { x: p.x + rx, z: p.y + rz } };
     // a stack is one cylinder with stripes painted round it (cheap to draw)
     const chipMats = [0xb3262f, 0x1f4fb3, 0x16181b, 0x1f8a4c, 0xf0e6d2].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
     const chip = (x, z, n, col) => g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.009 * n, 14), chipMats[Math.abs(col) % 5], x, 0.772 + 0.0045 * n, z));
     chip(0, 0.18, 7, 0); chip(0.07, 0.2, 4, 1);
-    for (const [x, z] of [[-0.6, -0.36], [0.6, -0.36], [-0.6, 0.36], [0.6, 0.36], [-0.95, 0], [0.95, 0]]) chip(x * 0.85, z * 0.85, 3 + Math.round(Math.abs(x * 5)) % 4, Math.round((x + z) * 7));
-    // the lamp over the table: a long green shade, glowing underneath
-    const shade = mesh(new THREE.BoxGeometry(1.5, 0.16, 0.42), new THREE.MeshStandardMaterial({ color: 0x1e5a3a, roughness: 0.5 }), 0, 1.85, 0);
+    for (const [x, z] of [[-0.8, -0.34], [0.8, -0.34], [-0.6, 0.36], [0.6, 0.36], [-0.95, 0], [0.95, 0]]) chip(x * 0.85, z * 0.85, 3 + Math.round(Math.abs(x * 5)) % 4, Math.round((x + z) * 7));
+    // in front of the dealer's chair: his chip tray and the deck
+    g.add(mesh(new THREE.BoxGeometry(0.34, 0.03, 0.08), M(C.ink), 0, 0.78, -0.45));
+    for (let k = 0; k < 5; k++) g.add(mesh(new THREE.BoxGeometry(0.05, 0.022, 0.06), chipMats[k], -0.12 + k * 0.06, 0.79, -0.45));
+    g.add(mesh(new THREE.BoxGeometry(0.07, 0.025, 0.1), new THREE.MeshStandardMaterial({ map: cardBack(), roughness: 0.6 }), -0.24, 0.785, -0.38));
+    // the lamp over the table: a green shade, glowing underneath (short
+    // enough that the far seats and the dealer show past it)
+    const shade = mesh(new THREE.BoxGeometry(0.9, 0.14, 0.3), new THREE.MeshStandardMaterial({ color: 0x1e5a3a, roughness: 0.5 }), 0, 1.85, 0);
     shade.castShadow = false; g.add(shade);
-    const under = new THREE.Mesh(new THREE.PlaneGeometry(1.42, 0.36), new THREE.MeshBasicMaterial({ color: 0xffe2a8 }));
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.25), new THREE.MeshBasicMaterial({ color: 0xffe2a8 }));
     under.rotation.x = Math.PI / 2; under.position.set(0, 1.77, 0); g.add(under);
     (o.casinoLamps || (o.casinoLamps = [])).push(under);
-    for (const x of [-0.6, 0.6]) g.add(mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.5, 4), M(C.char), x, 2.18, 0));
+    for (const x of [-0.36, 0.36]) g.add(mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.5, 4), M(C.char), x, 2.17, 0));
     g.position.set(p.x + rx, 0, p.y + rz);
     return g;
   }
@@ -1176,7 +1186,7 @@ function vegasAnimate(fx, t, closed, o) {
   // the hold'em table shows the game (office.js stepPoker): only redrawn when it changes
   const P = o.casinoPoker, game = o.poker;
   if (P) {
-    const sig = !game || !game.hands ? 'none' : `${game.stage}|${game.board.length}|${[...game.folded].join()}|${Object.keys(game.hands).join()}|${game.pot}|${(game.seats || []).join()}`;
+    const sig = (o.dealer ? 'D|' : '') + (!game || !game.hands ? 'none' : `${game.stage}|${game.board.length}|${[...game.folded].join()}|${Object.keys(game.hands).join()}|${game.pot}|${(game.seats || []).join()}`);
     if (sig !== P.sig) {
       P.sig = sig;
       const show = game && game.hands && game.stage !== 'idle';
@@ -1196,9 +1206,12 @@ function vegasAnimate(fx, t, closed, o) {
       });
       P.pot.visible = !!show && game.pot > 0;
       if (P.pot.visible) { const h = Math.min(0.2, 0.01 + game.pot / 2000); P.pot.scale.y = h; P.pot.position.y = 0.772 + h / 2; }
+      // The dealer button: in front of Chuck when he's at the table (he
+      // deals every hand), else by whoever deals this hand.
       const d = show && game.order && game.order.length ? (game.seats || []).indexOf(game.order[game.order.length - 1]) : -1;
-      P.button.visible = d >= 0;
-      if (d >= 0) P.button.position.set(P.HOLE[d][0] * 0.75 + 0.12, 0.776, P.HOLE[d][1] * 0.75);
+      P.button.visible = !!o.dealer || d >= 0;
+      if (o.dealer) P.button.position.set(Math.max(-0.5, Math.min(0.5, o.dealer.x - P.at.x)) + 0.2, 0.776, -0.36);
+      else if (d >= 0) P.button.position.set(P.HOLE[d][0] * 0.75 + 0.12, 0.776, P.HOLE[d][1] * 0.75);
     }
   }
   // the lamp over the poker table: off after hours, like the rest
@@ -1229,11 +1242,11 @@ const VEGAS = {
   material: (color) => vegasMat(color),
   floors(dark) {
     return {
-      wood: [casinoCarpet(dark, 'red', dark ? '#3a0f16' : '#5e1420', 'rgba(40,140,150,.6)'), 1.6, 1],
-      work: [casinoCarpet(dark, 'navy', dark ? '#0f1430' : '#1b2350', 'rgba(170,40,60,.6)'), 1.6, 1],
-      carpet: [casinoCarpet(dark, 'royal', dark ? '#1b0f2e' : '#2d1a52', 'rgba(214,170,74,.5)'), 1.4, 1],
+      wood: [casinoCarpet(dark, 'red', dark ? '#36121a' : '#561a24'), 3.2, 1],
+      work: [casinoCarpet(dark, 'navy', dark ? '#11152c' : '#1d2448'), 3.2, 1],
+      carpet: [casinoCarpet(dark, 'royal', dark ? '#1c132b' : '#2b1f48'), 2.8, 1],
       tiles: [marble(true, true), 2.4, 0.16],
-      mat: [casinoCarpet(dark, 'green', dark ? '#0d2a1c' : '#14402a', 'rgba(214,170,74,.5)'), 1.4, 1],
+      mat: [casinoCarpet(dark, 'green', dark ? '#0f281c' : '#173d2b'), 2.8, 1],
     };
   },
   wall(dark) {

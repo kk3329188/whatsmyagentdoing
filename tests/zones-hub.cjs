@@ -1573,6 +1573,77 @@ test('the casino layout: a hold\'em table with six seats turned to it, a roulett
   assert.equal(plain.plan.pois.filter((q) => q.act === 'poker').length, 0);
 });
 
+test('the casino play corner: the hold\'em table is in front, nothing tall between it and the camera; the dealer\'s chair is no player\'s seat', () => {
+  const o = load(true);
+  o.layout = 'casino';
+  o.plan = o.buildPlan(0);
+  const t = (k) => o.plan.props.filter((p) => p.t === k);
+  const table = t('pokerTable')[0];
+  // the camera looks from the front (+y) and the right (+x): the slot machine,
+  // the big six and the roulette table all stand behind the poker table
+  for (const k of ['slot', 'bigSix', 'roulette']) {
+    const p = t(k)[0];
+    assert.ok(p.y + (p.d || 0.7) < table.y - 0.3, `${k} at y ${p.y} is behind the table (y ${table.y})`);
+  }
+  // the dealer sits at the far side's middle, facing the table, in a chair of his own
+  const d = o.plan.dealer;
+  assert.ok(d && Math.abs(d.x - (table.x + table.w / 2)) < 1e-6 && d.y < table.y && d.yaw === 0);
+  assert.equal(t('pokerSeat').filter((p) => p.dealer).length, 1);
+  assert.ok(!o.plan.pois.some((q) => Math.hypot(q.x - d.x, q.y - d.y) < 0.3), 'nobody else sits in the dealer\'s chair');
+  // every seat and stand can be walked to from the door
+  for (const q of o.plan.pois.filter((q) => ['poker', 'roulette', 'slot'].includes(q.act))) {
+    assert.ok(o.plan.grid.path(o.plan.door.x, o.plan.door.y, q.x, q.y).length > 0, `${q.act} at ${q.x},${q.y} can be reached`);
+  }
+  // the plain office has no dealer
+  assert.equal(load(true).plan.dealer, null);
+});
+
+test('Chuck the dealer: always at the casino table, not a session (not in people, not clickable); deals when two sit, waits otherwise', () => {
+  const o = load(true);
+  o.layout = 'casino'; o.floor = 1;
+  o.plan = o.buildPlan(0);
+  const d = o.dealerOn();
+  assert.equal(d.s.title, '查克');
+  assert.ok(!o.people.has(d.key) && o.bodies().includes(d), 'drawn, but not one of the sessions');
+  assert.equal(d.x, o.plan.dealer.x); assert.equal(d.y, o.plan.dealer.y);
+  const idle = o.stateOf(d);
+  assert.equal(idle.pose, 'sit');
+  assert.ok(['shuffle', 'checkwatch', 'lookaround', 'tap', 'yawn'].includes(idle.act), idle.act);
+  // after hours he dozes at the table
+  o.closedNow = true; assert.equal(o.stateOf(d).act, 'nap'); o.closedNow = false;
+  // two sit down: he greets, deals, calls the streets
+  const seats = o.holdemSeats();
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    const said = new Set(), acts = new Set();
+    for (const [i, key] of [[0, 'claude:a'], [3, 'claude:b']]) {
+      const q = seats[i];
+      o.people.set(key, { key, x: q.x, y: q.y, path: [], poi: q, s: { key }, phase: 0 });
+      q.taken = key;
+      o.stepPoker(); o.stepDealer();
+      if (d.event) said.add(d.event.text);
+    }
+    for (let i = 0; i < 600; i++) {
+      clock += 200;
+      o.stepPoker(); o.stepDealer();
+      if (d.event) said.add(d.event.text);
+      acts.add(o.stateOf(d).act);
+    }
+    assert.ok(said.has('歡迎！再一位就開局'), [...said].join());
+    assert.ok(said.has('發牌 🃏') && said.has('翻牌') && said.has('河牌'), [...said].join());
+    assert.ok(acts.has('deal'), [...acts].join());
+    // still where he was, still not a session
+    assert.equal(o.dealer, d); assert.ok(!o.people.has(d.key));
+  } finally { Date.now = real; }
+  // not on the other floor, not in another layout
+  o.floor = 2; assert.equal(o.dealerOn(), null);
+  const plain = load(true); plain.floor = 1;
+  assert.equal(plain.dealerOn(), null);
+  assert.ok(!plain.bodies().some((b) => b.dealer));
+});
+
 test('upstairs in the casino: a blackjack table with three seats and a craps table instead of foosball and the gym', () => {
   const o = loadFloor(2);
   o.layout = 'casino';

@@ -59,6 +59,44 @@ function scenePlan(def) {
   };
 }
 
+// Chuck the dealer's shirt front and red bow tie, on his dark waistcoat.
+function dealerBow() {
+  const g = new THREE.Group();
+  const shirt = new THREE.Shape();
+  shirt.moveTo(-0.055, 0.075); shirt.lineTo(0.055, 0.075); shirt.lineTo(0, -0.07); shirt.closePath();
+  const front = new THREE.Mesh(new THREE.ShapeGeometry(shirt), new THREE.MeshStandardMaterial({ color: 0xf4efe4, roughness: 0.8 }));
+  front.position.z = 0.004;
+  g.add(front);
+  const red = new THREE.MeshStandardMaterial({ color: 0xb3262f, roughness: 0.5 });
+  for (const sx of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.045, 4), red);
+    wing.rotation.z = sx * Math.PI / 2; wing.position.set(sx * 0.022, 0.058, 0.012);
+    g.add(wing);
+  }
+  return g;
+}
+
+// Chuck's glasses: two round wire rims over the eyes drawn on the face
+// (chibi.js: the eyes sit about 0.09 either side, level with the skull's middle).
+function dealerGlasses() {
+  const g = new THREE.Group();
+  const wire = new THREE.MeshStandardMaterial({ color: 0x2a2018, metalness: 0.4, roughness: 0.4 });
+  const lens = new THREE.MeshStandardMaterial({ color: 0xdfeefa, transparent: true, opacity: 0.18, roughness: 0.1, depthWrite: false });
+  for (const sx of [-1, 1]) {
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.007, 6, 24), wire);
+    rim.position.set(sx * 0.092, 0.228, 0.24); rim.rotation.y = sx * 0.35;
+    const glass = new THREE.Mesh(new THREE.CircleGeometry(0.048, 20), lens);
+    glass.position.copy(rim.position); glass.rotation.copy(rim.rotation);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.2), wire);
+    arm.position.set(sx * 0.15, 0.235, 0.13); arm.rotation.y = sx * 0.25;
+    g.add(rim, glass, arm);
+  }
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.05, 6), wire);
+  bridge.rotation.z = Math.PI / 2; bridge.position.set(0, 0.24, 0.252);
+  g.add(bridge);
+  return g;
+}
+
 function skyNow() {
   const h = new Date().getHours() + new Date().getMinutes() / 60;
   if (h >= 7 && h < 17) return { sky: 0xa9d4f2, sun: 1.7, amb: 1.15, night: false };
@@ -2071,6 +2109,7 @@ export class Office3D extends window.Office {
     const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.hairStyle ?? (p.h >>> 3) % HAIR_STYLES }); // the same style as in 2D
     const obj = rig.root;
     if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
+    if (p.dealer) { rig.front.add(dealerBow()); rig.head.add(dealerGlasses()); }
     rig.sign.add(this.signBoard());
     const laptop = new THREE.Group();
     const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));
@@ -2102,6 +2141,7 @@ export class Office3D extends window.Office {
 
   facing(p, st) {
     if (st.pose === 'walk') return null;
+    if (p.dealer) return p.spot.yaw;
     if (p.me) return p.atPoker ? p.atPoker.yaw : p.atRoulette ? p.atRoulette.yaw : p.seated || p.atSlot ? Math.PI : null;
     if (p.seeOff && !p.path.length) return Math.atan2(this.plan.door.x - p.x, this.plan.door.y - p.y);
     if (p.meeting && this.atSeat(p)) return p.meeting.seat.yaw != null ? p.meeting.seat.yaw : p.meeting.seat.face === 'back' ? Math.PI : 0;
@@ -2131,7 +2171,7 @@ export class Office3D extends window.Office {
 
   syncActors(dt) {
     for (const [k, a] of this.actors) {
-      if (!this.people.has(k) && !(k === 'me' && this.me) && !(this.visitors && this.visitors.has(k))) { this.scene.remove(a.obj, a.laptop, a.blob); this.actors.delete(k); }
+      if (!this.people.has(k) && !(k === 'me' && this.me) && !(this.visitors && this.visitors.has(k)) && !(this.dealer && this.dealer.key === k)) { this.scene.remove(a.obj, a.laptop, a.blob); this.actors.delete(k); }
     }
     for (const p of this.bodies()) {
       const a = this.actorFor(p);
@@ -2365,7 +2405,7 @@ export class Office3D extends window.Office {
       const foot = new THREE.Vector3(p.x, 0, p.y).project(this.camera);
       const fy = (1 - foot.y) / 2 * this.ch;
       heads.push([p, { x: sx, y: sy, act: st.act }, v.z]);
-      if (!p.me && !p.visitor) this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
+      if (!p.me && !p.visitor && !p.dealer) this.hit.push({ key: p.key, x0: sx - 18, x1: sx + 18, y0: sy - 24, y1: fy + 4 });
     }
     heads.sort((a, b) => b[2] - a[2]);
     if (this.plan.boss) {

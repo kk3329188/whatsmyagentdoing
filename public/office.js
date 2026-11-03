@@ -773,16 +773,24 @@
       const casino = this.layout === 'casino';
       const tx = 2.1, ty = MD + 1.1; // clear of the phone booth by the left wall
       let pp = null; // the ping-pong table's line of play (the ball follows it)
+      let dealer = null;
       if (casino) {
-        // Six seats round an oval table, each turned to its middle.
-        const pw = 2.4, pd = 1.2, cx = tx + 0.1 + pw / 2, cy = ty + pd / 2;
-        prop('pokerTable', { x: tx + 0.1, y: ty, w: pw, d: pd });
-        solid(tx + 0.1, ty, pw, pd, 0.02);
-        for (const [sx, sy] of [[cx - 0.6, ty - 0.42], [cx + 0.6, ty - 0.42], [cx - 0.6, ty + pd + 0.42], [cx + 0.6, ty + pd + 0.42], [tx - 0.32, cy], [tx + pw + 0.52, cy]]) {
+        // The hold'em table at the front of the corner, nearest the camera,
+        // so nothing tall stands between you and it: six seats round an
+        // oval table, each turned to its middle, and the dealer's chair in
+        // the middle of the far side (Chuck sits there, facing the room).
+        const kx = 2.5, ky = FY - 2.4;
+        const pw = 2.4, pd = 1.2, cx = kx + 0.1 + pw / 2, cy = ky + pd / 2;
+        prop('pokerTable', { x: kx + 0.1, y: ky, w: pw, d: pd });
+        solid(kx + 0.1, ky, pw, pd, 0.02);
+        for (const [sx, sy] of [[cx - 0.85, ky - 0.36], [cx + 0.85, ky - 0.36], [cx - 0.6, ky + pd + 0.42], [cx + 0.6, ky + pd + 0.42], [kx - 0.32, cy], [kx + pw + 0.52, cy]]) {
           prop('pokerSeat', { x: sx, y: sy, yaw: Math.atan2(cx - sx, cy - sy) });
           poi(sx, sy, 'poker', Math.cos(Math.atan2(cx - sx, cy - sy)) >= 0 ? 'front' : 'back', { sit: 0.47, zone: 'idle', yaw: Math.atan2(cx - sx, cy - sy), table: 'holdem' });
         }
-        floors.push({ kind: 'mat', x: tx - 0.8, y: ty - 0.9, w: pw + 1.8, d: pd + 1.8 });
+        dealer = { x: cx, y: ky - 0.45, yaw: 0, face: 'front', sit: 0.47 };
+        prop('pokerSeat', { x: dealer.x, y: dealer.y, yaw: 0, dealer: true });
+        solid(dealer.x - 0.22, dealer.y - 0.22, 0.44, 0.44);
+        floors.push({ kind: 'mat', x: kx - 0.8, y: ky - 1.0, w: pw + 1.8, d: pd + 1.9 });
       } else {
         add(tx + 1.3 + ty + 0.7, () => this.pingpong(tx, ty));
         prop('pingpong', { x: tx, y: ty });
@@ -800,26 +808,30 @@
       solid(0.1, vy, 0.75, 1.55);
       poi(1.3, vy + 0.4, 'vending', 'back');
       poi(1.3, vy + 1.2, 'vending', 'back');
-      const fx = 3.0, fby = vy + 0.4;
       if (casino) {
-        // The roulette table: two watch the wheel from its ends.
+        // The roulette table behind the poker table (it is low: the cards
+        // stay in view over it); two watch the wheel from its ends.
+        const fx = 2.6, fby = MD + 1.65;
         prop('roulette', { x: fx, y: fby, w: 1.6, d: 0.8 });
         solid(fx, fby, 1.6, 0.8, 0.05);
         poi(fx - 0.45, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: Math.PI / 2, table: 'roulette' });
         poi(fx + 2.05, fby + 0.4, 'roulette', 'side', { zone: 'idle', yaw: -Math.PI / 2, table: 'roulette' });
       } else {
+        const fx = 3.0, fby = vy + 0.4;
         add(fx + 0.8 + fby + 0.4, () => this.foosball(fx, fby));
         prop('foosball', { x: fx, y: fby });
         solid(fx, fby, 1.6, 0.8, 0.05);
         poi(fx - 0.45, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
         poi(fx + 2.05, fby + 0.4, 'foosball', 'side', { pair: 'fb' });
       }
-      const ax = MW - 1.55, ay = MD + 2.6;
+      // The tall ones (the big six wheel, the slot machine) stand back
+      // against the meeting room's glass in the casino, behind both tables.
+      const ax = casino ? 2.95 : MW - 1.55, ay = casino ? MD + 0.15 : MD + 2.6;
       if (casino) {
         // The big six: a money wheel on a stand; whoever is in front watches it go.
         prop('bigSix', { x: ax, y: ay });
         solid(ax, ay, 0.7, 0.7);
-        poi(ax + 0.35, ay + 1.15, 'roulette', 'back', { zone: 'idle', yaw: Math.PI });
+        poi(ax + 0.35, ay + 1.0, 'roulette', 'back', { zone: 'idle', yaw: Math.PI });
       } else {
         add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
         prop('arcade', { x: ax, y: ay });
@@ -827,7 +839,7 @@
         poi(ax + 0.35, ay + 1.15, 'arcade', 'back', { zone: 'idle' });
       }
       // A modern video slot machine, with a stool in front of it.
-      const slx = MW - 0.75, sly = MD + 2.6;
+      const slx = casino ? 1.8 : MW - 0.75, sly = casino ? MD + 0.15 : MD + 2.6;
       add(slx + 0.45 + sly + 0.35, () => this.slotMachine(slx, sly));
       prop('slot', { x: slx, y: sly });
       solid(slx, sly, 0.9, 0.7);
@@ -1030,7 +1042,7 @@
       orientSeats(pois, props);
       return {
         W, D, OW: W, OD: FY - 0.3, MR: MD, PY: FY, RW: 0, grid, items, props, pois, desks, podSpots, aisles, floors, art,
-        whiteboard, wallSign: { x: 0.4, text: 'MEETING' }, board, logo, windows, posters, pp, neon, boss, sec, queue, targets, lift,
+        whiteboard, wallSign: { x: 0.4, text: 'MEETING' }, board, logo, windows, posters, pp, dealer, neon, boss, sec, queue, targets, lift,
         floor: 1, door: { x: 0.4, y: D - 1.2 }, zones, zoneAt, noNap: true,
       };
     }
@@ -2218,6 +2230,7 @@
       const out = [...this.people.values()];
       if (this.me) out.push(this.me);
       if (this.visitors) out.push(...this.visitors.values());
+      if (this.dealer) out.push(this.dealer);
       return out;
     }
 
@@ -2575,6 +2588,61 @@
       g.winners = winners; g.winName = name; g.stage = 'done'; g.at = Date.now(); g.queue = [];
       // broke: a fresh stack next hand (pretend chips)
       for (const k of Object.keys(g.stacks)) if (g.stacks[k] <= 0) g.stacks[k] = POKER.stack;
+    }
+
+    // ---- Chuck, the house dealer (casino layout) ---------------------------
+    // Always in the dealer's chair at the hold'em table, waiting for players.
+    // Not a session: not in people, can't be clicked or picked up (like a
+    // visitor), drawn through bodies(). When a hand is on he deals and calls
+    // each street (the dealer button sits in front of him); between hands he
+    // shuffles, checks his watch, looks round for players.
+    dealerOn() {
+      const at = this.layout === 'casino' && this.floor === 1 && !this.compact && this.plan && this.plan.dealer;
+      if (!at) { this.dealer = null; return null; }
+      if (this.dealer && this.dealer.spot === at) return this.dealer;
+      this.dealer = {
+        dealer: true, key: 'dealer:chuck', h: 7, x: at.x, y: at.y, spot: at, path: [], phase: 1.7, walkFace: 'front',
+        skin: '#e8b98f', hair: '#2a1d16', pants: '#16181b', shirt: '#22242c', hairStyle: 1,
+        s: { key: 'dealer:chuck', agent: 'claude', status: 'idle', title: '查克', level: 1, dealer: true },
+        sig: 'idle', dealUntil: 0, seen: 0, inviteAt: Date.now(),
+      };
+      return this.dealer;
+    }
+
+    stepDealer() {
+      const d = this.dealerOn();
+      if (!d) return;
+      const g = this.poker, now = Date.now();
+      const say = (text) => { d.event = { text, at: now, zone: 'held' }; };
+      const sig = g && g.hands && g.stage !== 'idle' ? `${g.stage}|${g.board.length}` : 'idle';
+      if (sig !== d.sig) {
+        d.sig = sig;
+        const line = sig !== 'idle' && { preflop: '發牌 🃏', flop: '翻牌', turn: '轉牌', river: '河牌', done: '開牌！' }[g.stage];
+        if (line) say(line);
+        if (g && g.stage !== 'done' && sig !== 'idle') d.dealUntil = now + 1600;
+      }
+      // Waiting for a game: greets whoever sits down, now and then asks round.
+      const sitting = this.pokerSitters().filter(Boolean).length;
+      if (sig === 'idle') {
+        if (sitting === 1 && d.seen === 0) say('歡迎！再一位就開局');
+        else if (!sitting && !this.closedNow && !this.napNow && now - d.inviteAt > 60_000) { say('來玩一把嗎？🃏'); d.inviteAt = now; }
+      }
+      if (sitting) d.inviteAt = now;
+      d.seen = sitting;
+    }
+
+    // What Chuck's hands are doing: dealing, watching the hand, or passing
+    // the time (asleep at the table after hours, when nobody plays).
+    dealerAct(d) {
+      const g = this.poker, now = Date.now();
+      if (g && g.hands && g.stage !== 'idle') {
+        if (now < d.dealUntil) return 'deal';
+        if (g.stage === 'done') return now - g.at < 1500 ? 'chat' : 'shuffle';
+        return Math.floor(now / 3000 + d.phase) % 3 ? 'watch' : 'lookaround';
+      }
+      if (this.closedNow || this.napNow) return 'nap';
+      const idle = ['shuffle', 'shuffle', 'checkwatch', 'lookaround', 'tap', 'shuffle', 'yawn', 'lookaround'];
+      return idle[Math.floor(now / 5000 + d.phase) % idle.length];
     }
 
     // Everyone's pretend chips at the casino (poker and roulette share them):
@@ -4346,6 +4414,7 @@
 
     stateNow(p) {
       const s = p.s || {};
+      if (p.dealer) return { pose: 'sit', face: p.spot.face, act: this.dealerAct(p), sitZ: p.spot.sit };
       if (p.visitor) {
         if (p.path.length) return { pose: 'walk', face: p.walkFace, act: null, sitZ: 0 };
         return { pose: 'stand', face: 'back', act: p.stage === 'talk' ? 'chat' : 'lookaround', sitZ: 0 };
@@ -5028,7 +5097,7 @@
 
       // Bubbles go above the sign when one is held up.
       const headTop = y + (st.act === 'sign' ? hip - 46 : hy - R - 1) * sc;
-      if (!p.me && !p.visitor) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
+      if (!p.me && !p.visitor && !p.dealer) this.hit.push({ key: p.key, x0: x - 13, x1: x + 13, y0: headTop - 22, y1: fb.y + 4 });
       return { x, y: headTop, act: st.act };
     }
 
@@ -5229,6 +5298,8 @@
         top = pill('🧑‍💼 你', '#fff', '#2f3a52', top - 11, 1, false);
         const near = this.meNear();
         if (near) top = pill(`空白鍵：找「${this.label(near.s).slice(0, 14)}」`, '#fff', '#8b6be6', top - 4, 1, false);
+      } else if (p.dealer) {
+        top = pill('🎩 ' + s.title, '#fff', '#7a2f22', top - 11, 1, false);
       } else if ((!s.subagent && p.zone !== 'idle') || hover || best) {
         const loud = p.mode === 'work' || p.zone === 'wait' || p.zone === 'error' || hover || best;
         top = pill((best ? '🏆 ' : '') + this.label(s), best ? '#5a4300' : pal.text, best ? '#ffd76a' : pal.tagBg, top - 11, loud ? 1 : 0.7, true);
@@ -5600,6 +5671,7 @@
       for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1)); glide(p); }
       for (const v of (this.visitors || new Map()).values()) { walk(v, SPEED); glide(v); }
       if (this.me) { walk(this.me, SPEED); glide(this.me); }
+      this.dealerOn();
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);
     }
@@ -5655,6 +5727,7 @@
       this.stepVisitors(dt);
       this.stepSlot(dt);
       this.stepPoker();
+      this.stepDealer();
       this.stepRoulette();
     }
 

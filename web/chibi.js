@@ -403,6 +403,10 @@ function act(name, t) {
     case 'whiteboard': return { R: [-2.1 + 0.28 * S(t * 3), 0.12 * S(t * 2), -0.6], face: 'focus' };
     case 'printer': return { R: [-0.95, 0.3, -1.0], L: [-0.95, 0.3, -1.0], lean: 0.16, face: 'neutral' };
     case 'peek': return { R: [-2.45, 0.6, -2.25], head: [-0.1, 0.45 * S(t * 0.8), 0], face: 'look', look: S(t * 0.8) };
+    // the dealer: cards flicked out round the table, a riffle shuffle, a look at the watch
+    case 'deal': return { R: [-1.05 + 0.2 * up(t * 6), 0.15 - 0.45 * S(t * 1.5), -0.75], L: [-0.95, 0.45, -1.25], head: [0.22, 0.35 * S(t * 1.5), 0], lean: 0.08, face: 'focus' };
+    case 'shuffle': return { R: [-0.95, 0.5, -1.3 + 0.12 * S(t * 15)], L: [-0.95, 0.5, -1.3 + 0.12 * S(t * 15 + PI)], head: [0.3, 0, 0], lean: 0.06, face: 'focus' };
+    case 'checkwatch': return { L: [-1.25, 0.65, -2.05], R: [-0.7, 0.3, -1.0], head: [0.35, -0.2, 0], face: 'bored' };
     case 'tap': return { R: [-0.7, 0.3, -0.95 + 0.16 * up(t * 14)], L: [-0.6, 0.3, -0.9], face: 'bored' };
     case 'lookaround': return { head: [0, 0.5 * S(t * 0.9), 0], face: 'look', look: S(t * 0.9) };
     case 'meeting': return { R: [-0.65, 0.35, -0.95], L: [-0.65, 0.35, -0.95], head: [0.08, 0.1 * S(t * 0.6), 0], face: 'neutral' };
