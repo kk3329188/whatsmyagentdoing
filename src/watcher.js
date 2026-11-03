@@ -134,6 +134,11 @@ class Watcher extends EventEmitter {
     this.codexIndexMtime = 0;
     this.lastScan = 0;
     this.candidates = [];
+    // file -> its write time when it was dropped for being out of the window:
+    // not opened again until it is written to (a log written lately whose last
+    // event is older than the window would otherwise be read in full, and
+    // dropped, every second)
+    this.stale = new Map();
   }
 
   start() {
@@ -203,8 +208,9 @@ class Watcher extends EventEmitter {
     }
 
     for (const [file, t] of this.trackers) {
-      if ((t.session.lastEventAt || t.session.mtime || 0) < since) { this.trackers.delete(file); changed = true; }
+      if ((t.session.lastEventAt || t.session.mtime || 0) < since) { this.trackers.delete(file); this.stale.set(file, t.session.mtime); changed = true; }
     }
+    for (const [file, mt] of this.stale) if (!(mt >= since)) this.stale.delete(file);
 
     if (changed) this.emit('change');
   }
@@ -215,7 +221,8 @@ class Watcher extends EventEmitter {
     if (!st) return false;
     const t = this.trackers.get(c.file);
     if (!t) {
-      if (st.mtimeMs < since) return false;
+      if (st.mtimeMs < since || this.stale.get(c.file) === st.mtimeMs) return false;
+      this.stale.delete(c.file);
       this.open(c, st);
       return true;
     }

@@ -1527,6 +1527,40 @@ test('public replay: after hours on your office is after hours for the viewer (d
   assert.equal(view.closedNow, false);
 });
 
+test('public replay at the casino: the viewer sees the same hand (cards, folds), and Chuck deals instead of dozing through the lunch nap', () => {
+  const host = casinoAt(12.75), view = casinoAt(12.75);
+  settle(host, [at('done', { n: 1 }), at('idle', { n: 2 })]);
+  assert.equal(host.napNow, true);
+  const seats = host.holdemSeats();
+  for (const [i, key] of [[0, 'claude:done1'], [3, 'claude:idle2']]) {
+    const p = host.people.get(key), q = seats[i];
+    if (p.poi && p.poi.taken === key) p.poi.taken = null;
+    p.poi = q; p.x = q.x; p.y = q.y; p.path = []; p.until = Infinity; q.taken = key;
+  }
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    for (let i = 0; i < 400 && !(host.poker && host.poker.stage === 'flop'); i++) { clock += 200; host.stepPoker(); }
+    assert.equal(host.poker.stage, 'flop');
+    const w = JSON.parse(JSON.stringify({ ...host.worldState(), wall: clock }));
+    view.applyWorld(w, new Map(), { hostNow: clock });
+    const g = view.poker;
+    assert.equal(g.stage, 'flop');
+    assert.equal(JSON.stringify(g.board), JSON.stringify(host.poker.board));
+    assert.equal(JSON.stringify(g.hands['claude:done1']), JSON.stringify(host.poker.hands['claude:done1']));
+    assert.equal(JSON.stringify(g.seats), JSON.stringify(host.poker.seats));
+    view.stepRemote(0.016);
+    assert.ok(view.dealer, 'Chuck is at the viewer\'s table too');
+    assert.notEqual(view.stateOf(view.dealer).act, 'nap', 'a hand is on: he deals, not dozes');
+    // the hand is over on the host and nobody plays: he may doze (it is the nap)
+    host.poker = null;
+    view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: clock })), new Map(), { hostNow: clock });
+    assert.equal(view.poker, null);
+    assert.equal(view.stateOf(view.dealer).act, 'nap');
+  } finally { Date.now = real; }
+});
+
 test('desks: the first people to work take the pod nearest the front, not the back', () => {
   const o = load(true);
   const depth = (d) => d.x + d.y;

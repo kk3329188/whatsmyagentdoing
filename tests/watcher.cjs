@@ -123,3 +123,15 @@ test('a large long-lived chat keeps head metadata and reads its current state fr
   assert.equal(session.reply, 'Latest reply in the tail');
   assert.equal(f.reads.filter(file => file === log.file).length, 2, 'read only the head and tail');
 });
+
+test('a log touched lately whose last event is older than the window is read once, not again every second', t => {
+  const f = fixture(t);
+  const log = f.write('2026/10/26', 1, NOW - 48 * HOUR);
+  fs.utimesSync(log.file, new Date(NOW - HOUR), new Date(NOW - HOUR)); // the file is newer than its last event
+  for (let i = 0; i < 4; i++) { f.watcher.tick(); f.advance(1000); }
+  assert.equal(f.watcher.sessions().length, 0, 'still out of the window');
+  assert.equal(f.reads.filter((x) => x === log.file).length, 1, 'opened once, then left alone until it changes');
+  // written to again: back in
+  f.append(log, 'task_started'); f.watcher.tick();
+  assert.equal(f.watcher.sessions().length, 1);
+});

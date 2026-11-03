@@ -2653,6 +2653,30 @@
       return idle[Math.floor(now / 5000 + d.phase) % idle.length];
     }
 
+    // The hand on the table for a replaying page (worldState / applyWorld):
+    // plain arrays by seat (a world carries no Sets, and no keys holding ':'
+    // as names), so the cards and Chuck show the same hand as yours.
+    pokerWire() {
+      const g = this.poker;
+      if (!g || !g.hands || g.stage === 'idle') return null;
+      const seats = (g.seats || []).map((k) => k || null);
+      return {
+        stage: g.stage, at: g.at, pot: g.pot, board: [...g.board], seats,
+        hands: seats.map((k) => (k && g.hands[k]) || null), folded: seats.map((k) => !!k && g.folded.has(k)),
+      };
+    }
+
+    pokerUnwire(w, skew = 0) {
+      if (!w || !Array.isArray(w.seats)) return null;
+      const hands = {}, folded = new Set();
+      w.seats.forEach((k, i) => {
+        if (!k || !Array.isArray(w.hands && w.hands[i])) return;
+        hands[k] = w.hands[i];
+        if (w.folded && w.folded[i]) folded.add(k);
+      });
+      return { stage: w.stage, at: (w.at || 0) - skew, pot: w.pot || 0, board: Array.isArray(w.board) ? w.board : [], seats: w.seats, hands, folded, order: Object.keys(hands) };
+    }
+
     // Everyone's pretend chips at the casino (poker and roulette share them):
     // 1000 to start, topped up when someone runs out. This page only.
     wallet() { return this.casinoChips || (this.casinoChips = {}); }
@@ -5551,7 +5575,7 @@
         t: this.t, wall: Date.now(), n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
         people: [...this.people.values()].map(person), me: this.me ? person(this.me) : null,
         visitors: [...(this.visitors || new Map()).values()].map(person),
-        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1),
+        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1), poker: this.pokerWire(),
         liftOpen: this.liftOpen || 0, confetti: enc(this.confetti, 1), alarmUntil: this.alarmUntil || 0, bossIn: !!this.bossIn,
         lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
         // after hours by the host's clock (a viewer may be somewhere else)
@@ -5672,6 +5696,7 @@
       }
       this.slotSpinHost = w.slot ? w.slot.spinAt : null;
       this.slot = slot;
+      this.poker = this.pokerUnwire(w.poker, skew);
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
       for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
       this.bossIn = !!w.bossIn;
@@ -5743,7 +5768,7 @@
       for (const p of this.people.values()) { walk(p, SPEED * (p.rush > wall ? 2.3 : 1) * (p.catchUp > wall ? 1.35 : 1)); glide(p); }
       for (const v of (this.visitors || new Map()).values()) { walk(v, SPEED); glide(v); }
       if (this.me) { walk(this.me, SPEED); glide(this.me); }
-      this.dealerOn();
+      this.stepDealer();
       walk(this.cat, 1.2);
       walk(this.cat2, 1.2);
     }
