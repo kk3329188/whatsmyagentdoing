@@ -270,9 +270,10 @@ test('public view, live: a WebSocket with the key gets the sessions and the offi
     ws.onopen = () => resolve({ ws, got, ok: true });
     ws.onerror = () => resolve({ ws, got, ok: false });
   });
+  let v = null;
   try {
     assert.equal((await open('nope')).ok, false, 'no key, no socket');
-    const v = await open('k3y');
+    v = await open('k3y');
     assert.equal(v.ok, true);
     await send(world());
     const t0 = Date.now();
@@ -287,8 +288,12 @@ test('public view, live: a WebSocket with the key gets the sessions and the offi
     const n = v.got.filter((m) => m.t === 'world').length;
     await new Promise((r) => setTimeout(r, 700));
     assert.equal(v.got.filter((m) => m.t === 'world').length, n);
-    v.ws.close();
+    // ...but a heartbeat every 2 s: silence on the page means a dead socket (connect again)
+    const hb0 = v.got.filter((m) => m.t === 'hb').length;
+    await new Promise((r) => setTimeout(r, 2300));
+    assert.ok(v.got.filter((m) => m.t === 'hb').length > hb0, 'a heartbeat while nothing changes');
   } finally {
+    if (v) v.ws.close();
     for (const s of [main, pub]) { s.closeAllConnections(); s.close(); }
   }
 });

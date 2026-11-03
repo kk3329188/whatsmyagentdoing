@@ -708,6 +708,9 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
     setInterval(pushWorld, 300).unref();
     setInterval(() => pushState(false), 2000).unref();
     setInterval(() => { for (const v of viewers) if (!v.destroyed) v.write(wsFrame(9, Buffer.alloc(0))); }, 25_000).unref();
+    // A heartbeat the page can see: a tunnel can stall a socket that still
+    // looks open, and to the page silence means connect again.
+    setInterval(() => { if (viewers.size) pushAll(`{"t":"hb","now":${Date.now()}}`); }, 2000).unref();
     server.on('upgrade', (req, socket) => {
       const url = new URL(req.url, 'http://localhost');
       const k = Buffer.from(url.searchParams.get('k') || '');

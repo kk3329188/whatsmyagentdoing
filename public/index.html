@@ -262,6 +262,8 @@
   .empty code { background: var(--panel); padding: 2px 6px; border-radius: 4px; }
   .conn { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--error); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 12.5px; display: none; }
   .conn.on { display: block; }
+  .host-away { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 30; background: rgba(12,14,24,.72); color: #fff; padding: 5px 14px; border-radius: 999px; font-size: 12.5px; pointer-events: none; }
+  .host-away[hidden] { display: none; }
 
   /* The PiP iframe owns its animation clock, layout, and pointer events. */
   body.pip { padding: 8px; }
@@ -522,6 +524,7 @@
   <main id="main"></main>
 </div>
 <div class="conn" id="conn" data-t="disconnected"></div>
+<div class="host-away" id="hostAway" hidden>本機頁面休息中，現在看到的是模擬畫面</div>
 <div class="tip" id="tip"></div>
 <div class="poker-hud" id="pokerHud" hidden></div>
 <div class="poker-hud" id="rouletteHud" hidden></div>
@@ -834,22 +837,38 @@ function connect() {
     // second, the sessions every two); asking every two seconds instead
     // while that is down (a tunnel can hold an event stream back, so no
     // event stream here).
-    let tag = null;
+    // The WebSocket first: when it drops (or only looks open, below), connect
+    // again at once, then after 1, 2, 4, up to 8 s. Asking every 2 s (poll)
+    // only once it has been down 10 s (a network that blocks WebSockets).
+    let tag = null, ws = null, heard = 0, tries = 0;
+    const again = () => setTimeout(live, Math.min(8000, 500 * 2 ** tries++));
     const live = () => {
-      let ws;
-      try { ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?k=${encodeURIComponent(key)}`); } catch { setTimeout(live, 5000); return; }
-      ws.onopen = () => { wsLive = true; conn.classList.remove('on'); };
-      ws.onmessage = (e) => {
+      try { ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?k=${encodeURIComponent(key)}`); } catch { again(); return; }
+      const me = ws;
+      me.onopen = () => { wsLive = true; tries = 0; heard = Date.now(); wsDownSince = 0; conn.classList.remove('on'); };
+      me.onmessage = (e) => {
+        heard = Date.now();
         let m;
         try { m = JSON.parse(e.data); } catch { return; }
         if (m.t === 'state') onData(m.data);
         else if (m.t === 'world') takeWorld(m.world, m.now);
       };
-      ws.onclose = () => { wsLive = false; setTimeout(live, 3000); };
+      me.onclose = () => { if (ws !== me) return; down(); ws = null; again(); };
     };
     live();
+    // The server says something every 2 s: silence for 7 s is a socket that
+    // only looks open (a stalled tunnel, a laptop back from sleep). Drop it,
+    // fall back to asking, and connect again.
+    setInterval(() => {
+      if (!ws || !wsLive || Date.now() - heard < 7000) return;
+      const dead = ws;
+      ws = null; down();
+      dead.onclose = dead.onmessage = null;
+      try { dead.close(); } catch {}
+      again();
+    }, 1000);
     const poll = async () => {
-      if (wsLive) { setTimeout(poll, 2000); return; }
+      if (!wsDownLong()) { setTimeout(poll, 2000); return; }
       try {
         const r = await fetch(`/api/state?k=${encodeURIComponent(key)}`, { cache: 'no-store', headers: tag ? { 'if-none-match': tag } : {} });
         if (r.status === 200) { tag = r.headers.get('etag'); conn.classList.remove('on'); onData(await r.json()); }
@@ -1272,7 +1291,10 @@ else setInterval(worldTick, 250);
 
 // The viewer's side: the host's office when there is one, else our own.
 let worldTag = null, worldOk = 0;
-let wsLive = false;
+let wsLive = false, wsDownSince = Date.now();
+// The socket went (it may come straight back); down 10 s, ask instead (poll, pullWorld).
+const down = () => { if (wsLive || !wsDownSince) wsDownSince = Date.now(); wsLive = false; };
+const wsDownLong = () => !wsLive && wsDownSince && Date.now() - wsDownSince > 10_000;
 // The host's office into ours. `hostNow`: the host machine's clock when it
 // was sent, so a viewer whose clock is off still times bubbles and steps right.
 let decorSwitch = null;
@@ -1292,7 +1314,8 @@ function takeWorld(w, hostNow) {
   worldOk = Date.now();
 }
 async function pullWorld() {
-  if (!Hub.public || !office || !state.loaded || wsLive) return;
+  if (!Hub.public || !office || !state.loaded) return;
+  if (!wsDownLong()) return pullWorldDone();
   try {
     const key = new URLSearchParams(location.search).get('k') || '';
     const r = await fetch(`/api/world?k=${encodeURIComponent(key)}`, { cache: 'no-store', headers: worldTag ? { 'if-none-match': worldTag } : {} });
@@ -1301,9 +1324,16 @@ async function pullWorld() {
       takeWorld(await r.json(), Number(r.headers.get('x-now')) || 0);
     } else if (r.status === 304) worldOk = Date.now();
   } catch {}
+  pullWorldDone();
+}
+function pullWorldDone() {
   // The host may only have paused (a sleeping laptop, a reload): hold on a
   // while before running an office of our own, which would not match it.
   if (Date.now() - worldOk > 60_000) for (const o of [office, office2]) if (o && o.remote) o.leaveWorld();
+  // Say so when this is not your office as it is (your page is closed or asleep).
+  const away = document.getElementById('hostAway');
+  const off = !!office && !office.remote && Date.now() - worldOk > 60_000;
+  if (away && away.hidden !== !off) away.hidden = !off;
 }
 setInterval(pullWorld, 1000);
 if (new URLSearchParams(location.search).get('live') === '1') setTimeout(() => setLive(true), 1500);
