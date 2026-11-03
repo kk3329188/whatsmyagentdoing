@@ -528,6 +528,7 @@
 <div class="tip" id="tip"></div>
 <div class="poker-hud" id="pokerHud" hidden></div>
 <div class="poker-hud" id="rouletteHud" hidden></div>
+<div class="poker-hud" id="bigSixHud" hidden></div>
 <div class="ver" id="ver"></div>
 <script>if (new URLSearchParams(location.search).get('k')) { document.documentElement.dataset.theme = 'dark'; window.OFFICE_FORCE_DARK = true; }</script>
 <script src="/i18n.js"></script>
@@ -1510,6 +1511,40 @@ rouletteHud.addEventListener('click', (e) => {
   if (!b) return;
   const on = b.dataset.bet === 'num' ? Math.round(Number(rouletteHud.querySelector('[data-num]').value)) : b.dataset.bet;
   if (!office.rouletteBet('me', on, rouletteChip)) Hub.toast(office.chipsOf('me') < rouletteChip ? '籌碼不夠' : '這局已經不能押了');
+});
+
+// The big six (casino, 1F): stand in front of the wheel to bet.
+const bigSixHud = document.getElementById('bigSixHud');
+let bigSixHtml = '', bigSixChip = 20;
+setInterval(() => {
+  const me = office && office.me, r = office && office.bigSix;
+  const on = !!(me && me.atBigSix && r && !office.remote);
+  if (bigSixHud.hidden !== !on) bigSixHud.hidden = !on;
+  if (!on) { bigSixHtml = ''; return; }
+  const S = OfficeBigSix, name = (k) => S.sixName(k);
+  const mine = r.bets.filter((b) => b.key === 'me'), staked = mine.reduce((a, b) => a + b.amount, 0);
+  const open = r.stage === 'bets';
+  let status = open ? '下注中' : r.stage === 'spin' ? '轉輪轉動中…' : '開獎';
+  if (r.stage === 'show') { const net = r.pay.me; status = `停在 ${name(S.SIX[r.seg])}・${net == null ? '你這局沒押' : net > 0 ? `你贏 +${net} 🎉` : `你輸 ${-net}`}`; }
+  const count = (k) => S.SIX.filter((x) => x === k).length;
+  const html = `<div class="row"><b>🎯 幸運大轉輪</b><span class="muted">${status}${open ? '（<span data-left></span> 秒）' : ''}</span></div>`
+    + `<div class="row"><span class="muted">最近</span>${r.history.slice(0, 10).map((k) => `<span class="ball">${name(k)}</span>`).join('') || '<span class="muted">還沒轉過</span>'}</div>`
+    + `<div class="row"><span class="muted">籌碼</span>${[10, 20, 50, 100].map((v) => `<button class="chip${v === bigSixChip ? ' on' : ''}" data-chip="${v}">${v}</button>`).join('')}`
+    + `<span class="muted">你的籌碼 <b style="color:#ffd76a">${office.chipsOf('me')}</b></span></div>`
+    + `<div class="row">${['1', '2', '5', '10', '20', 'star'].map((k) => `<button class="bet" data-six="${k}" title="${count(k)} / 24 格"${open ? '' : ' disabled'}>${name(k)}（1 賠 ${S.SIX_PAY[k]}）</button>`).join('')}</div>`
+    + `<div class="row"><button class="fold" data-clear${open && mine.length ? '' : ' disabled'}>收回</button>`
+    + `<span class="muted">你押了：${mine.length ? mine.map((b) => `${name(b.on)} ${b.amount}`).join('、') + `（共 ${staked}）` : '還沒押'}・WASD 走開就離開・假籌碼</span></div>`;
+  if (html !== bigSixHtml) { bigSixHtml = html; bigSixHud.innerHTML = html; }
+  const left = bigSixHud.querySelector('[data-left]');
+  if (left) left.textContent = Math.max(0, Math.ceil((S.BIGSIX.betMs - (Date.now() - r.at)) / 1000));
+}, 300);
+bigSixHud.addEventListener('click', (e) => {
+  if (!office) return;
+  const chip = e.target.closest('[data-chip]');
+  if (chip) { bigSixChip = Number(chip.dataset.chip); bigSixHtml = ''; return; }
+  if (e.target.closest('[data-clear]')) { office.bigSixClear('me'); return; }
+  const b = e.target.closest('[data-six]');
+  if (b && !office.bigSixBet('me', b.dataset.six, bigSixChip)) Hub.toast(office.chipsOf('me') < bigSixChip ? '籌碼不夠' : '這局已經不能押了');
 });
 
 // The stand-up: everyone downstairs (upstairs comes down by the lift), one

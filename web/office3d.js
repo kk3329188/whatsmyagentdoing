@@ -2413,7 +2413,7 @@ export class Office3D extends window.Office {
     }
     for (const [p, at] of heads) this.bubble(p, at);
     if (this.confetti && Date.now() - this.confetti.at < 4500) {
-      const cp = this.people.get(this.confetti.key);
+      const cp = this.confetti.key === 'me' ? this.me : this.people.get(this.confetti.key);
       if (cp) { v.set(cp.x, 1.2, cp.y).project(this.camera); this.drawConfetti((v.x + 1) / 2 * this.cw, (1 - v.y) / 2 * this.ch, Date.now() - this.confetti.at); }
     }
     if (this.offDuty > 0) {

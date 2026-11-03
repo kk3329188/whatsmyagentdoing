@@ -2080,3 +2080,70 @@ test('people come in many looks (skin, build, height, glasses, beards, skirts, t
   assert.equal(seen.length, shown.length);
   shown.forEach((p, i) => { for (const f of LOOK) assert.deepEqual(seen[i][f], p[f], `viewer ${i} ${f}`); });
 });
+
+const bigSixOf = () => { const window = {}; vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), { window, Math, Date, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} }); return window.OfficeBigSix; };
+
+test('the big six downstairs: you stand at it and bet, it spins, stops on a slot, pays that slot\'s number to 1 (the star 10 to 1), a big win throws confetti; the 3D wheel has the same slots', () => {
+  const o = load(true);
+  o.layout = 'casino'; o.floor = 1;
+  o.plan = o.buildPlan(0);
+  const { SIX, SIX_PAY, sixPay } = bigSixOf();
+  // the same 24 slots, in the same order, as the wheel's face in 3D
+  const face = fs.readFileSync(path.join(__dirname, '../web/decor.js'), 'utf8').match(/bigSixFace[\s\S]*?vals = (\[[^\]]+\])/)[1];
+  assert.deepEqual(JSON.parse(face.replace(/'/g, '"')).map((v) => (v === '★' ? 'star' : v)), [...SIX]);
+  assert.equal(sixPay({ on: '5', amount: 10 }, SIX.indexOf('5')), 60);
+  assert.equal(sixPay({ on: 'star', amount: 10 }, SIX.indexOf('star')), 110);
+  assert.equal(sixPay({ on: '2', amount: 10 }, SIX.indexOf('1')), 0);
+  const spot = o.bigSixSpots()[0];
+  assert.ok(spot, 'a place to stand in front of the wheel');
+  o.me = { me: true, key: 'me', x: spot.x, y: spot.y, path: [], atBigSix: spot, moving: false };
+  spot.taken = 'me';
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    o.stepBigSix();
+    const r = o.bigSix;
+    assert.equal(r.stage, 'bets');
+    assert.deepEqual([...o.bigSixSitters()], ['me']);
+    assert.equal(o.bigSixBet('me', '7', 10), false, 'only 1, 2, 5, 10, 20 or the star');
+    assert.equal(o.bigSixBet('me', 'star', 5000), false, 'not more than you have');
+    assert.ok(o.bigSixBet('me', 'star', 20));
+    assert.ok(o.bigSixBet('me', '1', 10));
+    assert.equal(o.chipsOf('me'), 970);
+    assert.ok(o.bigSixClear('me'));
+    assert.equal(o.chipsOf('me'), 1000, 'taken back');
+    assert.ok(o.bigSixBet('me', 'star', 20));
+    clock += 10_001; o.stepBigSix();
+    assert.equal(r.stage, 'spin');
+    assert.equal(o.bigSixBet('me', '1', 10), false, 'no bets once it turns');
+    r.seg = SIX.indexOf('star');
+    clock += 6_001; o.stepBigSix();
+    assert.equal(r.stage, 'show');
+    assert.equal(o.chipsOf('me'), 980 + 20 * (SIX_PAY.star + 1));
+    assert.equal(r.pay.me, 200);
+    assert.equal(r.history[0], 'star');
+    assert.equal(o.confetti && o.confetti.key, 'me', 'a big win: confetti');
+    assert.equal(o.stateOf(o.me).act, 'cheer');
+    clock += 4_001; o.stepBigSix();
+    assert.equal(r.stage, 'bets');
+    assert.equal(r.bets.length, 0);
+  } finally { Date.now = real; }
+});
+
+test('public replay: the big six turns and stops on the viewer\'s page too, with the bets on it; its lines pass the public filter', () => {
+  const { publicWorld } = require('../src/server');
+  const { publicSay } = require('../src/public-say');
+  const host = load(true), view = load(true);
+  for (const o of [host, view]) { o.layout = 'casino'; o.floor = 1; o.plan = o.buildPlan(0); }
+  host.stepBigSix();
+  host.bigSixBet('claude:x', '5', 50);
+  host.bigSix.stage = 'spin'; host.bigSix.seg = 3;
+  const pub = publicWorld({ at: 1, floors: { 1: JSON.parse(JSON.stringify(host.worldState())) } }, 'salt', []);
+  view.applyWorld(pub.floors[1], new Map(), { hostNow: Date.now() });
+  assert.equal(view.bigSix.stage, 'spin');
+  assert.equal(view.bigSix.seg, 3);
+  assert.equal(view.bigSix.bets.length, 1);
+  assert.equal(view.bigSix.bets[0].on, '5');
+  for (const line of ['押轉輪 ★ 20', '押轉輪 10 50', '轉輪轉啦 🎯', '來轉一把 🎯', '轉輪 ★：中了 +200 🎉', '轉輪 5…沒中 😩']) assert.ok(publicSay(line), line);
+});

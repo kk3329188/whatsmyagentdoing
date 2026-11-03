@@ -166,6 +166,19 @@
   const betName = (on) => (typeof on === 'number' ? `${on} 號` : BET_NAMES[on]);
   window.OfficeRoulette = { roulettePay, colourOf, WHEEL, RED, betName, ROULETTE };
 
+  // ---- The big six: a money wheel ------------------------------------------
+  // 24 slots (the same order as the 3D wheel's face, web/decor.js bigSixFace).
+  // Bet on 1, 2, 5, 10, 20 or the star; the slot under the pointer pays its
+  // number to 1 (the star 10 to 1). Bets for 10 s, the wheel turns 6 s, the
+  // result stays up 4 s. The same pretend chips as the other tables.
+  const SIX = ['1', '2', '1', '5', '1', '2', '10', '1', '2', '1', '5', 'star', '1', '2', '1', '5', '1', '20', '2', '1', '5', '1', '2', 'star'];
+  const SIX_PAY = { 1: 1, 2: 2, 5: 5, 10: 10, 20: 20, star: 10 };
+  const BIGSIX = { betMs: 10_000, spinMs: 6_000, showMs: 4_000 };
+  const sixName = (on) => (on === 'star' ? '★' : on);
+  // What a bet brings back when slot i comes up (stake included; 0 = lost).
+  const sixPay = (bet, i) => (SIX[i] === bet.on ? bet.amount * (SIX_PAY[bet.on] + 1) : 0);
+  window.OfficeBigSix = { SIX, SIX_PAY, BIGSIX, sixPay, sixName };
+
   // ---- The slot machine: a Seth-style "pay anywhere" game ------------------
   // 6 columns x 5 rows. Eight or more of one symbol anywhere on the screen
   // pay; they burst, everything above falls, new symbols drop in, and it goes
@@ -870,7 +883,7 @@
         // The big six: a money wheel on a stand; whoever is in front watches it go.
         prop('bigSix', { x: ax, y: ay });
         solid(ax, ay, 0.7, 0.7);
-        poi(ax + 0.35, ay + 1.0, 'roulette', 'back', { zone: 'idle', yaw: Math.PI });
+        poi(ax + 0.35, ay + 1.0, 'roulette', 'back', { zone: 'idle', yaw: Math.PI, table: 'bigsix' });
       } else {
         add(ax + 0.35 + ay + 0.35, () => this.arcade(ax, ay));
         prop('arcade', { x: ax, y: ay });
@@ -2470,6 +2483,7 @@
         if (me.atSlot) this.meOffSlot();
         if (me.atPoker) this.meOffPoker();
         if (me.atRoulette) this.meOffRoulette();
+        if (me.atBigSix) this.meOffBigSix();
         me.path = []; me.homing = false; me.seated = false;
         const ax = this.screenAxes();
         let vx = ax.right.x * dx + ax.up.x * dy, vy = ax.right.y * dx + ax.up.y * dy;
@@ -2526,7 +2540,7 @@
         }
       } else me.slotWait = 0;
       // Stopped by the roulette table: step up to it.
-      if (!me.atRoulette && !me.atPoker && !me.atSlot && !me.seated) {
+      if (!me.atRoulette && !me.atBigSix && !me.atPoker && !me.atSlot && !me.seated) {
         const spot = this.rouletteSpots().find((q) => (!q.taken || q.taken === 'me') && Math.hypot(me.x - q.x, me.y - q.y) < 0.8);
         if (spot) {
           me.rouletteWait = (me.rouletteWait || 0) + dt;
@@ -2537,8 +2551,20 @@
           }
         } else me.rouletteWait = 0;
       }
+      // Stopped in front of the big six: step up to it.
+      if (!me.atRoulette && !me.atBigSix && !me.atPoker && !me.atSlot && !me.seated) {
+        const spot = this.bigSixSpots().find((q) => (!q.taken || q.taken === 'me') && Math.hypot(me.x - q.x, me.y - q.y) < 0.7);
+        if (spot) {
+          me.sixWait = (me.sixWait || 0) + dt;
+          if (me.sixWait >= 0.4) {
+            spot.taken = 'me'; me.atBigSix = spot; me.sixWait = 0;
+            me.x = spot.x; me.y = spot.y; me.path = [];
+            me.event = { text: '來轉一把 🎯', at: Date.now(), zone: 'held' };
+          }
+        } else me.sixWait = 0;
+      }
       // Stopped by a free seat at the poker table: sit in.
-      if (!me.atPoker && !me.atSlot && !me.seated && !me.atRoulette) {
+      if (!me.atPoker && !me.atSlot && !me.seated && !me.atRoulette && !me.atBigSix) {
         const seat = this.holdemSeats().find((s) => (!s.taken || s.taken === 'me') && Math.hypot(me.x - s.x, me.y - s.y) < 0.7);
         if (seat) {
           me.pokerWait = (me.pokerWait || 0) + dt;
@@ -2875,6 +2901,95 @@
       for (const b of r.bets.filter((x) => x.key === key)) this.wallet()[key] += b.amount;
       r.bets = r.bets.filter((x) => x.key !== key);
       return true;
+    }
+
+    // ---- the big six (casino, 1F) ----
+    bigSixSpots() { return (this.plan && this.plan.pois || []).filter((q) => q.table === 'bigsix'); }
+    bigSixSitters() {
+      const out = [];
+      for (const q of this.bigSixSpots()) {
+        if (q.taken === 'me') { if (this.me && this.me.atBigSix === q && !this.me.moving) out.push('me'); continue; }
+        const p = q.taken && this.people.get(q.taken);
+        if (p && !p.leaving && p.poi === q && !p.path.length) out.push(p.key);
+      }
+      return out;
+    }
+    stepBigSix() {
+      if (this.layout !== 'casino' || this.floor !== 1) return;
+      const now = Date.now();
+      const r = this.bigSix || (this.bigSix = { stage: 'bets', at: now, bets: [], history: [], seg: null, pay: {}, spinMs: BIGSIX.spinMs });
+      const players = this.bigSixSitters();
+      r.players = players;
+      if (r.stage === 'bets') {
+        for (const k of players) {
+          if (k === 'me' || r.bets.some((b) => b.key === k) || Math.random() > 0.02) continue;
+          const x = Math.random();
+          this.bigSixBet(k, x < 0.4 ? '1' : x < 0.65 ? '2' : x < 0.8 ? '5' : x < 0.9 ? 'star' : x < 0.95 ? '10' : '20', [10, 20, 50][Math.floor(Math.random() * 3)]);
+        }
+        if (now - r.at >= BIGSIX.betMs) {
+          if (!r.bets.length) { r.at = now; return; } // nobody has bet: keep waiting
+          r.stage = 'spin'; r.at = now;
+          r.seg = Math.floor(Math.random() * SIX.length);
+          for (const k of new Set(r.bets.map((b) => b.key))) this.say(k, '轉輪轉啦 🎯');
+        }
+      } else if (r.stage === 'spin') {
+        if (now - r.at >= BIGSIX.spinMs) {
+          r.stage = 'show'; r.at = now; r.pay = {};
+          const w = this.wallet();
+          for (const b of r.bets) { const got = sixPay(b, r.seg); if (got) w[b.key] = (w[b.key] || 0) + got; r.pay[b.key] = (r.pay[b.key] || 0) + got - b.amount; }
+          r.history.unshift(SIX[r.seg]); r.history.length = Math.min(r.history.length, 12);
+          const tag = sixName(SIX[r.seg]);
+          let star = null;
+          for (const [k, net] of Object.entries(r.pay)) {
+            this.say(k, net > 0 ? `轉輪 ${tag}：中了 +${net} 🎉` : `轉輪 ${tag}…沒中 😩`);
+            if (net > 0 && SIX_PAY[SIX[r.seg]] >= 10 && !star) star = k;
+          }
+          // a big one (10, 20, the star): confetti over the winner
+          if (star) this.confetti = { key: star, at: now };
+        }
+      } else if (now - r.at >= BIGSIX.showMs) {
+        for (const k of Object.keys(this.wallet())) if (!(this.wallet()[k] > 0)) this.wallet()[k] = POKER.stack;
+        Object.assign(r, { stage: 'bets', at: now, bets: [], pay: {} });
+      }
+    }
+    // Put chips on 1, 2, 5, 10, 20 or 'star' while bets are open.
+    bigSixBet(key, on, amount) {
+      const r = this.bigSix;
+      if (!r || r.stage !== 'bets' || !Object.hasOwn(SIX_PAY, on)) return false;
+      amount = Math.floor(amount);
+      if (!(amount > 0) || this.chipsOf(key) < amount) return false;
+      this.wallet()[key] -= amount;
+      const same = r.bets.find((b) => b.key === key && b.on === on);
+      if (same) same.amount += amount; else r.bets.push({ key, on, amount });
+      if (key !== 'me') this.say(key, `押轉輪 ${sixName(on)} ${amount}`);
+      return true;
+    }
+    bigSixClear(key = 'me') {
+      const r = this.bigSix;
+      if (!r || r.stage !== 'bets') return false;
+      for (const b of r.bets.filter((x) => x.key === key)) this.wallet()[key] += b.amount;
+      r.bets = r.bets.filter((x) => x.key !== key);
+      return true;
+    }
+    meOffBigSix() {
+      const me = this.me;
+      if (!me || !me.atBigSix) return;
+      if (me.atBigSix.taken === 'me') me.atBigSix.taken = null;
+      me.atBigSix = null;
+    }
+    // What a replaying page needs: the wheel, the bets, who won.
+    bigSixWire() {
+      const r = this.bigSix;
+      if (!r) return null;
+      return { stage: r.stage, at: r.at, seg: r.seg, spinMs: r.spinMs, history: [...(r.history || [])], bets: (r.bets || []).map((x) => ({ key: x.key, on: x.on, amount: x.amount })), won: Object.keys(r.pay || {}).filter((k) => r.pay[k] > 0) };
+    }
+    bigSixUnwire(w, skew = 0) {
+      if (!w || typeof w.stage !== 'string') return null;
+      return {
+        stage: w.stage, at: (w.at || 0) - skew, seg: Number.isInteger(w.seg) && w.seg >= 0 && w.seg < SIX.length ? w.seg : null, spinMs: w.spinMs || BIGSIX.spinMs,
+        history: Array.isArray(w.history) ? w.history : [], bets: (Array.isArray(w.bets) ? w.bets : []).filter((x) => x && x.key), players: [],
+        pay: Object.fromEntries((Array.isArray(w.won) ? w.won : []).filter(Boolean).map((k) => [k, 1])),
+      };
     }
 
     meOffRoulette() {
@@ -4651,8 +4766,8 @@
           const won = this.slot && this.slot.player === 'me' && this.slotWinning();
           return { pose: 'sit', face: 'back', act: won ? 'cheer' : 'slot', sitZ: (q && q.sit) || 0.47 };
         }
-        if (p.atRoulette) {
-          const r = this.roulette, act = r && r.stage === 'show' && (r.pay.me || 0) > 0 ? 'cheer' : 'watch';
+        if (p.atRoulette || p.atBigSix) {
+          const r = p.atBigSix ? this.bigSix : this.roulette, act = r && r.stage === 'show' && (r.pay.me || 0) > 0 ? 'cheer' : 'watch';
           return { pose: 'stand', face: 'back', act, sitZ: 0 };
         }
         if (p.atPoker) {
@@ -4730,7 +4845,9 @@
         // At the roulette wheel: watch it go round, cheer now and then.
         if (q.act === 'roulette') {
           const r = this.roulette;
-          act = q.table === 'roulette' && r ? (r.stage === 'show' && (r.pay[p.key] || 0) > 0 ? 'cheer' : 'watch')
+          const six = q.table === 'bigsix' && this.bigSix;
+          act = six ? (six.stage === 'show' && (six.pay[p.key] || 0) > 0 ? 'cheer' : 'watch')
+            : q.table === 'roulette' && r ? (r.stage === 'show' && (r.pay[p.key] || 0) > 0 ? 'cheer' : 'watch')
             : Math.floor((Date.now() / 1000 + p.phase * 7) / 9) % 4 === 0 ? 'cheer' : 'watch';
         }
         const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
@@ -5750,7 +5867,7 @@
         t: this.t, wall: Date.now(), n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
         people: [...this.people.values()].map(person), me: this.me ? person(this.me) : null,
         visitors: [...(this.visitors || new Map()).values()].map(person),
-        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1), poker: this.pokerWire(), roulette: this.rouletteWire(),
+        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1), poker: this.pokerWire(), roulette: this.rouletteWire(), bigSix: this.bigSixWire(),
         liftOpen: this.liftOpen || 0, confetti: enc(this.confetti, 1), alarmUntil: this.alarmUntil || 0, bossIn: !!this.bossIn,
         lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
         // after hours by the host's clock (a viewer may be somewhere else)
@@ -5881,6 +5998,7 @@
       this.slot = slot;
       this.poker = this.pokerUnwire(w.poker, skew);
       this.roulette = this.rouletteUnwire(w.roulette, skew);
+      this.bigSix = this.bigSixUnwire(w.bigSix, skew);
       this.queueCount = w.queueCount || 0;
       this.offDuty = w.offDuty || 0;
       this.dealerHost = w.dealerWho || null;
@@ -6029,6 +6147,7 @@
       this.stepPoker();
       this.stepDealer();
       this.stepRoulette();
+      this.stepBigSix();
     }
 
     draw() {
@@ -6090,7 +6209,7 @@
       }
 
       if (this.confetti && Date.now() - this.confetti.at < CONFETTI_MS) {
-        const p = this.people.get(this.confetti.key);
+        const p = this.confetti.key === 'me' ? this.me : this.people.get(this.confetti.key);
         if (p) { const at = this.iso(p.x, p.y, 1); this.drawConfetti(at.x * this.cam.zoom + this.cam.ox, at.y * this.cam.zoom + this.cam.oy, Date.now() - this.confetti.at); }
       }
       if (this.offDuty > 0) {

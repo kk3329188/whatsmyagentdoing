@@ -849,7 +849,28 @@ const rouletteFelt = () => canvasTex('rlayout', 256, (c, s) => {
     c.fillRect(x0 + col * cw + 1, y0 + row * ch + 1, cw - 2, ch - 2);
   }
   c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1; c.strokeRect(x0 - cw * 1.2, y0, cw * 13.2, ch * 3);
+  // the outside bets under the numbers: 1-18, even, red, black, odd, 19-36
+  const ow = (cw * 12) / 6;
+  ROULETTE_OUT.forEach(([, label, fill], k) => {
+    if (fill) { c.fillStyle = fill; c.beginPath(); c.moveTo(x0 + k * ow + ow / 2, y0 + ch * 3 + 6); c.lineTo(x0 + k * ow + ow - 4, y0 + ch * 3 + 15); c.lineTo(x0 + k * ow + ow / 2, y0 + ch * 3 + 24); c.lineTo(x0 + k * ow + 4, y0 + ch * 3 + 15); c.closePath(); c.fill(); }
+    else { c.fillStyle = '#fff'; c.font = 'bold 9px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(label, x0 + k * ow + ow / 2, y0 + ch * 3 + 15); }
+    c.strokeRect(x0 + k * ow, y0 + ch * 3 + 3, ow, 24);
+  });
 }, { repeat: false });
+// Where a roulette bet's chips go on the felt, as a share of its width and
+// depth (the same layout as rouletteFelt).
+const ROULETTE_OUT = [['low', '1-18'], ['even', 'EVEN'], ['red', '', '#b3262f'], ['black', '', '#16181b'], ['odd', 'ODD'], ['high', '19-36']];
+function betSpot(on) {
+  const x0 = 0.42, cw = 0.55 / 12, ch = 0.22, y0 = 0.17;
+  if (typeof on === 'number') {
+    if (on === 0) return [x0 - cw * 0.6, y0 + ch * 1.5];
+    const col = Math.floor((on - 1) / 3), row = 3 - (on - col * 3);
+    return [x0 + (col + 0.5) * cw, y0 + (row + 0.5) * ch];
+  }
+  const k = ROULETTE_OUT.findIndex(([key]) => key === on);
+  return [x0 + (k + 0.5) * (cw * 2), y0 + ch * 3 + 15 / 256];
+}
+const CHIP_COLS = [0xb3262f, 0x1f4fb3, 0x1f8a4c, 0x7a3fb3, 0xf0e6d2, 0xe0782a];
 // The wheel's pockets in their real order (office.js OfficeRoulette.WHEEL):
 // pocket i is drawn from angle i/37 of a turn, so the ball can be sent there.
 const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
@@ -1080,8 +1101,11 @@ function vegasBuild(p, o) {
     // the ball rides on the wheel (its child): sent round, it settles in the pocket that came up
     const ball = mesh(new THREE.SphereGeometry(0.018, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 }), 0, 0, 0.014);
     ball.castShadow = false; wheel.add(ball);
+    // the bets on the felt (office.js roulette.bets): a stack of chips each
+    const chipGeo = new THREE.CylinderGeometry(0.022, 0.022, 1, 14);
+    const chips = Array.from({ length: 16 }, () => { const c = mesh(chipGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 }), 0, 0, 0); c.visible = false; g.add(c); return c; });
     g.position.set(p.x + p.w / 2, 0, p.y + p.d / 2);
-    g.userData.roulette = { wheel, ball, wx };
+    g.userData.roulette = { wheel, ball, wx, chips, fw: p.w - 0.1, fd: p.d - 0.1, y: 0.805, game: o.plan.floor === 1, sig: '' };
     (o.casinoWheels || (o.casinoWheels = [])).push(g.userData.roulette);
     return g;
   }
@@ -1094,13 +1118,16 @@ function vegasBuild(p, o) {
     const face = new THREE.Mesh(new THREE.CircleGeometry(0.5, 48), new THREE.MeshStandardMaterial({ map: bigSixFace(), roughness: 0.4 }));
     face.position.set(0, 1.62, 0.02); g.add(face);
     const rim = mesh(new THREE.TorusGeometry(0.52, 0.03, 8, 48), M(C.char), 0, 1.62, 0.02); g.add(rim);
-    g.add(mesh(new THREE.ConeGeometry(0.05, 0.12, 4), M(C.terra), 0, 2.17, 0.06));
+    // the leather pointer, hinged at the top: it flaps as the pegs go by
+    const pointer = new THREE.Group(); pointer.position.set(0, 2.2, 0.06);
+    const flap = mesh(new THREE.ConeGeometry(0.05, 0.14, 4), M(C.terra), 0, -0.07, 0); flap.rotation.x = Math.PI; pointer.add(flap);
+    g.add(pointer);
     const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.02, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 20);
     const mm = new THREE.Matrix4();
     for (let i = 0; i < 20; i++) { const a = i / 20 * Math.PI * 2; mm.makeTranslation(Math.cos(a) * 0.56, 1.62 + Math.sin(a) * 0.56, 0.05); bulbs.setMatrixAt(i, mm); bulbs.setColorAt(i, new THREE.Color(0xffd77a)); }
     g.add(bulbs);
     g.position.set(p.x + 0.35, 0, p.y + 0.35);
-    o.casinoSpin.push({ face, bulbs, n: 20 });
+    o.casinoSpin.push({ face, bulbs, n: 20, pointer, game: o.plan.floor === 1 });
     return g;
   }
   if (p.t === 'blackjack') {
@@ -1351,9 +1378,23 @@ function vegasAnimate(fx, t, closed, o) {
     if (s.userData.glow) s.userData.glow.material.opacity = closed ? 0.06 : 0.5 * flick;
   }
   // the big six wheels turn slowly; their bulbs chase
+  // (downstairs the wheel is a game, office.js stepBigSix: it turns when
+  // spun, slows, and stops with the slot that came up under the pointer)
+  const six = o.bigSix;
   for (const w of o.casinoSpin || []) {
-    if (!closed) w.face.rotation.z = -t * 0.6;
-    for (let i = 0; i < w.n; i++) w.bulbs.setColorAt(i, fx.col.setHex(closed ? 0x2a2418 : (i + Math.floor(t * 8)) % 2 ? 0xfff0b8 : 0x8a6a2a));
+    const before = w.face.rotation.z;
+    let mode = 'idle';
+    if (w.game && six) {
+      const k = six.stage === 'spin' ? Math.min(1, (Date.now() - six.at) / (six.spinMs || 6000)) : 1;
+      const home = Math.PI / 2 + (((six.seg ?? 0) + 0.5) / 24) * Math.PI * 2;
+      if (six.stage === 'spin') { w.face.rotation.z = home + (1 - k) ** 3 * 42; mode = 'spin'; }
+      else if (six.seg != null) { w.face.rotation.z = home; mode = six.stage === 'show' && Object.keys(six.pay || {}).length ? 'won' : 'idle'; }
+    } else if (!closed) w.face.rotation.z = -t * 0.6;
+    // the pointer kicks up at each peg and falls back
+    const peg = (((w.face.rotation.z / (Math.PI * 2 / 24)) % 1) + 1) % 1, speed = Math.min(1, Math.abs(w.face.rotation.z - before) * 8);
+    if (w.pointer) w.pointer.rotation.z = speed > 0.02 ? (1 - peg) * 0.5 * speed : 0;
+    const chase = mode === 'spin' ? 20 : 8, flash = mode === 'won' && Math.floor(t * 6) % 2;
+    for (let i = 0; i < w.n; i++) w.bulbs.setColorAt(i, fx.col.setHex(closed && mode === 'idle' ? 0x2a2418 : mode === 'won' ? (flash ? 0xfff0b8 : 0xff4a3a) : (i + Math.floor(t * chase)) % 2 ? 0xfff0b8 : 0x8a6a2a));
     w.bulbs.instanceColor.needsUpdate = true;
   }
   // the dice: a throw every few seconds, tumbling for half a second
@@ -1436,6 +1477,27 @@ function vegasAnimate(fx, t, closed, o) {
     const rad = rl && rl.stage === 'spin' ? 0.27 - 0.045 * k * k : 0.225;
     w.ball.position.set(Math.cos(a) * rad, Math.sin(a) * rad, 0.014);
     w.ball.visible = !!(rl && rl.number != null);
+    // the bets, as stacks of chips where they were put (yours gold)
+    if (w.game) {
+      const bets = rl && rl.stage !== 'show' ? rl.bets || [] : rl && rl.stage === 'show' ? (rl.bets || []).filter((b) => rl.pay && rl.pay[b.key] > 0) : [];
+      const sig = bets.map((b) => `${b.key}:${b.on}:${b.amount}`).join('|');
+      if (sig !== w.sig) {
+        w.sig = sig;
+        const at = new Map();
+        w.chips.forEach((c, i) => {
+          const b = bets[i];
+          c.visible = !!b;
+          if (!b) return;
+          const [u, v] = betSpot(b.on), n = at.get(String(b.on)) || 0;
+          at.set(String(b.on), n + 1);
+          const h = 0.006 * Math.min(10, Math.max(1, Math.ceil(b.amount / 10)));
+          c.scale.set(1, h, 1);
+          c.position.set((u - 0.5) * w.fw + n * 0.012, w.y + h / 2 + n * 0.002, (v - 0.5) * w.fd - n * 0.01);
+          let hsh = 0; for (const ch of b.key) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0;
+          c.material.color.setHex(b.key === 'me' ? 0xffd23f : CHIP_COLS[hsh % CHIP_COLS.length]);
+        });
+      }
+    }
   }
 }
 

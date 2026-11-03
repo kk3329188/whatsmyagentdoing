@@ -44,3 +44,34 @@ test('the progressive jackpot creeps up, and the casino goes dim after hours', a
   for (const m of o.casinoSlots) assert.ok(m.color.r < 0.3, 'dim after hours');
   assert.ok(o.casinoPools[0].material.opacity < 0.1);
 });
+
+test('downstairs the roulette bets lie on the felt as stacks of chips (yours gold), and the big six stops with the slot that came up under its pointer', async () => {
+  const V = await load(), o = casino();
+  o.plan.floor = 1;
+  const THREE = require('three');
+  V.build({ t: 'roulette', x: 5, y: 5, w: 1.6, d: 0.8 }, o);
+  V.build({ t: 'bigSix', x: 2, y: 2 }, o);
+  const fx = { bulbs: { setColorAt() {}, instanceColor: {} }, n: 0, signs: [], step: -1, col: new THREE.Color() };
+  o.roulette = { stage: 'bets', at: Date.now(), number: null, bets: [{ key: 'me', on: 'red', amount: 20 }, { key: 'claude:x', on: 17, amount: 50 }, { key: 'claude:y', on: 'red', amount: 10 }], pay: {} };
+  V.animate(fx, 1, false, o);
+  const w = o.casinoWheels[0], shown = w.chips.filter((c) => c.visible);
+  assert.equal(shown.length, 3);
+  assert.equal(shown[0].material.color.getHex(), 0xffd23f, 'yours are gold');
+  assert.notDeepEqual(shown[0].position.toArray(), shown[1].position.toArray(), 'red and 17 are different places');
+  assert.ok(shown[1].scale.y > shown[0].scale.y, 'a bigger bet, a taller stack');
+  o.roulette.stage = 'show'; o.roulette.number = 17; o.roulette.pay = { 'claude:x': 1750 };
+  V.animate(fx, 2, false, o);
+  assert.equal(w.chips.filter((c) => c.visible).length, 1, 'once it has come up, only the winning bet stays');
+  const sw = o.casinoSpin[0];
+  for (const seg of [0, 5, 11, 23]) {
+    o.bigSix = { stage: 'show', at: Date.now(), seg, pay: {} };
+    V.animate(fx, 3, false, o);
+    // slot seg is drawn from angle seg/24 of a turn on the face (clockwise on the canvas);
+    // turned by rotation.z, its middle is now straight up, under the pointer
+    const up = -(((seg + 0.5) / 24) * Math.PI * 2) + sw.face.rotation.z;
+    assert.ok(Math.abs(Math.sin(up) - 1) < 1e-9, `slot ${seg} under the pointer`);
+  }
+  o.bigSix = { stage: 'spin', at: Date.now() - 1000, seg: 4, pay: {}, spinMs: 6000 };
+  V.animate(fx, 4, false, o);
+  assert.ok(sw.face.rotation.z > Math.PI / 2 + (4.5 / 24) * Math.PI * 2 + 1, 'still turning: well short of where it stops');
+});

@@ -25,7 +25,7 @@ const LINES = new Set([
   // visitors
   '你好～', '我送一下客', '收到，我來處理 👍', '謝啦～', '慢走～', '我有個問題 🙋',
   // the casino
-  '來一把 🎰', '來押一把 🎡', '發牌吧 🃏', '手氣來了 🎰', '午休來一局 🃏', '下班打一局 🃏', '轉啦 🎡', '棄牌 🙅', '過牌 👌',
+  '來一把 🎰', '來押一把 🎡', '發牌吧 🃏', '手氣來了 🎰', '午休來一局 🃏', '下班打一局 🃏', '轉啦 🎡', '棄牌 🙅', '過牌 👌', '轉輪轉啦 🎯', '來轉一把 🎯',
   // Chuck, the dealer (a replaying page runs him itself; these keep it so)
   '歡迎！再一位就開局', '來玩一把嗎？🃏', '我回來了，發牌 🎩', '查克休假，我來代班 ⚽', '發牌 🃏', '翻牌', '轉牌', '河牌', '開牌！',
 ]);
@@ -41,6 +41,8 @@ const PATTERNS = [
   new RegExp(`^押${BET} [0-9]{1,5}$`),
   new RegExp(`^中了！${SPIN} \\+[0-9]{1,6} 🎉$`),
   new RegExp(`^${SPIN}(，打平 😮‍💨|…槓龜 😩)$`),
+  /^押轉輪 (1|2|5|10|20|★) [0-9]{1,5}$/,
+  /^轉輪 (1|2|5|10|20|★)(：中了 \+[0-9]{1,6} 🎉|…沒中 😩)$/,
 ];
 
 const publicSay = (text) => typeof text === 'string' && text.length <= 30 && (LINES.has(text) || PATTERNS.some((re) => re.test(text)));
