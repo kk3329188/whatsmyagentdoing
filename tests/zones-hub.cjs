@@ -1970,3 +1970,28 @@ test('public replay: the desk sign count, the "+N gone home" corner and the litt
   assert.equal(view.offDuty, 3);
   for (const [h, v] of acts) assert.equal(v, h, `the same move at the desk: ${JSON.stringify(acts)}`);
 });
+
+test('the house dealer: Chuck, Messi on Chuck\'s days off (Sunday, Wednesday), or whoever you pick; the viewer shows the host\'s', () => {
+  const day = (wd) => { const d = new Date(2026, 10, 1, 15); d.setDate(1 + ((wd - d.getDay() + 7) % 7)); return d.getTime(); }; // 2026-11-01 is a Sunday
+  const o = casinoAt(15);
+  assert.equal(o.dealerWho(day(2)), 'chuck', 'Tuesday: Chuck');
+  assert.equal(o.dealerWho(day(3)), 'messi', 'Wednesday: Chuck is off, Messi deals');
+  assert.equal(o.dealerWho(day(0)), 'messi', 'Sunday too');
+  o.dealerPick = 'chuck'; assert.equal(o.dealerWho(day(3)), 'chuck', 'picked: Chuck every day');
+  o.dealerPick = 'messi'; assert.equal(o.dealerWho(day(2)), 'messi');
+  o.dealerPick = 'chuck';
+  const chuck = o.dealerOn();
+  assert.equal(chuck.s.title, '查克'); assert.ok(chuck.glasses); assert.ok(!chuck.beard);
+  o.dealerPick = 'messi';
+  const messi = o.dealerOn();
+  assert.notEqual(messi, chuck, 'a new dealer sits down');
+  assert.equal(messi.key, 'dealer:messi');
+  assert.equal(messi.s.title, '梅西'); assert.ok(messi.beard); assert.ok(!messi.glasses);
+  assert.equal(messi.event.text, '查克休假，我來代班 ⚽', 'and says he is standing in');
+  // the viewer: whoever deals on the host's page, whatever its own setting
+  const view = casinoAt(15);
+  view.dealerPick = 'chuck';
+  view.applyWorld(JSON.parse(JSON.stringify({ ...o.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+  view.stepRemote(0.016);
+  assert.equal(view.dealer.who, 'messi');
+});

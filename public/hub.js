@@ -599,6 +599,7 @@
     const canSay = s.controllable && !PRIVATE;
     panel.dataset.key = s.key;
     panel.hidden = false;
+    if (!panelRaf) panelRaf = requestAnimationFrame(panelFollow);
     const current = s.plan && s.plan.find((x) => x.status === 'in_progress');
     panel.innerHTML = `
       <div class="hub-head">
@@ -671,6 +672,30 @@
     const box = panel.querySelector('textarea');
     if (box && document.activeElement !== box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
+  // The session panel sits over the head of the one it belongs to and goes
+  // where they go (and where the camera goes), like the public card; when
+  // they are off screen or on the other floor it waits in its corner.
+  let panelRaf = 0;
+  function panelFollow() {
+    panelRaf = 0;
+    if (panel.hidden || !openKey) return;
+    const pos = peekAt(openKey);
+    if (pos) {
+      const w = panel.offsetWidth, h = panel.offsetHeight;
+      const x = Math.max(8, Math.min(innerWidth - w - 8, pos.x - w / 2));
+      const above = pos.top - h - 12 >= 8;
+      const y = above ? pos.top - h - 12 : Math.min(innerHeight - h - 8, pos.bottom + 12);
+      Object.assign(panel.style, { left: `${Math.round(x)}px`, top: `${Math.round(Math.max(8, y))}px`, right: 'auto', bottom: 'auto' });
+      panel.style.setProperty('--arrow', `${Math.round(Math.max(16, Math.min(w - 16, pos.x - x)))}px`);
+      panel.classList.add('follow');
+      panel.classList.toggle('below', !above);
+    } else if (panel.classList.contains('follow')) {
+      panel.classList.remove('follow', 'below');
+      for (const k of ['left', 'top', 'right', 'bottom']) panel.style[k] = '';
+    }
+    panelRaf = requestAnimationFrame(panelFollow);
+  }
+
   function open(key) {
     if (PUBLIC) return;
     if (openKey !== key) { draft = ''; flash = ''; relayFrom = null; }

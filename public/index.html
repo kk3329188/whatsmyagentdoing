@@ -374,6 +374,8 @@
      details fold away under 更多. */
   .hub-panel { position: fixed; right: 16px; bottom: 16px; width: min(360px, calc(100vw - 32px)); max-height: min(62vh, 560px); overflow-y: auto; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 36px rgba(0,0,0,.22); padding: 12px 14px 12px; font-size: 13px; }
   .hub-panel .hub-head { margin-bottom: 8px; }
+  /* over the head of the one it belongs to (public/hub.js panelFollow): shorter, so it fits above them */
+  .hub-panel.follow { max-height: min(46vh, 420px); }
   .hub-panel .hub-head h3 { font-size: 15px; }
   .hub-now { margin: 0 0 8px; }
   .hub-now .hub-bar { margin: 4px 0 4px; }
@@ -456,6 +458,14 @@
               <button data-v="tech">科技新創</button>
               <button data-v="lux">現代奢華</button>
               <button data-v="vegas">拉斯維加斯</button>
+            </div>
+          </div>
+          <div class="setting-group" id="dealerGroup" hidden>
+            <span class="setting-label" id="dealerLabel">莊家（拉斯維加斯）</span>
+            <div class="seg" id="dealerSeg" role="group" aria-labelledby="dealerLabel">
+              <button data-v="shift" title="查克週三、週日休假，梅西代班">輪班</button>
+              <button data-v="chuck">🎩 查克</button>
+              <button data-v="messi">⚽ 梅西</button>
             </div>
           </div>
           <div class="setting-group">
@@ -729,7 +739,7 @@ function render() {
     if (!PIP && !replay && office.visitorsIn) { office.masked = Hub.live; if (office.visitorsIn(state.data.visitors) > 0) Hub.ding('wait'); }
     for (const o of [office, office2]) if (o && o.setWeather) o.setWeather(state.data.weather);
     if (!PIP && office.setLeave) office.setLeave(replay ? [] : (state.data.office && state.data.office.onLeave) || []);
-    for (const o of [office, office2]) if (o && o.setCompany) { o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
+    for (const o of [office, office2]) if (o && o.setCompany) { o.dealerPick = state.dealer; o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
       const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary, allDown: !!(office && office.standup) });
@@ -902,7 +912,22 @@ document.getElementById('qualSeg').addEventListener('click', (e) => {
 const DECORS = ['default', 'modern', 'tech', 'lux', 'vegas'];
 state.decor = DECORS.includes(store.get('decor', 'default')) ? store.get('decor', 'default') : 'default';
 const decorSeg = document.getElementById('decorSeg');
-const syncDecor = () => decorSeg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.v === state.decor); b.setAttribute('aria-pressed', b.dataset.v === state.decor); });
+const syncDecor = () => {
+  decorSeg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.v === state.decor); b.setAttribute('aria-pressed', b.dataset.v === state.decor); });
+  document.getElementById('dealerGroup').hidden = state.decor !== 'vegas' || Hub.public;
+};
+// Who deals at the casino: Chuck, Messi, or Chuck with Messi on his days off.
+const DEALER_PICKS = ['shift', 'chuck', 'messi'];
+state.dealer = DEALER_PICKS.includes(store.get('dealer', 'shift')) ? store.get('dealer', 'shift') : 'shift';
+const dealerSeg = document.getElementById('dealerSeg');
+// (render() hands the pick to the office each time; see setCompany below)
+const syncDealer = () => dealerSeg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.v === state.dealer); b.setAttribute('aria-pressed', b.dataset.v === state.dealer); });
+syncDealer();
+dealerSeg.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === state.dealer) return;
+  state.dealer = b.dataset.v; store.set('dealer', state.dealer); syncDealer();
+  for (const o of [office, office2]) if (o) o.dealerPick = state.dealer;
+});
 syncDecor();
 decorSeg.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b || b.dataset.v === state.decor) return;

@@ -97,6 +97,19 @@ function dealerGlasses() {
   return g;
 }
 
+// Messi's beard: a dark shell round the jaw and chin, and a short moustache
+// (the skull is a sphere of 0.25 centred 0.2375 up, chibi.js).
+function dealerBeard(color) {
+  const g = new THREE.Group();
+  const hair = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.8), roughness: 1 });
+  const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.262, 22, 12, Math.PI * 0.08, Math.PI * 0.84, Math.PI * 0.64, Math.PI * 0.3), hair);
+  jaw.scale.set(1.04, 0.95, 0.96); jaw.position.y = 0.2375;
+  const tash = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, 0.07, 4, 8), hair);
+  tash.rotation.z = Math.PI / 2; tash.position.set(0, 0.155, 0.245);
+  g.add(jaw, tash);
+  return g;
+}
+
 function skyNow() {
   const h = new Date().getHours() + new Date().getMinutes() / 60;
   if (h >= 7 && h < 17) return { sky: 0xa9d4f2, sun: 1.7, amb: 1.15, night: false };
@@ -2109,7 +2122,11 @@ export class Office3D extends window.Office {
     const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.hairStyle ?? (p.h >>> 3) % HAIR_STYLES }); // the same style as in 2D
     const obj = rig.root;
     if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
-    if (p.dealer) { rig.front.add(dealerBow()); rig.head.add(dealerGlasses()); }
+    if (p.dealer) {
+      rig.front.add(dealerBow());
+      if (p.glasses) rig.head.add(dealerGlasses());
+      if (p.beard) rig.head.add(dealerBeard(p.hair));
+    }
     rig.sign.add(this.signBoard());
     const laptop = new THREE.Group();
     const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));

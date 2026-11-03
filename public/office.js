@@ -122,6 +122,12 @@
     if (pairs.length) return { score: score(1, pairs[0], ...desc([pairs[0]])), name: HAND_NAMES[1] };
     return { score: score(0, ...desc()), name: HAND_NAMES[0] };
   }
+  // The house dealers: Chuck, and Messi on Chuck's days off (office.js dealerOn).
+  const DEALERS = {
+    chuck: { name: '查克', icon: '🎩', skin: '#e8b98f', hair: '#2a1d16', hairStyle: 1, glasses: true, hello: '我回來了，發牌 🎩' },
+    messi: { name: '梅西', icon: '⚽', skin: '#ebbd96', hair: '#4a2c19', hairStyle: 0, beard: true, hello: '查克休假，我來代班 ⚽' },
+  };
+  const CHUCK_OFF = [0, 3]; // Sunday and Wednesday
   const POKER = { stack: 1000, small: 10, big: 20, raise: 40, thinkMs: [1200, 2600], youMs: 25_000, streetMs: 1400, showMs: 4500 };
   // How good a hand looks to a player who can't see the others' cards (0..1).
   function handFeel(hole, board) {
@@ -2609,15 +2615,30 @@
     // visitor), drawn through bodies(). When a hand is on he deals and calls
     // each street (the dealer button sits in front of him); between hands he
     // shuffles, checks his watch, looks round for players.
+    //
+    // Chuck has days off: then Messi deals (DEALERS). `dealerPick` (your
+    // setting) is 'shift' (Chuck, but Messi on Chuck's days off), 'chuck' or
+    // 'messi'; a replaying page shows whoever the host's page shows.
+    dealerWho(now = Date.now()) {
+      if (this.remote) return DEALERS[this.dealerHost] ? this.dealerHost : 'chuck';
+      const pick = this.dealerPick;
+      if (pick === 'chuck' || pick === 'messi') return pick;
+      return CHUCK_OFF.includes(new Date(now).getDay()) ? 'messi' : 'chuck';
+    }
+
     dealerOn() {
       const at = this.layout === 'casino' && this.floor === 1 && !this.compact && this.plan && this.plan.dealer;
       if (!at) { this.dealer = null; return null; }
-      if (this.dealer && this.dealer.spot === at) return this.dealer;
+      const who = this.dealerWho();
+      if (this.dealer && this.dealer.spot === at && this.dealer.who === who) return this.dealer;
+      const D = DEALERS[who], swap = !!(this.dealer && this.dealer.spot === at);
       this.dealer = {
-        dealer: true, key: 'dealer:chuck', h: 7, x: at.x, y: at.y, spot: at, path: [], phase: 1.7, walkFace: 'front',
-        skin: '#e8b98f', hair: '#2a1d16', pants: '#16181b', shirt: '#22242c', hairStyle: 1,
-        s: { key: 'dealer:chuck', agent: 'claude', status: 'idle', title: '查克', level: 1, dealer: true },
+        dealer: true, who, key: `dealer:${who}`, h: 7, x: at.x, y: at.y, spot: at, path: [], phase: 1.7, walkFace: 'front',
+        skin: D.skin, hair: D.hair, pants: '#16181b', shirt: '#22242c', hairStyle: D.hairStyle, glasses: !!D.glasses, beard: !!D.beard, icon: D.icon,
+        s: { key: `dealer:${who}`, agent: 'claude', status: 'idle', title: D.name, level: 1, dealer: true },
         sig: 'idle', dealUntil: 0, seen: 0, inviteAt: Date.now(),
+        // taking over from the other one: say so
+        event: swap ? { text: D.hello, at: Date.now(), zone: 'held' } : null,
       };
       return this.dealer;
     }
@@ -5422,7 +5443,7 @@
         const near = this.meNear();
         if (near) top = pill(`空白鍵：找「${this.label(near.s).slice(0, 14)}」`, '#fff', '#8b6be6', top - 4, 1, false);
       } else if (p.dealer) {
-        top = pill('🎩 ' + s.title, '#fff', '#7a2f22', top - 11, 1, false);
+        top = pill(`${p.icon || '🎩'} ` + s.title, '#fff', '#7a2f22', top - 11, 1, false);
       } else if ((!s.subagent && p.zone !== 'idle') || hover || best) {
         const loud = p.mode === 'work' || p.zone === 'wait' || p.zone === 'error' || hover || best;
         top = pill((best ? '🏆 ' : '') + this.label(s), best ? '#5a4300' : pal.text, best ? '#ffd76a' : pal.tagBg, top - 11, loud ? 1 : 0.7, true);
@@ -5610,6 +5631,8 @@
         napNow: !!this.napNow,
         // your desk sign (how many wait on you) and the "+N gone home" corner
         queueCount: this.queueCount || 0, offDuty: this.offDuty || 0,
+        // who deals at the casino today
+        dealerWho: this.dealer ? this.dealer.who : null,
       };
     }
 
@@ -5729,6 +5752,7 @@
       this.roulette = this.rouletteUnwire(w.roulette, skew);
       this.queueCount = w.queueCount || 0;
       this.offDuty = w.offDuty || 0;
+      this.dealerHost = w.dealerWho || null;
       // The host's page clock against ours: the same stretch, the same fidget
       // (stateOf picks them by it). Moved only when it drifts, so a late
       // update does not flick someone from one move to the next and back.

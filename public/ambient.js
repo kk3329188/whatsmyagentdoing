@@ -9,6 +9,10 @@
   // How loud the keyboards are, heard from where the camera is.
   const KEY_LEVEL = 0.5;
   const PROG = [[53, 57, 60, 64], [52, 55, 59, 62], [50, 53, 57, 60], [48, 52, 55, 59]];
+  // Voices: the three mouth resonances (Hz) of a, i, u, e, o, and the four
+  // tones a syllable can take (pitch at its start, middle and end).
+  const VOWELS = [[750, 1250, 2600], [320, 2250, 2900], [340, 850, 2350], [480, 1900, 2600], [520, 900, 2450]];
+  const TONES = [[1, 1, 0.98], [0.9, 1.0, 1.12], [0.95, 0.85, 0.95], [1.12, 1.0, 0.86]];
 
   class Ambient {
     constructor() {
@@ -279,39 +283,88 @@
             t.who = 1 - t.who; t.words = 1 + Math.floor(Math.random() * 4);
             if (Math.random() < 0.12) { this.laugh(t.next, t.base[t.who]); t.next += 1.0; continue; }
           }
-          const n = 2 + Math.floor(Math.random() * 3);
-          let at = t.next;
-          for (let i = 0; i < n; i++) { const len = 0.09 + Math.random() * 0.12; this.syllable(at, t.base[t.who] * (0.9 + Math.random() * 0.25), len); at += len + 0.02; }
+          const at = this.word(t.next, t.base[t.who] * (0.94 + Math.random() * 0.12), 2 + Math.floor(Math.random() * 3));
           t.words--;
           t.next = at + (t.words > 0 ? 0.12 + Math.random() * 0.2 : 0.5 + Math.random() * 1.1);
         }
       }
     }
 
-    syllable(at, f0, len) {
+    // One word, said in one breath: the voice runs on through its syllables
+    // (a separate beep for each sounded like a machine), each with a vowel
+    // of its own (the mouth moves between them), a tone (level, rising,
+    // dipping, falling), a little tremble, breath, and some starting on a
+    // consonant. Returns when it ends.
+    word(at, f0, n, { lift = 1 } = {}) {
       const c = this.ctx;
+      const lens = Array.from({ length: n }, () => 0.11 + Math.random() * 0.1);
+      const end = at + lens.reduce((a, b) => a + b, 0);
+      const out = c.createGain();
+      out.gain.setValueAtTime(0.0001, at);
+      // the voice: a buzz that wavers like a throat does
       const o = c.createOscillator();
       o.type = 'sawtooth';
-      o.frequency.setValueAtTime(f0, at);
-      o.frequency.linearRampToValueAtTime(f0 * (0.85 + Math.random() * 0.3), at + len);
-      const g = c.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(0.45, at + 0.025);
-      g.gain.exponentialRampToValueAtTime(0.0001, at + len);
-      // two vowel resonances, moving a little through the syllable
-      const f1 = 350 + Math.random() * 450, f2 = 900 + Math.random() * 1300;
-      for (const [f, q, v] of [[f1, 5, 1], [f2, 8, 0.6]]) {
+      const vib = c.createOscillator(), vg = c.createGain();
+      vib.frequency.value = 4.5 + Math.random() * 1.5; vg.gain.value = f0 * 0.012;
+      vib.connect(vg); vg.connect(o.frequency);
+      // breath through the same mouth
+      const air = c.createBufferSource(); air.buffer = this.noise;
+      const ag = c.createGain(); ag.gain.value = 0.06;
+      const voice = c.createGain(); voice.gain.value = 1;
+      o.connect(voice); air.connect(ag);
+      // the mouth: three resonances that glide from vowel to vowel
+      const tracts = [[5, 1], [9, 0.55], [12, 0.2]].map(([q, v]) => {
         const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q;
-        bp.frequency.setValueAtTime(f, at); bp.frequency.linearRampToValueAtTime(f * (0.8 + Math.random() * 0.4), at + len);
         const fg = c.createGain(); fg.gain.value = v;
-        o.connect(bp); bp.connect(fg); fg.connect(g);
-      }
-      g.connect(this.far || this.master);
-      o.start(at); o.stop(at + len + 0.02);
+        voice.connect(bp); ag.connect(bp); bp.connect(fg); fg.connect(out);
+        return bp;
+      });
+      let t = at;
+      lens.forEach((len, i) => {
+        const v = VOWELS[Math.floor(Math.random() * VOWELS.length)];
+        tracts.forEach((bp, k) => {
+          if (i === 0) bp.frequency.setValueAtTime(v[k], t);
+          else bp.frequency.linearRampToValueAtTime(v[k], t + Math.min(0.05, len * 0.4));
+        });
+        // its tone, sinking a little through the word (as speech does)
+        const p = f0 * lift * (1 - 0.06 * (i / n)), tone = TONES[Math.floor(Math.random() * TONES.length)];
+        if (i === 0) o.frequency.setValueAtTime(p * tone[0], t);
+        else o.frequency.linearRampToValueAtTime(p * tone[0], t + 0.03);
+        o.frequency.linearRampToValueAtTime(p * tone[1], t + len * 0.6);
+        o.frequency.linearRampToValueAtTime(p * tone[2], t + len * 0.95);
+        // loud in the vowel, dipping (not stopping) between syllables
+        out.gain.exponentialRampToValueAtTime(i === 0 ? 0.22 : 0.2, t + Math.min(0.04, len * 0.3));
+        out.gain.exponentialRampToValueAtTime(i === n - 1 ? 0.0001 : 0.065, t + len);
+        if (Math.random() < 0.55) this.consonant(t, Math.random() < 0.5);
+        t += len;
+      });
+      out.connect(this.far || this.master);
+      o.start(at); vib.start(at); air.start(at, Math.random() * 1.5);
+      for (const x of [o, vib, air]) x.stop(end + 0.03);
+      return end;
     }
 
+    // The start of a syllable: a puff (t, k, p) or a hiss (s, sh, f).
+    consonant(at, hiss) {
+      const c = this.ctx, src = c.createBufferSource();
+      src.buffer = this.noise;
+      const hp = c.createBiquadFilter(); hp.type = hiss ? 'highpass' : 'bandpass';
+      hp.frequency.value = hiss ? 3200 + Math.random() * 1800 : 1400 + Math.random() * 1600; hp.Q.value = 1.2;
+      const g = c.createGain(), len = hiss ? 0.06 : 0.018;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(hiss ? 0.05 : 0.09, at + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+      src.connect(hp); hp.connect(g); g.connect(this.far || this.master);
+      src.start(at, Math.random() * 1.5, len + 0.01);
+    }
+
+    // A laugh: "ha" a few times, each a bit lower, breathy.
     laugh(at, f0) {
-      for (let i = 0; i < 4; i++) this.syllable(at + i * 0.17, f0 * (1.35 - i * 0.06), 0.11);
+      for (let i = 0; i < 4; i++) {
+        const t = at + i * 0.16;
+        this.consonant(t, true);
+        this.word(t + 0.02, f0 * (1.4 - i * 0.07), 1, { lift: 1 });
+      }
     }
 
     // ---- footsteps: someone walking, soft on the floor --------------------
