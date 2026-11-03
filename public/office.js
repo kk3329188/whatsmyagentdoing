@@ -3301,6 +3301,14 @@
       }
     }
 
+    // Where a spot on the floor sounds from (public/ambient.js, spatial
+    // audio): -1 (left of the screen) to 1 (right), and how near, 0 to 1 (the
+    // bottom of the screen is nearest). The 3D view says it from its camera.
+    earOf(x, y) {
+      const { W, D } = this.plan, clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      return { pan: clamp(((x - y) - (W - D) / 2) / ((W + D) / 2), -1, 1), near: clamp((x + y) / (W + D), 0, 1) };
+    }
+
     iso(x, y, z = 0) {
       return { x: (x - y) * TW / 2, y: (x + y) * TH / 2 - z * TH };
     }

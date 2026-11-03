@@ -2113,6 +2113,16 @@ export class Office3D extends window.Office {
     this.leftView = from;
   }
 
+  // Where a spot on the floor sounds from (spatial audio): left/right on
+  // screen, and nearer low on the screen or zoomed in; off screen, farther.
+  earOf(x, y) {
+    if (!this.camera) return super.earOf(x, y);
+    const v = (this.earV || (this.earV = new THREE.Vector3())).set(x, 0.8, y).project(this.camera);
+    const off = Math.max(0, Math.abs(v.x) - 1, Math.abs(v.y) - 1);
+    const clamp = (a, lo, hi) => Math.max(lo, Math.min(hi, a));
+    return { pan: clamp(v.x, -1, 1), near: clamp(0.55 - v.y * 0.3 + ((this.camera.zoom || 1) - 1) * 0.25 - off * 0.5, 0, 1) };
+  }
+
   // ------------------------------------------------------------ actors
 
   actorFor(p) {

@@ -63,23 +63,50 @@ test('background music: a bar at a time, scheduled ahead; off means no new notes
   assert.equal(bars.length, n);
 });
 
-test('people talking sound like a conversation: syllables in words, two voices taking turns', () => {
+test('people talking sound like a conversation: cartoon-animal words, two voices taking turns', () => {
   const { Ambient } = load();
   const a = new Ambient();
   const said = [];
-  a.syllable = (at, f0) => said.push({ at, f0 });
+  a.word = (at, f0, n) => { said.push({ at, f0, n }); return at + n * 0.1; };
   a.laugh = () => {};
   a.scene = { chat: 2 };
   for (let t = 0; t < 12; t += 0.09) a.talkTick(t);
-  assert.ok(said.length > 20, `${said.length} syllables in 12 s`);
+  assert.ok(said.length > 8, `${said.length} words in 12 s`);
+  assert.ok(said.every((w) => w.n >= 2 && w.n <= 4), 'two to four syllables a word');
   const voices = new Set(said.map((x) => (x.f0 < 160 ? 'low' : 'high')));
   assert.equal(voices.size, 2, 'two voices');
-  const gaps = said.slice(1).map((x, i) => x.at - said[i].at);
+  const gaps = said.slice(1).map((x, i) => x.at - (said[i].at + said[i].n * 0.1));
   assert.ok(gaps.some((g) => g > 0.45), 'pauses between turns');
   a.scene = { chat: 0 };
   const n = said.length;
   for (let t = 12; t < 20; t += 0.09) a.talkTick(t);
   assert.equal(said.length, n, 'nobody talking: silence');
+});
+
+test('a cartoon-animal word: short high syllables, each bending up and back, from where the speaker is', () => {
+  const window = {};
+  const made = [];
+  const param = (name) => ({ value: 0, ramps: [], setValueAtTime(v, t) { this.ramps.push(['set', v, t]); }, exponentialRampToValueAtTime(v, t) { this.ramps.push(['exp', v, t]); }, linearRampToValueAtTime(v, t) { this.ramps.push(['lin', v, t]); }, setTargetAtTime(v) { this.value = v; } });
+  const node = (kind) => { const n = { kind, connect(to) { n.to = to; }, disconnect() {}, frequency: param(), gain: param(), Q: param(), start() {}, stop() {} }; made.push(n); return n; };
+  const ctx = { currentTime: 0, createOscillator: () => node('osc'), createGain: () => node('gain'), createBiquadFilter: () => node('filter'),
+    createPanner: () => Object.assign(node('panner'), { positionX: param(), positionY: param(), positionZ: param() }) };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), { window, Math: seeded(3), setInterval, clearInterval, setTimeout });
+  const a = new window.OfficeAmbient.Ambient();
+  a.ctx = ctx; a.far = node('far'); a.master = node('master');
+  let end;
+  a.from('voice0.0', { pan: -0.8, near: 0.6 }, () => { end = a.word(1, 120, 3); });
+  const oscs = made.filter((n) => n.kind === 'osc');
+  assert.equal(oscs.length, 3, 'one note a syllable');
+  for (const o of oscs) {
+    const f = o.frequency.ramps.map((r) => r[1]);
+    assert.ok(f[1] > 240, `high and cute (up to ${Math.round(f[1])} Hz from a 120 Hz voice)`);
+    assert.ok(f[1] > f[0] && f[2] < f[1], 'bends up and back');
+  }
+  assert.ok(end - 1 < 0.45, `quick (${(end - 1).toFixed(2)} s for three syllables)`);
+  const pn = made.find((n) => n.kind === 'panner');
+  assert.ok(pn && pn.positionX.value < 0, 'from the left, where the speaker stands');
+  const outs = made.filter((n) => n.kind === 'gain' && n.to === pn);
+  assert.equal(outs.length, 3, 'every syllable goes out through that spot');
 });
 
 test('footsteps while people walk; ping-pong in time with the ball; machines sound once per phase', () => {

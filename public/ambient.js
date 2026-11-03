@@ -9,10 +9,10 @@
   // How loud the keyboards are, heard from where the camera is.
   const KEY_LEVEL = 0.5;
   const PROG = [[53, 57, 60, 64], [52, 55, 59, 62], [50, 53, 57, 60], [48, 52, 55, 59]];
-  // Voices: the three mouth resonances (Hz) of a, i, u, e, o, and the four
-  // tones a syllable can take (pitch at its start, middle and end).
-  const VOWELS = [[750, 1250, 2600], [320, 2250, 2900], [340, 850, 2350], [480, 1900, 2600], [520, 900, 2450]];
-  const TONES = [[1, 1, 0.98], [0.9, 1.0, 1.12], [0.95, 0.85, 0.95], [1.12, 1.0, 0.86]];
+  // Voices (cartoon-animal talk): the notes a syllable can land on (from the
+  // voice's own pitch) and the vowel each takes, oo / oh / ah (Hz).
+  const CHIRP_STEPS = [1, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 6];
+  const CHIRP_VOWELS = [420, 600, 900, 1100];
 
   class Ambient {
     constructor() {
@@ -147,6 +147,47 @@
 
     update(scene) { this.scene = { ...this.scene, ...scene }; }
 
+    // ---- where a sound comes from (spatial audio) ---------------------------
+    // Each source (a typist, a voice, a walker, a machine) has a panner of its
+    // own, placed where it is on screen (office.js earOf: left/right, near/far)
+    // round you as the listener: on headphones, from that side and distance.
+    // `this.dest` is the source being played; sounds go to out().
+    out() { return this.dest || this.far || this.master; }
+
+    spot(id, pos) {
+      const c = this.ctx;
+      if (!pos || !c.createPanner || !this.far) return null;
+      const spots = this.spots || (this.spots = new Map());
+      let s = spots.get(id);
+      if (!s) {
+        const pn = c.createPanner();
+        pn.panningModel = 'HRTF'; pn.distanceModel = 'inverse'; pn.refDistance = 1; pn.rolloffFactor = 0.55;
+        pn.connect(this.far);
+        s = { pn, seen: 0 };
+        spots.set(id, s);
+      }
+      s.seen = c.currentTime;
+      // left/right across the screen, nearer the bottom of it (or zoomed in)
+      const x = pos.pan * 3, z = -(0.8 + (1 - pos.near) * 5);
+      const pn = s.pn, now = c.currentTime;
+      if (pn.positionX) { pn.positionX.setTargetAtTime(x, now, 0.15); pn.positionY.setTargetAtTime(0, now, 0.15); pn.positionZ.setTargetAtTime(z, now, 0.15); }
+      else if (pn.setPosition) pn.setPosition(x, 0, z);
+      return pn;
+    }
+
+    // Play `fn` from where `pos` is (or from the room, when we do not know).
+    from(id, pos, fn) {
+      this.dest = this.spot(id, pos);
+      try { fn(); } finally { this.dest = null; }
+    }
+
+    // Panners of sources gone quiet a while are let go.
+    spotSweep(now) {
+      if (!this.spots || now - (this.sweptAt || 0) < 5) return;
+      this.sweptAt = now;
+      for (const [id, s] of this.spots) if (now - s.seen > 20) { try { s.pn.disconnect(); } catch {} this.spots.delete(id); }
+    }
+
     // Every 90 ms: layer levels follow the scene; keyboards click at random.
     tick() {
       const c = this.ctx, s = this.scene, now = c.currentTime;
@@ -160,11 +201,12 @@
       this.musicTick(now);
       this.talkTick(now);
       this.stepTick(now);
-      this.pingTick(now, s.pingpong);
+      this.from('pingpong', s.pingpong && s.pingpong.pos, () => this.pingTick(now, s.pingpong));
       this.machineSounds(s.machines, now);
       if (s.flash && !this.flashed) this.thunder(now + 0.4 + Math.random() * 1.2);
       this.flashed = s.flash;
-      this.slotSounds(s.slot, now);
+      this.from('slot', s.slot && s.slot.pos, () => this.slotSounds(s.slot, now));
+      this.spotSweep(now);
     }
 
     // The slot machine, from the spin now playing (office.slotEvents): the
@@ -197,7 +239,7 @@
       g.gain.linearRampToValueAtTime(0.07, at + 0.08);
       g.gain.setValueAtTime(0.07, at + Math.max(0.1, len - 0.15));
       g.gain.linearRampToValueAtTime(0, at + len);
-      src.connect(f); f.connect(g); g.connect(this.master);
+      src.connect(f); f.connect(g); g.connect(this.out());
       src.start(at); src.stop(at + len + 0.05);
     }
 
@@ -206,7 +248,7 @@
       const o = c.createOscillator(), g = c.createGain();
       o.type = 'square'; o.frequency.setValueAtTime(320 + i * 40, at); o.frequency.exponentialRampToValueAtTime(120, at + 0.06);
       g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.12, at + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.08);
-      o.connect(g); g.connect(this.master);
+      o.connect(g); g.connect(this.out());
       o.start(at); o.stop(at + 0.1);
     }
 
@@ -217,7 +259,7 @@
         const o = c.createOscillator(), g = c.createGain(), t = at + i * 0.09;
         o.type = 'triangle'; o.frequency.value = f;
         g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-        o.connect(g); g.connect(this.master);
+        o.connect(g); g.connect(this.out());
         o.start(t); o.stop(t + 0.22);
       });
     }
@@ -230,8 +272,10 @@
       const ts = this.typists || (this.typists = []);
       while (ts.length < n) ts.push({ next: now + Math.random() * 0.6, left: 0, k: 0 });
       ts.length = n;
-      for (const t of ts) {
+      const at = (this.scene.spots && this.scene.spots.typing) || [];
+      for (const [i, t] of ts.entries()) {
         if (t.next < now) t.next = now + Math.random() * 0.05;
+        this.dest = this.spot(`type${i}`, at[i]);
         while (t.next < now + 0.1) {
           t.k++;
           this.key(t.next, t.k % 7 === 0);
@@ -239,6 +283,7 @@
           else t.next += 0.07 + Math.random() * 0.09;
         }
       }
+      this.dest = null;
     }
 
     // One key press: a bright click and the key bottoming out (a low thock);
@@ -253,7 +298,7 @@
       g.gain.setValueAtTime(0, at);
       g.gain.linearRampToValueAtTime(v, at + 0.002);
       g.gain.exponentialRampToValueAtTime(0.001, at + (space ? 0.045 : 0.02));
-      src.connect(hp); hp.connect(g); g.connect(this.far || this.master);
+      src.connect(hp); hp.connect(g); g.connect(this.out());
       src.start(at, Math.random() * 1.5, 0.06);
       const o = c.createOscillator(), og = c.createGain();
       o.type = 'triangle';
@@ -263,108 +308,70 @@
       og.gain.setValueAtTime(0.0001, at);
       og.gain.exponentialRampToValueAtTime(space ? 0.3 : 0.2, at + 0.003);
       og.gain.exponentialRampToValueAtTime(0.0001, at + (space ? 0.07 : 0.045));
-      o.connect(og); og.connect(this.far || this.master);
+      o.connect(og); og.connect(this.out());
       o.start(at); o.stop(at + 0.08);
     }
 
     // ---- voices: people talking, heard from across the room --------------
-    // Not words, just the sound of them: syllables on a voice (a pitch and
-    // two vowel resonances that move), strung into words, two people taking
-    // turns with pauses; a laugh now and then.
+    // Not words: cartoon-animal chatter (word), two people taking turns
+    // with pauses; a laugh now and then.
     talkTick(now) {
       const pairs = Math.min(3, Math.ceil((this.scene.chat || 0) / 2));
       const ts = this.talks || (this.talks = []);
       while (ts.length < pairs) ts.push({ next: now + 0.3 + Math.random(), who: 0, words: 0, base: [100 + Math.random() * 40, 190 + Math.random() * 50] });
       ts.length = pairs;
-      for (const t of ts) {
+      const voices = (this.scene.spots && this.scene.spots.chat) || [];
+      for (const [j, t] of ts.entries()) {
         if (t.next < now) t.next = now + 0.05;
         while (t.next < now + 0.15) {
           if (t.words <= 0) { // a turn: the other one speaks
             t.who = 1 - t.who; t.words = 1 + Math.floor(Math.random() * 4);
-            if (Math.random() < 0.12) { this.laugh(t.next, t.base[t.who]); t.next += 1.0; continue; }
+            if (Math.random() < 0.12) { this.from(`voice${j}.${t.who}`, voices[j * 2 + t.who] || voices[j * 2], () => this.laugh(t.next, t.base[t.who])); t.next += 1.0; continue; }
           }
-          const at = this.word(t.next, t.base[t.who] * (0.94 + Math.random() * 0.12), 2 + Math.floor(Math.random() * 3));
+          let at = t.next;
+          this.from(`voice${j}.${t.who}`, voices[j * 2 + t.who] || voices[j * 2], () => { at = this.word(t.next, t.base[t.who] * (0.94 + Math.random() * 0.12), 2 + Math.floor(Math.random() * 3)); });
           t.words--;
           t.next = at + (t.words > 0 ? 0.12 + Math.random() * 0.2 : 0.5 + Math.random() * 1.1);
         }
       }
     }
 
-    // One word, said in one breath: the voice runs on through its syllables
-    // (a separate beep for each sounded like a machine), each with a vowel
-    // of its own (the mouth moves between them), a tone (level, rising,
-    // dipping, falling), a little tremble, breath, and some starting on a
-    // consonant. Returns when it ends.
-    word(at, f0, n, { lift = 1 } = {}) {
-      const c = this.ctx;
-      const lens = Array.from({ length: n }, () => 0.11 + Math.random() * 0.1);
-      const end = at + lens.reduce((a, b) => a + b, 0);
-      const out = c.createGain();
-      out.gain.setValueAtTime(0.0001, at);
-      // the voice: a buzz that wavers like a throat does
-      const o = c.createOscillator();
-      o.type = 'sawtooth';
-      const vib = c.createOscillator(), vg = c.createGain();
-      vib.frequency.value = 4.5 + Math.random() * 1.5; vg.gain.value = f0 * 0.012;
-      vib.connect(vg); vg.connect(o.frequency);
-      // breath through the same mouth
-      const air = c.createBufferSource(); air.buffer = this.noise;
-      const ag = c.createGain(); ag.gain.value = 0.06;
-      const voice = c.createGain(); voice.gain.value = 1;
-      o.connect(voice); air.connect(ag);
-      // the mouth: three resonances that glide from vowel to vowel
-      const tracts = [[5, 1], [9, 0.55], [12, 0.2]].map(([q, v]) => {
-        const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q;
-        const fg = c.createGain(); fg.gain.value = v;
-        voice.connect(bp); ag.connect(bp); bp.connect(fg); fg.connect(out);
-        return bp;
-      });
+    // One word in cartoon-animal talk ("woo-wa-ah"): a high, clear little
+    // voice, a quick bend up and back in each syllable, the syllables
+    // stepping round a few notes like a tune; an "oo", "oh" or "ah" each.
+    // Returns when it ends.
+    word(at, f0, n) {
+      const c = this.ctx, base = f0 * 2.4;
       let t = at;
-      lens.forEach((len, i) => {
-        const v = VOWELS[Math.floor(Math.random() * VOWELS.length)];
-        tracts.forEach((bp, k) => {
-          if (i === 0) bp.frequency.setValueAtTime(v[k], t);
-          else bp.frequency.linearRampToValueAtTime(v[k], t + Math.min(0.05, len * 0.4));
-        });
-        // its tone, sinking a little through the word (as speech does)
-        const p = f0 * lift * (1 - 0.06 * (i / n)), tone = TONES[Math.floor(Math.random() * TONES.length)];
-        if (i === 0) o.frequency.setValueAtTime(p * tone[0], t);
-        else o.frequency.linearRampToValueAtTime(p * tone[0], t + 0.03);
-        o.frequency.linearRampToValueAtTime(p * tone[1], t + len * 0.6);
-        o.frequency.linearRampToValueAtTime(p * tone[2], t + len * 0.95);
-        // loud in the vowel, dipping (not stopping) between syllables
-        out.gain.exponentialRampToValueAtTime(i === 0 ? 0.22 : 0.2, t + Math.min(0.04, len * 0.3));
-        out.gain.exponentialRampToValueAtTime(i === n - 1 ? 0.0001 : 0.065, t + len);
-        if (Math.random() < 0.55) this.consonant(t, Math.random() < 0.5);
-        t += len;
-      });
-      out.connect(this.far || this.master);
-      o.start(at); vib.start(at); air.start(at, Math.random() * 1.5);
-      for (const x of [o, vib, air]) x.stop(end + 0.03);
-      return end;
-    }
-
-    // The start of a syllable: a puff (t, k, p) or a hiss (s, sh, f).
-    consonant(at, hiss) {
-      const c = this.ctx, src = c.createBufferSource();
-      src.buffer = this.noise;
-      const hp = c.createBiquadFilter(); hp.type = hiss ? 'highpass' : 'bandpass';
-      hp.frequency.value = hiss ? 3200 + Math.random() * 1800 : 1400 + Math.random() * 1600; hp.Q.value = 1.2;
-      const g = c.createGain(), len = hiss ? 0.06 : 0.018;
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(hiss ? 0.05 : 0.09, at + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.0001, at + len);
-      src.connect(hp); hp.connect(g); g.connect(this.far || this.master);
-      src.start(at, Math.random() * 1.5, len + 0.01);
-    }
-
-    // A laugh: "ha" a few times, each a bit lower, breathy.
-    laugh(at, f0) {
-      for (let i = 0; i < 4; i++) {
-        const t = at + i * 0.16;
-        this.consonant(t, true);
-        this.word(t + 0.02, f0 * (1.4 - i * 0.07), 1, { lift: 1 });
+      for (let i = 0; i < n; i++) {
+        const len = 0.07 + Math.random() * 0.045;
+        const p = base * CHIRP_STEPS[Math.floor(Math.random() * CHIRP_STEPS.length)] * (i === n - 1 ? 0.92 : 1);
+        const o = c.createOscillator();
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(p * 0.9, t);
+        o.frequency.exponentialRampToValueAtTime(p * 1.14, t + len * 0.4);
+        o.frequency.exponentialRampToValueAtTime(p, t + len);
+        // the mouth: a soft "oo", "oh" or "ah" over the clear tone
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.16, t + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.09, t + len * 0.7);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+        const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2;
+        bp.frequency.value = CHIRP_VOWELS[Math.floor(Math.random() * CHIRP_VOWELS.length)];
+        const dry = c.createGain(); dry.gain.value = 0.55;
+        const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400;
+        o.connect(dry); o.connect(bp); dry.connect(lp); bp.connect(lp); lp.connect(g);
+        g.connect(this.out());
+        o.start(t); o.stop(t + len + 0.02);
+        t += len + 0.022;
       }
+      return t;
+    }
+
+    // A laugh: four quick "hee"s going up.
+    laugh(at, f0) {
+      for (let i = 0; i < 4; i++) this.word(at + i * 0.1, f0 * (1.18 + i * 0.07), 1);
     }
 
     // ---- footsteps: someone walking, soft on the floor --------------------
@@ -373,9 +380,10 @@
       const ws = this.walkers || (this.walkers = []);
       while (ws.length < n) ws.push({ next: now + Math.random() * 0.5 });
       ws.length = n;
-      for (const w of ws) {
+      const at = (this.scene.spots && this.scene.spots.walk) || [];
+      for (const [i, w] of ws.entries()) {
         if (w.next < now) w.next = now + Math.random() * 0.1;
-        while (w.next < now + 0.15) { this.step(w.next); w.next += 0.42 + Math.random() * 0.08; }
+        this.from(`walk${i}`, at[i], () => { while (w.next < now + 0.15) { this.step(w.next); w.next += 0.42 + Math.random() * 0.08; } });
       }
     }
 
@@ -385,7 +393,7 @@
       const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500 + Math.random() * 300;
       const g = c.createGain();
       g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(0.5, at + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.07);
-      src.connect(lp); lp.connect(g); g.connect(this.far || this.master);
+      src.connect(lp); lp.connect(g); g.connect(this.out());
       src.start(at, Math.random() * 1.5, 0.09);
     }
 
@@ -408,7 +416,7 @@
       o.type = 'sine';
       o.frequency.setValueAtTime(bat ? 1500 : 1100, at); o.frequency.exponentialRampToValueAtTime(bat ? 900 : 700, at + 0.03);
       g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(bat ? 0.22 : 0.14, at + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.06);
-      o.connect(g); g.connect(this.far || this.master);
+      o.connect(g); g.connect(this.out());
       o.start(at); o.stop(at + 0.08);
     }
 
@@ -422,6 +430,7 @@
         const key = `${m.id}:${m.phase}`;
         if (heard.has(key)) continue;
         heard.set(key, now);
+        this.dest = this.spot(m.id.split('@').slice(0, 2).join('@'), m.pos);
         const left = m.left == null ? 1 : m.left;
         if (m.kind === 'microwave') {
           if (m.phase === 'open' || m.phase === 'ding') this.thunk(now, 900, 0.12);
@@ -439,6 +448,7 @@
           for (let i = 0; i < 3; i++) this.hum(now + i * 1.3, 0.9, 230);
         }
       }
+      this.dest = null;
       // forget old ones
       if (heard.size > 200) for (const [k, t] of heard) if (now - t > 60) heard.delete(k);
     }
@@ -449,7 +459,7 @@
       const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.5;
       const g = c.createGain();
       g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.12);
-      src.connect(bp); bp.connect(g); g.connect(this.far || this.master);
+      src.connect(bp); bp.connect(g); g.connect(this.out());
       src.start(at, Math.random() * 1.5, 0.15);
     }
 
@@ -459,7 +469,7 @@
       const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = freq * 3;
       g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(0.035, at + 0.1);
       g.gain.setValueAtTime(0.035, at + Math.max(0.15, len - 0.15)); g.gain.linearRampToValueAtTime(0.0001, at + len);
-      o.connect(lp); lp.connect(g); g.connect(this.far || this.master);
+      o.connect(lp); lp.connect(g); g.connect(this.out());
       o.start(at); o.stop(at + len + 0.05);
     }
 
@@ -469,7 +479,7 @@
         const o = c.createOscillator(), g = c.createGain();
         o.type = 'sine'; o.frequency.value = f;
         g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(v, at + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, at + 1.2);
-        o.connect(g); g.connect(this.far || this.master);
+        o.connect(g); g.connect(this.out());
         o.start(at); o.stop(at + 1.3);
       }
     }
@@ -493,20 +503,28 @@
   function sceneOf(office) {
     if (!office) return {};
     let typing = 0, coffee = 0, chat = 0, walking = 0;
+    // Keyboards only after hours, from whoever is working late (in the day
+    // they would be under everything all the time).
+    const overtime = !!office.closedNow;
+    // where each one is, for spatial audio (office.js earOf)
+    const ear = (x, y) => (office.earOf && Number.isFinite(x) && Number.isFinite(y) ? office.earOf(x, y) : null);
+    const spots = { typing: [], chat: [], walk: [] };
     for (const p of office.bodies ? office.bodies() : []) {
-      if (p.path && p.path.length) { walking++; continue; }
+      if (p.path && p.path.length) { walking++; spots.walk.push(ear(p.x, p.y)); continue; }
       const act = office.stateOf(p).act;
-      if (act === 'type' || act === 'typefast' || act === 'laptop') typing++;
+      if (overtime && (act === 'type' || act === 'typefast' || act === 'laptop')) { typing++; spots.typing.push(ear(p.x, p.y)); }
       if (act === 'coffee' || act === 'refill') coffee++;
-      if (act === 'chat' || act === 'laugh') chat++;
+      if (act === 'chat' || act === 'laugh') { chat++; spots.chat.push(ear(p.x, p.y)); }
     }
     const weather = office.weatherKind ? office.weatherKind() : null;
     const t = (office.t || 0) / 1000;
     const slot = office.slotEvents ? office.slotEvents() : null;
+    const sq = slot && office.slotPoi && office.slotPoi();
+    if (slot && sq) slot.pos = ear(sq.x, sq.y);
     // ping-pong: two at the table, playing
     const pois = (office.plan && office.plan.pois) || [];
     const at = pois.filter((q) => q.pair === 'pp' && q.taken).map((q) => office.people && office.people.get(q.taken)).filter((p) => p && p.poi && p.poi.pair === 'pp' && !(p.path && p.path.length));
-    const pingpong = { on: at.length >= 2, t: office.t || 0 };
+    const pingpong = { on: at.length >= 2, t: office.t || 0, pos: at.length >= 2 ? ear((at[0].x + at[1].x) / 2, (at[0].y + at[1].y) / 2) : null };
     // the machines in use, and the phase each is in
     const machines = [];
     if (office.applianceAt) {
@@ -514,10 +532,10 @@
         const m = office.applianceAt(q);
         if (!m) continue;
         const user = [...office.people.values()].find((p) => p.useOf === q);
-        machines.push({ kind: q.act, phase: m.phase, id: `${q.act}@${Math.round(q.x * 10)},${Math.round(q.y * 10)}@${user ? user.useAt : 0}`, left: phaseLeft(q.act, m) });
+        machines.push({ kind: q.act, phase: m.phase, id: `${q.act}@${Math.round(q.x * 10)},${Math.round(q.y * 10)}@${user ? user.useAt : 0}`, left: phaseLeft(q.act, m), pos: ear(q.x, q.y) });
       }
     }
-    return { typing, coffee, chat, walking, weather, flash: weather === 'storm' && (t % 7.3) < 0.12, slot, pingpong, machines };
+    return { typing, coffee, chat, walking, weather, flash: weather === 'storm' && (t % 7.3) < 0.12, slot, pingpong, machines, spots };
   }
 
   // How long (s) is left of a machine's phase.

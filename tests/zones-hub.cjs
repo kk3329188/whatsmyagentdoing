@@ -1192,8 +1192,12 @@ test('soundscape: keyboards while people type, the coffee machine, voices, rain;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/ambient.js'), 'utf8'), ctx);
   const { Ambient, sceneOf } = win.OfficeAmbient;
   o.stateOf = ((orig) => (q) => (q === p ? { pose: 'sit', act: 'type' } : orig.call(o, q)))(o.stateOf);
+  assert.equal(sceneOf(o).typing, 0, 'in the day nobody hears keyboards');
+  o.closedNow = true; // working late: now the keys are heard
   const scene = sceneOf(o);
   assert.equal(scene.typing, 1);
+  assert.equal(scene.spots.typing.length, 1, 'and from where they sit');
+  assert.ok(scene.spots.typing[0].pan >= -1 && scene.spots.typing[0].pan <= 1);
   o.setWeather({ kind: 'rain' });
   assert.equal(sceneOf(o).weather, 'rain');
   const a = new Ambient();
