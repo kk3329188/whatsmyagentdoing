@@ -1995,3 +1995,25 @@ test('the house dealer: Chuck, Messi on Chuck\'s days off (Sunday, Wednesday), o
   view.stepRemote(0.016);
   assert.equal(view.dealer.who, 'messi');
 });
+
+test('upstairs at the casino: the pods nobody needs are a gaming floor (slots, the big six, sic bo, roulette), every spot reachable; elsewhere still yoga mats', () => {
+  const up = (layout) => { const o = load(true); if (layout) o.layout = layout; o.floor = 2; o.plan = o.buildPlan(0); return o.plan; };
+  const plan = up('casino');
+  const kinds = new Set(plan.props.map((p) => p.t));
+  for (const t of ['slotBank', 'sicbo', 'roulette', 'bigSix', 'craps', 'blackjack']) assert.ok(kinds.has(t), `upstairs casino has ${t}`);
+  assert.ok(!kinds.has('yoga'), 'no yoga mats at the casino');
+  const lift = plan.lift;
+  const spots = plan.pois.filter((q) => q.zone === 'idle' && (q.act === 'arcade' || q.act === 'roulette'));
+  assert.ok(spots.length >= 15, `${spots.length} places to play`);
+  for (const q of spots) {
+    assert.ok(!plan.grid.blocked(q.x, q.y), `free to stand at ${q.act} ${q.x.toFixed(2)},${q.y.toFixed(2)}`);
+    const path = plan.grid.path(lift.x + 0.6, lift.y, q.x, q.y);
+    assert.ok(path && path.length, `reachable from the lift: ${q.act} ${q.x.toFixed(2)},${q.y.toFixed(2)}`);
+  }
+  // a pod taken for work is desks again, not a casino pit
+  const busy = (() => { const o = load(true); o.layout = 'casino'; o.floor = 2; return o.buildPlan(9); })();
+  assert.ok(busy.desks.length > plan.desks.length);
+  assert.ok(busy.props.filter((p) => p.t === 'slotBank').length < plan.props.filter((p) => p.t === 'slotBank').length);
+  const plain = new Set(up(null).props.map((p) => p.t));
+  assert.ok(plain.has('yoga') && !plain.has('slotBank') && !plain.has('sicbo'), 'the other decors keep their upstairs');
+});

@@ -1019,23 +1019,57 @@ function vegasBuild(p, o) {
     o.casinoDice.push({ dice, w: p.w, d: p.d });
     return g;
   }
-  if (p.t === 'arcade') {
-    // In the casino the arcade cabinet is a slot machine: a black and gold
-    // cabinet, reels behind glass, a glowing topper and a pull handle.
+  // A slot machine: a black and gold cabinet, reels behind glass, a glowing
+  // topper and a pull handle; facing +z, its middle at the origin.
+  const cabinet = (topColor = 0xff3fa4) => {
     const g = new THREE.Group();
     g.add(mesh(new THREE.BoxGeometry(0.66, 1.45, 0.6), M(C.ink), 0, 0.72, 0));
     g.add(mesh(new THREE.BoxGeometry(0.7, 0.04, 0.64), M(C.char), 0, 1.47, 0));
     const reels = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.36), new THREE.MeshBasicMaterial({ map: slotReels(), toneMapped: false }));
     reels.position.set(0, 1.05, 0.301); g.add(reels);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.26, 0.5), new THREE.MeshBasicMaterial({ color: 0xff3fa4 }));
+    const top = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.26, 0.5), new THREE.MeshBasicMaterial({ color: topColor }));
     top.position.set(0, 1.62, -0.02); g.add(top);
     g.add(mesh(new THREE.BoxGeometry(0.66, 0.06, 0.22), M(C.char), 0, 0.78, 0.38));
     g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.35, 6), M(C.char), 0.36, 1.05, 0.1));
     g.add(mesh(new THREE.SphereGeometry(0.04, 10, 8), M(C.terra), 0.36, 1.24, 0.1));
+    o.casinoSlots.push(top);
+    return g;
+  };
+  if (p.t === 'arcade') {
+    // In the casino the arcade cabinet is a slot machine.
+    const g = cabinet();
     // 2F's cabinets stand by the right wall, turned to the room (their players stand at -x).
     if (o.plan.floor === 2) g.rotation.y = -Math.PI / 2;
     g.position.set(p.x + 0.35, 0, p.y + 0.35);
-    o.casinoSlots.push(top);
+    return g;
+  }
+  if (p.t === 'slotBank') {
+    // Upstairs (office.js casinoPit): slot machines side by side, their
+    // toppers in turn pink, gold, cyan.
+    const g = new THREE.Group();
+    for (let k = 0; k < p.n; k++) {
+      const c = cabinet([0xff3fa4, 0xffc531, 0x3fe0ff][k % 3]);
+      c.position.set(p.step * (k + 0.5), 0, 0.31);
+      g.add(c);
+    }
+    g.position.set(p.x, 0, p.y);
+    return g;
+  }
+  if (p.t === 'sicbo') {
+    // Sic bo: a table with the bets laid out on its felt and three dice under
+    // a glass dome in the middle, shaken now and then (vegasAnimate).
+    const g = new THREE.Group();
+    g.add(mesh(new THREE.BoxGeometry(p.w, 0.74, p.d), M(C.oak), 0, 0.37, 0));
+    g.add(mesh(new THREE.BoxGeometry(p.w + 0.08, 0.05, p.d + 0.08), M(C.ink), 0, 0.76, 0));
+    const felt = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.12, p.d - 0.12), new THREE.MeshStandardMaterial({ map: sicboFelt(), roughness: 1 }));
+    felt.rotation.x = -Math.PI / 2; felt.position.y = 0.787; g.add(felt);
+    g.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.04, 28), M(C.char), 0, 0.8, 0));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.19, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xdff2ff, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false }));
+    dome.position.y = 0.82; g.add(dome);
+    const die = new THREE.MeshStandardMaterial({ color: 0xfaf8f2, roughness: 0.3 });
+    const dice = [0, 1, 2].map((k) => { const d = mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), die, -0.07 + k * 0.07, 0.85, (k % 2) * 0.05 - 0.02); g.add(d); return d; });
+    g.position.set(p.x + p.w / 2, 0, p.y + p.d / 2);
+    o.casinoDice.push({ dice, shake: dice.map((d) => d.position.clone()) });
     return g;
   }
   if (p.t === 'booth') {
@@ -1096,6 +1130,21 @@ const blackjackFelt = () => canvasTex('bjfelt', 256, (c, s) => {
   c.fillStyle = 'rgba(232,192,96,.9)'; c.font = 'bold 15px serif'; c.textAlign = 'center';
   c.fillText('BLACKJACK PAYS 3 TO 2', s / 2, s * 0.62);
   c.strokeStyle = 'rgba(232,192,96,.7)'; c.lineWidth = 2; c.beginPath(); c.arc(s / 2, 0, s * 0.42, 0, Math.PI); c.stroke();
+}, { repeat: false });
+// Sic bo's layout: SMALL and BIG at the ends, the triples and totals between.
+const sicboFelt = () => canvasTex('sicbo', 256, (c, s) => {
+  c.fillStyle = '#123f2a'; c.fillRect(0, 0, s, s);
+  c.strokeStyle = 'rgba(255,215,130,.85)'; c.lineWidth = 3; c.strokeRect(8, 8, s - 16, s - 16);
+  c.fillStyle = '#8e1b2b'; c.fillRect(14, 14, 60, s - 28); c.fillRect(s - 74, 14, 60, s - 28);
+  c.fillStyle = '#ffe2a8'; c.font = 'bold 24px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.save(); c.translate(44, s / 2); c.rotate(-Math.PI / 2); c.fillText('小 SMALL', 0, 0); c.restore();
+  c.save(); c.translate(s - 44, s / 2); c.rotate(Math.PI / 2); c.fillText('大 BIG', 0, 0); c.restore();
+  c.font = 'bold 15px sans-serif'; c.lineWidth = 1.5;
+  for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) {
+    const x = 84 + k * 22, y = 40 + r * 64;
+    c.strokeRect(x, y, 20, 52);
+    c.fillText(String(4 + r * 4 + k), x + 10, y + 26);
+  }
 }, { repeat: false });
 const crapsFelt = () => canvasTex('craps', 256, (c, s) => {
   c.fillStyle = '#1f6a40'; c.fillRect(0, 0, s, s);
@@ -1171,6 +1220,16 @@ function vegasAnimate(fx, t, closed, o) {
   // the dice: a throw every few seconds, tumbling for half a second
   for (const d of o.casinoDice || []) {
     const ph = t % 6;
+    if (d.shake) {
+      // sic bo: the dome is shaken, the dice rattle inside it and settle
+      const sh = (t + 2.5) % 7;
+      d.dice.forEach((die, k) => {
+        const at = d.shake[k];
+        if (!closed && sh < 0.9) { die.rotation.set(t * 19 + k, t * 15 + k, t * 9); die.position.set(at.x + Math.sin(t * 31 + k * 2) * 0.03, at.y + Math.abs(Math.sin(t * 27 + k)) * 0.07, at.z + Math.cos(t * 29 + k) * 0.03); }
+        else if (sh < 0.93) { die.rotation.set(0, k * 0.7, 0); die.position.copy(at); }
+      });
+      continue;
+    }
     d.dice.forEach((die, k) => {
       if (!closed && ph < 0.6) { die.rotation.set(t * 17 + k, t * 13, t * 11 + k); die.position.set(-d.w / 2 + 0.3 + ph * 2.6 + k * 0.08, 0.76 + Math.abs(Math.sin(ph * 12)) * 0.08, Math.sin(ph * 5 + k) * 0.2); }
       else if (ph < 0.62) die.rotation.set(0, k, 0);
@@ -1273,7 +1332,7 @@ const VEGAS = {
     }
     return { group: g, glow };
   },
-  handles: ['pokerTable', 'pokerSeat', 'roulette', 'bigSix', 'blackjack', 'craps', 'arcade', 'booth'],
+  handles: ['pokerTable', 'pokerSeat', 'roulette', 'bigSix', 'blackjack', 'craps', 'arcade', 'booth', 'slotBank', 'sicbo'],
   build: vegasBuild,
   extras: vegasExtras,
   animate: vegasAnimate,

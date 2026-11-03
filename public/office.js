@@ -1062,8 +1062,12 @@
       const fits = (x, y, w, d) => [[x, y], [x + w, y], [x, y + d], [x + w, y + d], [x + w / 2, y + d / 2]].every(([a, b]) => !grid.blocked(a, b));
       const used = desks.length / 4;
 
-      // yoga mats where a pod would be
-      if (pods > used) {
+      // In the casino the pods nobody needs make a gaming floor (casinoPit);
+      // elsewhere, yoga mats where the next pod would be.
+      const casino = this.layout === 'casino';
+      if (casino) {
+        for (let k = used; k < pods; k++) this.casinoPit(k - used, 1.3 + (k % podCols) * PODX, 2.0 + Math.floor(k / podCols) * 4.7, { prop, solid, poi });
+      } else if (pods > used) {
         const c = used % podCols, r = Math.floor(used / podCols);
         const px = 1.3 + c * PODX, py = 2.0 + r * 4.7;
         ['#c96442', '#7fb08a', '#7d93c4'].forEach((col, i) => {
@@ -1075,7 +1079,6 @@
       }
       // gym: two treadmills and a weight bench (in the casino, a craps table
       // with people round it instead)
-      const casino = this.layout === 'casino';
       const tx = 2.4, ty = OD + 1.0;
       if (casino) {
         prop('craps', { x: tx, y: ty, w: 2.6, d: 1.1 });
@@ -1236,6 +1239,46 @@
       const art = [];
       { let from = 0.3; for (const wx of [...windows, OW - 0.3]) { if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) }); from = wx + 1.5; } }
       return { W, D, OW, OD, MR, PY, RW, grid, items, props, pois, desks, floors, art, whiteboard: null, wallSign: { x: OW + 0.5, text: 'LIBRARY' }, logo, windows, posters, pp, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 2, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true };
+    }
+
+    // Upstairs at the casino, where a pod of hot desks would stand (px, py: the
+    // pod's corner; a pod's cell is 4.6 x 4.7): a back row of slot machines
+    // (or the big six wheel between two of them) and a table in front, sic bo
+    // or roulette, by turns. A pod that is needed for work takes its place
+    // back (the plan follows the desks).
+    casinoPit(i, px, py, { prop, solid, poi }) {
+      const cx = px + 1.45;
+      const slots = (x0, n) => {
+        const step = 0.78;
+        prop('slotBank', { x: x0, y: py - 0.3, n, step });
+        solid(x0, py - 0.3, n * step, 0.62, 0.03);
+        for (let k = 0; k < n; k++) {
+          const sx = x0 + step * (k + 0.5), sy = py + 0.85;
+          prop('barStool', { x: sx, y: sy });
+          poi(sx, sy, 'arcade', 'back', { sit: 0.47, zone: 'idle', yaw: Math.PI });
+        }
+      };
+      if (i % 3 === 1) {
+        prop('bigSix', { x: cx - 0.35, y: py - 0.3 });
+        solid(cx - 0.35, py - 0.3, 0.7, 0.7);
+        poi(cx, py + 0.85, 'roulette', 'back', { zone: 'idle', yaw: Math.PI });
+        slots(cx - 1.95, 2);
+        slots(cx + 0.39, 2);
+      } else slots(cx - 1.56, 4);
+      // the table in front, people standing round it
+      const ty = py + 2.55;
+      const round = (hw, hd) => [[cx - hw - 0.45, ty, Math.PI / 2], [cx + hw + 0.45, ty, -Math.PI / 2], [cx - 0.45, ty + hd + 0.45, Math.PI], [cx + 0.45, ty + hd + 0.45, Math.PI]]
+        .forEach(([sx, sy, yaw]) => poi(sx, sy, 'roulette', 'back', { zone: 'idle', yaw }));
+      if (i % 3 === 0) {
+        // sic bo: the dice under a glass dome in the middle, bets all round
+        prop('sicbo', { x: cx - 0.9, y: ty - 0.5, w: 1.8, d: 1.0 });
+        solid(cx - 0.9, ty - 0.5, 1.8, 1.0, 0.05);
+        round(0.9, 0.5);
+      } else {
+        prop('roulette', { x: cx - 0.8, y: ty - 0.4, w: 1.6, d: 0.8 });
+        solid(cx - 0.8, ty - 0.4, 1.6, 0.8, 0.05);
+        round(0.8, 0.4);
+      }
     }
 
     // The sign over your desk: how many are waiting in line.
