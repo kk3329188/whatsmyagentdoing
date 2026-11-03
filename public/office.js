@@ -330,8 +330,12 @@
   const BOSS_OUT = ['呼～老闆走了', '終於…', '休息一下', '伸個懶腰', '可以摸魚了'];
   const RUSH_MS = 9000;
 
-  const SKIN = ['#f3cfb0', '#e5b38f', '#c98d66', '#9a6646', '#6e4630', '#f7dcc7'];
-  const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550'];
+  // From very fair to deep brown, so the office looks like a lot of places.
+  const SKIN = ['#fbe3d0', '#e5b38f', '#f3cfb0', '#e8bf9a', '#d9a77f', '#c98d66', '#a8714c', '#8a5a3b', '#6e4630', '#4f3122'];
+  const HAIR = ['#2a2019', '#4b3020', '#8a4b2a', '#c99a5b', '#1c1c1c', '#8c8c8c', '#a33a2c', '#3d3550', '#e6d3a3', '#f2f0ea'];
+  // Now and then dyed: pink, teal, blue, lilac.
+  const DYE = ['#e07aa0', '#3fa7a0', '#4f6fd6', '#a98be0'];
+  const SHOE = ['#2a2a2e', '#f2efe8', '#7a4a2a', '#2c3e66', '#b3262f'];
   const SHIRT = {
     claude: ['#c96442', '#d9825f', '#b4553a', '#e09a72'],
     codex: ['#10a37f', '#2bb38f', '#0d8a6b', '#4cc3a0'],
@@ -375,6 +379,28 @@
   const HAIR_STYLES = 13;
   const hairOf = (h) => (h >>> 3) % HAIR_STYLES;
   const pick = (arr, h, salt) => arr[(Math.imul(h ^ Math.imul(salt, 2654435761), 2246822519) >>> 0) % arr.length];
+  // The rest of how someone looks, from the same hash (so they always look
+  // the same, and these plain fields travel to a public page with them):
+  // build 0 slim / 1 / 2 round, tall (a few percent either way), specs 0 none
+  // / 1 round / 2 square / 3 shades, beard 0 / 1 stubble / 2 full / 3
+  // moustache, freckles, earrings, skirt, top 0 tee / 1 hoodie / 2 collar /
+  // 3 cardigan, shoe colour; dye: hair of a colour you were not born with.
+  const lookOf = (h) => {
+    const r = (salt, n) => (Math.imul(h ^ Math.imul(salt, 2654435761), 2246822519) >>> 0) % n;
+    const beard = [0, 0, 0, 0, 0, 0, 0, 1, 2, 3][r(29, 10)];
+    return {
+      build: [0, 1, 1, 1, 2][r(17, 5)],
+      tall: [0.94, 0.97, 1, 1, 1.03, 1.06][r(19, 6)],
+      specs: [0, 0, 0, 0, 0, 0, 1, 1, 2, 3][r(23, 10)],
+      beard,
+      freckles: r(31, 6) === 0,
+      earrings: !beard && r(37, 5) === 0,
+      skirt: !beard && r(41, 5) === 0,
+      top: [0, 0, 0, 1, 1, 2, 3][r(43, 7)],
+      shoe: SHOE[r(47, SHOE.length)],
+      ...(r(53, 10) === 0 ? { hair: DYE[r(59, DYE.length)] } : {}),
+    };
+  };
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   // A plain {} (from any realm), not a mesh, canvas or Map.
@@ -1632,7 +1658,7 @@
         key: s.key, h, s,
         skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: pick(PANTS, h, 13),
         shirt: pick(SHIRT[s.agent] || SHIRT.claude, h, 11),
-        hairStyle: hairOf(h),
+        hairStyle: hairOf(h), ...lookOf(h),
         phase: (h % 1000) / 1000 * Math.PI * 2,
         x: door.x, y: door.y,
         path: [], walkFace: 'front', until: 0, mode: null,
@@ -2285,7 +2311,7 @@
       const seat = this.plan.boss.seat;
       this.me = {
         me: true, key: 'me', h: 7, x: seat.x, y: seat.y, path: [], phase: 0.5, walkFace: 'back', seated: true, moving: false,
-        skin: SKIN[1], hair: HAIR[0], pants: '#2c2c34', shirt: '#2f3a52', hairStyle: 1,
+        skin: '#e5b38f', hair: HAIR[0], pants: '#2c2c34', shirt: '#2f3a52', hairStyle: 1,
         s: { key: 'me', agent: 'claude', status: 'idle', title: '你', level: 4 },
       };
       this.meKeys = new Set();
@@ -2337,7 +2363,7 @@
       const masked = !!this.masked;
       const body = {
         visitor: true, key, conv: v.conv || v.id, h, x: door.x, y: door.y, path: plan.grid.path(door.x, door.y, at.x, at.y), walkFace: 'front',
-        phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: hairOf(h),
+        phase: (h % 1000) / 1000 * Math.PI * 2, skin: pick(SKIN, h, 3), hair: pick(HAIR, h, 7), pants: '#3b3f4a', shirt: pick(['#8a8f98', '#6f7d8c', '#9c8f7a', '#7f8c6a'], h, 5), hairStyle: hairOf(h), ...lookOf(h),
         stage: 'in', until: 0, spot: at, desk, text: masked ? '有事來找' : v.text || '有事來找',
         s: { key, agent: 'claude', status: 'idle', title: masked ? '訪客' : `訪客・${v.from}`, level: 2, visitor: true },
       };
@@ -4731,6 +4757,25 @@
     // Hair in 2D, one of the thirteen styles. Called twice: `back` before the
     // head is drawn (what hangs behind it), then after (what sits on top).
     // `face`: seen from the front (otherwise the back of the head).
+    // A beard in their hair colour: stubble, a full one round the jaw, or a
+    // moustache (face units: the face is drawn a size up, see person()).
+    beard2d(p, hy) {
+      const c = this.ctx, b = p.beard === true ? 2 : p.beard;
+      c.fillStyle = b === 1 ? 'rgba(60,40,30,.22)' : p.hair;
+      if (b !== 3) { c.beginPath(); c.arc(0, hy - 0.8, 7.2, 0.12 * Math.PI, 0.88 * Math.PI); c.arc(0, hy - 0.8, b === 1 ? 5.4 : 4.6, 0.88 * Math.PI, 0.12 * Math.PI, true); c.closePath(); c.fill(); }
+      if (b >= 2) this.roundRect(-2.4, hy + 1.7, 4.8, 1.2, 0.6, p.hair);
+    }
+    // Glasses: round or square wire rims, or dark shades.
+    specs2d(kind, hy) {
+      const c = this.ctx;
+      if (kind === 3) { this.roundRect(-4.1, hy - 1.3, 3.8, 3, 1, 'rgba(22,22,28,.92)'); this.roundRect(0.5, hy - 1.3, 3.8, 3, 1, 'rgba(22,22,28,.92)'); }
+      c.strokeStyle = '#2a2018'; c.lineWidth = 0.55;
+      c.beginPath();
+      if (kind === 1) { c.arc(-2.2, hy + 0.4, 2.1, 0, Math.PI * 2); c.moveTo(4.5, hy + 0.4); c.arc(2.4, hy + 0.4, 2.1, 0, Math.PI * 2); }
+      else if (kind === 2) { c.rect(-4.2, hy - 1.2, 4, 3.1); c.rect(0.4, hy - 1.2, 4, 3.1); }
+      c.moveTo(-0.2, hy); c.lineTo(0.4, hy);
+      c.stroke();
+    }
     hair2d(p, hy, R, face, back) {
       const c = this.ctx, st = p.hairStyle || 0;
       const blob = (x, y, rx, ry, rot = 0) => { c.beginPath(); c.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); c.fill(); };
@@ -4824,32 +4869,52 @@
       const sc = s.subagent ? 0.8 : 1;
       c.save();
       c.translate(x, y);
-      c.scale(sc, sc);
+      c.scale(sc, sc * (p.tall || 1));
       if (held) { c.translate(0, -30); c.rotate(Math.sin(t * 5 + p.phase) * 0.14); c.translate(0, 30); }
       // Landing: a little squash.
       if (p.landed && Date.now() - p.landed < 250) c.scale(1.12, 0.88);
 
-      c.fillStyle = p.pants;
+      c.fillStyle = p.skirt ? p.skin : p.pants;
       if (seated) {
         c.fillRect(-5, -4, 4, 5);
         c.fillRect(1, -4, 4, 5);
+        if (p.skirt) this.roundRect(-6.5, -5.5, 13, 4.5, 1.5, p.pants);
       } else {
         // Dangling legs kick when held.
         const leg = held ? Math.sin(t * 11 + p.phase) * 2 : step * 2;
-        c.fillRect(-5.5, -7, 5, 7 + leg);
-        c.fillRect(0.5, -7, 5, 7 - leg);
-        c.fillStyle = '#2a2a2a';
+        if (p.skirt) { c.fillRect(-4.5, -7, 3.5, 7 + leg); c.fillRect(1, -7, 3.5, 7 - leg); } else { c.fillRect(-5.5, -7, 5, 7 + leg); c.fillRect(0.5, -7, 5, 7 - leg); }
+        c.fillStyle = p.shoe || '#2a2a2a';
         c.fillRect(-6, -1.5 + leg, 6, 2.5);
         c.fillRect(0, -1.5 - leg, 6, 2.5);
+        if (p.skirt) {
+          c.fillStyle = p.pants;
+          c.beginPath(); c.moveTo(-6, -8); c.lineTo(6, -8); c.lineTo(8, -3.5); c.lineTo(-8, -3.5); c.closePath(); c.fill();
+          c.fillStyle = 'rgba(0,0,0,.14)'; c.fillRect(-8, -4.5, 16, 1);
+        }
       }
       const hip = seated ? -4 : -7;
-      // Shirt with light from the upper left, and a soft outline.
+      // Shirt with light from the upper left, and a soft outline (slim,
+      // regular or round).
+      const bw = [14, 16, 19][p.build ?? 1];
       {
-        const g = c.createLinearGradient(-8, hip - 13, 8, hip + 1);
+        const g = c.createLinearGradient(-bw / 2, hip - 13, bw / 2, hip + 1);
         g.addColorStop(0, this.shade(p.shirt, 18)); g.addColorStop(1, this.shade(p.shirt, -14));
-        this.roundRect(-8, hip - 13, 16, 14, 4.5, g);
+        this.roundRect(-bw / 2, hip - 13, bw, 14, p.build === 2 ? 6 : 4.5, g);
         c.strokeStyle = 'rgba(43,36,32,.5)'; c.lineWidth = 0.9; c.stroke();
-        c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(-7, hip - 1.5, 14, 1.5);
+        c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(-bw / 2 + 1, hip - 1.5, bw - 2, 1.5);
+        // What kind of top: a hoodie (the hood, its strings), a collar, an
+        // open cardigan over a light shirt.
+        if (p.top === 1) {
+          c.fillStyle = this.shade(p.shirt, -24);
+          if (front) { c.fillRect(-2.6, hip - 12, 0.9, 4); c.fillRect(1.7, hip - 12, 0.9, 4); }
+          else this.roundRect(-5.5, hip - 14, 11, 6, 3, this.shade(p.shirt, -10));
+        } else if (p.top === 2 && front) {
+          c.fillStyle = '#f4f1ea';
+          c.beginPath(); c.moveTo(-4, hip - 13); c.lineTo(0, hip - 12); c.lineTo(-1.5, hip - 9.5); c.closePath(); c.moveTo(4, hip - 13); c.lineTo(0, hip - 12); c.lineTo(1.5, hip - 9.5); c.closePath(); c.fill();
+        } else if (p.top === 3 && front) {
+          c.fillStyle = '#efe9dd'; c.fillRect(-1.8, hip - 12.5, 3.6, 11);
+          c.fillStyle = this.shade(p.shirt, -30); c.fillRect(-0.3, hip - 7, 0.9, 0.9); c.fillRect(-0.3, hip - 4, 0.9, 0.9);
+        }
       }
       // What their level lets them wear: a lanyard, then a tie.
       const lv = s.level || 1;
@@ -5212,6 +5277,7 @@
       if (faceOn) {
         // The face, drawn a size up to suit the big head.
         c.save(); c.translate(0, hy + 1); c.scale(1.3, 1.3); c.translate(0, -hy);
+        if (p.beard) this.beard2d(p, hy);
         c.fillStyle = '#2a2018';
         const sleepy = s.status === 'idle' && !held;
         const blink = Math.sin(t * 0.7 + p.phase * 3) > 0.985;
@@ -5258,8 +5324,12 @@
         } else if (s.status === 'error' && p.mode === 'work') {
           c.beginPath(); c.arc(0, hy + 4.5, 2, 1.15 * Math.PI, 1.85 * Math.PI); c.stroke();
         }
+        if (p.freckles) { c.fillStyle = 'rgba(140,70,40,.45)'; for (const [fx, fy] of [[-4.6, 1.6], [-3.6, 2.4], [-5.1, 2.6], [4.8, 1.6], [3.8, 2.4], [5.3, 2.6]]) c.fillRect(fx, hy + fy, 0.6, 0.6); }
+        const specs = p.specs || (p.glasses ? 1 : 0);
+        if (specs) this.specs2d(specs, hy);
         c.restore();
       }
+      if (p.earrings && !napping) { c.fillStyle = '#f2c230'; for (const ex of front ? [-R + 0.6, R - 0.6] : [-R + 0.4, R - 0.4]) { c.beginPath(); c.arc(ex, hy + 3.4, 1.1, 0, Math.PI * 2); c.fill(); } }
       if (st.act === 'arcade' || st.act === 'beanbag' || (lv >= 3 && lv < 5)) {
         c.strokeStyle = lv >= 3 ? '#e2e2e6' : '#222'; c.lineWidth = 2;
         c.beginPath(); c.arc(0, hy, R + 1, Math.PI * 1.1, Math.PI * 1.9); c.stroke();

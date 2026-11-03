@@ -45,7 +45,7 @@ const capsule = (r, len) => new THREE.CapsuleGeometry(r, len, 4, 10);
 
 // ---- the face: eyes, brows, mouth and cheeks on a canvas -------------------
 
-function drawFace(c, expr, blink, mouth, look) {
+function drawFace(c, expr, blink, mouth, look, freckles) {
   c.clearRect(0, 0, 256, 256);
   const ink = '#2b2420', eyeY = 120, ex = [86, 170];
   c.lineCap = 'round'; c.lineJoin = 'round';
@@ -76,6 +76,7 @@ function drawFace(c, expr, blink, mouth, look) {
   // cheeks
   c.fillStyle = 'rgba(255,120,120,.35)';
   for (const x of [62, 194]) { c.beginPath(); c.ellipse(x, 158, 18, 11, 0, 0, Math.PI * 2); c.fill(); }
+  if (freckles) { c.fillStyle = 'rgba(140,70,40,.5)'; for (const x of [62, 194]) for (const [dx, dy] of [[-10, -6], [2, -9], [12, -3], [-4, 2], [8, 5]]) { c.beginPath(); c.arc(x + dx, 150 + dy, 2.6, 0, Math.PI * 2); c.fill(); } }
   // mouth
   c.strokeStyle = ink; c.fillStyle = '#7a2e2a'; c.lineWidth = 7;
   const my = 175;
@@ -93,8 +94,51 @@ function drawFace(c, expr, blink, mouth, look) {
 
 const hexOf = (c) => (typeof c === 'string' ? new THREE.Color(c) : new THREE.Color(c || 0x888888));
 
-// look: { skin, hair, shirt, pants, hairStyle (0-12), shoe }
+// Glasses over the eyes drawn on the face (the eyes sit about 0.09 either
+// side, level with the skull's middle): 1 round, 2 square wire rims, 3 shades.
+function specsMesh(kind) {
+  const g = new THREE.Group();
+  const wire = new THREE.MeshStandardMaterial({ color: 0x2a2018, metalness: 0.4, roughness: 0.4 });
+  const lens = kind === 3 ? new THREE.MeshStandardMaterial({ color: 0x15161b, roughness: 0.15, metalness: 0.3 })
+    : new THREE.MeshStandardMaterial({ color: 0xdfeefa, transparent: true, opacity: 0.18, roughness: 0.1, depthWrite: false });
+  for (const sx of [-1, 1]) {
+    const rim = new THREE.Mesh(kind === 1 ? new THREE.TorusGeometry(0.05, 0.007, 6, 24) : new THREE.TorusGeometry(0.058, 0.008, 4, 4), wire);
+    rim.position.set(sx * 0.092, 0.228, 0.24); rim.rotation.y = sx * 0.35;
+    if (kind !== 1) { rim.rotation.z = Math.PI / 4; rim.scale.set(1, 0.8, 1); }
+    const glass = new THREE.Mesh(kind === 1 ? new THREE.CircleGeometry(0.048, 20) : new THREE.PlaneGeometry(0.075, 0.06), lens);
+    glass.position.copy(rim.position); glass.rotation.set(0, sx * 0.35, 0);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.2), wire);
+    arm.position.set(sx * 0.15, 0.235, 0.13); arm.rotation.y = sx * 0.25;
+    g.add(rim, glass, arm);
+  }
+  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.05, 6), wire);
+  bridge.rotation.z = Math.PI / 2; bridge.position.set(0, 0.24, 0.252);
+  g.add(bridge);
+  return g;
+}
+// A beard round the jaw and chin in their hair colour: 1 stubble (thin and
+// see-through), 2 full with a moustache, 3 just the moustache.
+function beardMesh(kind, color) {
+  const g = new THREE.Group();
+  const hair = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.8), roughness: 1, ...(kind === 1 ? { transparent: true, opacity: 0.35, depthWrite: false } : {}) });
+  if (kind !== 3) {
+    const jaw = new THREE.Mesh(new THREE.SphereGeometry(kind === 1 ? 0.253 : 0.262, 22, 12, Math.PI * 0.08, Math.PI * 0.84, Math.PI * 0.64, Math.PI * 0.3), hair);
+    jaw.scale.set(1.04, 0.95, 0.96); jaw.position.y = 0.2375;
+    g.add(jaw);
+  }
+  if (kind >= 2) {
+    const tash = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, 0.07, 4, 8), hair);
+    tash.rotation.z = Math.PI / 2; tash.position.set(0, 0.155, 0.245);
+    g.add(tash);
+  }
+  return g;
+}
+
+// look: { skin, hair, shirt, pants, hairStyle (0-12), shoe, build (0 slim /
+// 1 / 2 round), specs, beard, freckles, earrings, skirt, top (0 tee /
+// 1 hoodie / 2 collar / 3 cardigan) } — office.js lookOf
 export function makeChibi(look = {}) {
+  const wide = [0.9, 1, 1.16][look.build ?? 1];
   const skin = toon(hexOf(look.skin || '#f3cfb0'));
   const hair = toon(hexOf(look.hair || '#3a2a20'));
   const shirt = toon(hexOf(look.shirt || '#c96442'));
@@ -114,11 +158,11 @@ export function makeChibi(look = {}) {
   const leg = (side) => {
     const hip = new THREE.Group();
     hip.position.set(side * 0.064, -0.02, 0);
-    const thigh = part(capsule(0.056, 0.03), pants);
+    const thigh = part(capsule(0.056, 0.03), look.skirt ? skin : pants);
     thigh.position.y = -H.thigh / 2;
     const knee = new THREE.Group();
     knee.position.y = -H.thigh;
-    const shin = part(capsule(0.052, 0.03), pants);
+    const shin = part(capsule(0.052, 0.03), look.skirt ? skin : pants);
     shin.position.y = -H.shin / 2;
     const foot = part(new THREE.SphereGeometry(0.064, 12, 8), shoe);
     foot.scale.set(0.95, 0.6, 1.35);
@@ -129,22 +173,41 @@ export function makeChibi(look = {}) {
     return { hip, knee };
   };
   const legR = leg(-1), legL = leg(1);
+  if (look.skirt) { // a short flared skirt from the waist
+    const sk = part(new THREE.CylinderGeometry(0.125, 0.19, 0.15, 20, 1, true), toon(hexOf(look.pants || '#34405a')), 1.04);
+    sk.userData.mesh.material.side = THREE.DoubleSide;
+    sk.position.y = -0.02;
+    hips.add(sk);
+  }
+  pelvis.scale.x *= wide;
 
   // body
   const torso = new THREE.Group();
   hips.add(torso);
   const body = part(capsule(0.125, 0.05), shirt);
-  body.scale.set(1.1, 1, 0.86);
+  body.scale.set(1.1 * wide, 1, 0.86 * (wide > 1 ? 1.1 : 1));
   body.position.y = 0.1;
   torso.add(body);
   const front = new THREE.Group(); // things worn on the chest
-  front.position.set(0, 0.11, 0.108);
+  front.position.set(0, 0.11, 0.108 * (wide > 1 ? 1.1 : 1));
   torso.add(front);
+  const shirtCol = hexOf(look.shirt || '#c96442');
+  if (look.top === 1) { // a hoodie: the hood lying on the back, two strings
+    const hood = part(new THREE.TorusGeometry(0.085, 0.04, 8, 16, Math.PI), toon(shirtCol.clone().multiplyScalar(0.85)), 1.05);
+    hood.rotation.set(Math.PI / 2 - 0.5, 0, Math.PI); hood.position.set(0, 0.2, -0.05);
+    torso.add(hood);
+    for (const s of [-1, 1]) { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.07, 5), toon(0xf2efe8)); st.position.set(s * 0.03, 0.03, 0.004); front.add(st); }
+  } else if (look.top === 2) { // a white collar
+    for (const s of [-1, 1]) { const col = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.06, 3), toon(0xf4f1ea)); col.rotation.set(0.3, 0, Math.PI + s * 0.5); col.position.set(s * 0.03, 0.065, -0.01); front.add(col); }
+  } else if (look.top === 3) { // an open cardigan over a light shirt
+    const inner = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.15, 0.01), toon(0xefe9dd));
+    inner.position.set(0, -0.005, 0.006); front.add(inner);
+  }
 
   // arms
   const arm = (side) => {
     const sh = new THREE.Group();
-    sh.position.set(side * 0.145, 0.165, 0);
+    sh.position.set(side * 0.145 * wide, 0.165, 0);
     const upper = part(capsule(0.046, 0.03), sleeve);
     upper.position.y = -H.upper / 2;
     const elbow = new THREE.Group();
@@ -268,6 +331,10 @@ export function makeChibi(look = {}) {
       }
   }
 
+  if (look.specs) head.add(specsMesh(look.specs));
+  if (look.beard) head.add(beardMesh(look.beard, look.hair || '#3a2a20'));
+  if (look.earrings) for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), new THREE.MeshStandardMaterial({ color: 0xf2c230, metalness: 0.7, roughness: 0.3 })); e.position.set(s * H.head * 1.0, H.head * 0.68, 0.01); head.add(e); }
+
   // things they can hold or wear
   const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, ...extra });
   const held = {
@@ -323,7 +390,7 @@ export function makeChibi(look = {}) {
   const rig = {
     root, joints, head, held, box, sign, cv, faceTex, front,
     outfit: { lanyard, tie, phones, crown },
-    cur: null, faceKey: '', blinkAt: 0, level: 0,
+    cur: null, faceKey: '', blinkAt: 0, level: 0, freckles: !!look.freckles,
   };
   setFace(rig, 'neutral', false, 0, 0);
   return rig;
@@ -333,7 +400,7 @@ function setFace(rig, expr, blink, mouth, look) {
   const key = `${expr}|${blink ? 1 : 0}|${Math.round(mouth * 3)}|${Math.round(look * 2)}`;
   if (key === rig.faceKey) return;
   rig.faceKey = key;
-  drawFace(rig.cv.getContext('2d'), expr, blink, mouth, look);
+  drawFace(rig.cv.getContext('2d'), expr, blink, mouth, look, rig.freckles);
   rig.faceTex.needsUpdate = true;
 }
 

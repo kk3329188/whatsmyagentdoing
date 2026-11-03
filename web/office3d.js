@@ -76,40 +76,6 @@ function dealerBow() {
   return g;
 }
 
-// Chuck's glasses: two round wire rims over the eyes drawn on the face
-// (chibi.js: the eyes sit about 0.09 either side, level with the skull's middle).
-function dealerGlasses() {
-  const g = new THREE.Group();
-  const wire = new THREE.MeshStandardMaterial({ color: 0x2a2018, metalness: 0.4, roughness: 0.4 });
-  const lens = new THREE.MeshStandardMaterial({ color: 0xdfeefa, transparent: true, opacity: 0.18, roughness: 0.1, depthWrite: false });
-  for (const sx of [-1, 1]) {
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.007, 6, 24), wire);
-    rim.position.set(sx * 0.092, 0.228, 0.24); rim.rotation.y = sx * 0.35;
-    const glass = new THREE.Mesh(new THREE.CircleGeometry(0.048, 20), lens);
-    glass.position.copy(rim.position); glass.rotation.copy(rim.rotation);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.2), wire);
-    arm.position.set(sx * 0.15, 0.235, 0.13); arm.rotation.y = sx * 0.25;
-    g.add(rim, glass, arm);
-  }
-  const bridge = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.05, 6), wire);
-  bridge.rotation.z = Math.PI / 2; bridge.position.set(0, 0.24, 0.252);
-  g.add(bridge);
-  return g;
-}
-
-// Messi's beard: a dark shell round the jaw and chin, and a short moustache
-// (the skull is a sphere of 0.25 centred 0.2375 up, chibi.js).
-function dealerBeard(color) {
-  const g = new THREE.Group();
-  const hair = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.8), roughness: 1 });
-  const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.262, 22, 12, Math.PI * 0.08, Math.PI * 0.84, Math.PI * 0.64, Math.PI * 0.3), hair);
-  jaw.scale.set(1.04, 0.95, 0.96); jaw.position.y = 0.2375;
-  const tash = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, 0.07, 4, 8), hair);
-  tash.rotation.z = Math.PI / 2; tash.position.set(0, 0.155, 0.245);
-  g.add(jaw, tash);
-  return g;
-}
-
 function skyNow() {
   const h = new Date().getHours() + new Date().getMinutes() / 60;
   if (h >= 7 && h < 17) return { sky: 0xa9d4f2, sun: 1.7, amb: 1.15, night: false };
@@ -2129,14 +2095,15 @@ export class Office3D extends window.Office {
     let a = this.actors.get(p.key);
     if (a) return a;
     // A chibi of their own: skin, hair and clothes from who they are.
-    const rig = makeChibi({ skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.hairStyle ?? (p.h >>> 3) % HAIR_STYLES }); // the same style as in 2D
+    // (the same style and the rest of their look as in 2D: office.js lookOf)
+    const rig = makeChibi({
+      skin: p.skin, hair: p.hair, shirt: p.shirt, pants: p.pants, hairStyle: p.hairStyle ?? (p.h >>> 3) % HAIR_STYLES,
+      shoe: p.shoe, build: p.build, specs: p.specs || (p.glasses ? 1 : 0), beard: p.beard === true ? 2 : p.beard,
+      freckles: p.freckles, earrings: p.earrings, skirt: p.skirt, top: p.top,
+    });
     const obj = rig.root;
-    if (p.s && p.s.subagent) obj.scale.setScalar(0.8);
-    if (p.dealer) {
-      rig.front.add(dealerBow());
-      if (p.glasses) rig.head.add(dealerGlasses());
-      if (p.beard) rig.head.add(dealerBeard(p.hair));
-    }
+    obj.scale.setScalar((p.s && p.s.subagent ? 0.8 : 1) * (p.tall || 1));
+    if (p.dealer) rig.front.add(dealerBow());
     rig.sign.add(this.signBoard());
     const laptop = new THREE.Group();
     const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));
