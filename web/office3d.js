@@ -2153,7 +2153,7 @@ export class Office3D extends window.Office {
     // Chatting: turn to each other.
     const mate = st.act === 'chat' && this.people.get((p.visit && p.visit.mate) || (p.poi && p.poi.partner) || p.chatWith);
     if (mate) return Math.atan2(mate.x - p.x, mate.y - p.y);
-    if (p.mode === 'work' && p.run) return st.face === 'back' ? Math.PI : 0;
+    if (p.mode === 'work' && p.run) return p.run.poi.yaw != null ? p.run.poi.yaw : st.face === 'back' ? Math.PI : 0;
     if (p.mode === 'work' && p.desk) {
       if (p.desk.yaw != null) return p.desk.yaw;
       return p.desk.side === 'n' ? 0 : Math.PI;

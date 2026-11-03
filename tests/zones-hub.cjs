@@ -1644,6 +1644,64 @@ test('Chuck the dealer: always at the casino table, not a session (not in people
   assert.ok(!plain.bodies().some((b) => b.dealer));
 });
 
+const casinoAt = (h) => { const o = load(true, clockAt(h)); o.layout = 'casino'; o.floor = 1; o.plan = o.buildPlan(0); return o; };
+
+test('put someone down at the poker table: they take the nearest free seat and play (a desk worker too, then back to the desk)', () => {
+  const o = casinoAt(15);
+  settle(o, [at('tool'), at('done')]);
+  o.canvas = { style: {} };
+  const t = o.plan.props.find((x) => x.t === 'pokerTable');
+  const put = (key, x, y) => { const p = o.people.get(key); o.held = p; p.held = true; p.x = x; p.y = y; o.drop(); return p; };
+  // at the table's front edge: a front seat
+  const done = put('claude:done', t.x + t.w / 2, t.y + t.d + 0.3);
+  const q = done.poi;
+  assert.equal(q && q.table, 'holdem');
+  assert.equal(q.taken, 'claude:done');
+  assert.ok(q.y > t.y + t.d, 'the seat nearest where they were put down');
+  assert.ok(o.pokerSitters().includes('claude:done'));
+  assert.equal(o.stateOf(done).pose, 'sit');
+  // a desk worker: a trip to the table, playing, sitting, then back to work
+  const worker = put('claude:tool', t.x + t.w / 2, t.y + t.d + 0.3);
+  assert.ok(worker.run && worker.run.poi.table === 'holdem' && worker.run.poi !== q, 'the next free seat');
+  assert.ok(o.pokerSitters().includes('claude:tool'));
+  assert.equal(o.stateOf(worker).pose, 'sit');
+  assert.equal(worker.mode, 'work');
+  worker.run.until = Date.now() - 1;
+  o.step(0.016);
+  assert.equal(worker.run, null, 'played their hands');
+  assert.ok(!o.holdemSeats().some((s) => s.taken === 'claude:tool'), 'the seat is free again');
+  // put down far from the table: nothing happens
+  const plain = load(true);
+  assert.equal(plain.pokerSeatAt(t.x + 1, t.y + 0.5), null, 'no poker table in the plain office');
+  assert.equal(o.pokerSeatAt(t.x + t.w + 3, t.y), null);
+});
+
+test('the lunch nap and after hours in the casino: a few of the ones off duty go and play poker; not in the afternoon', () => {
+  const crew = (h) => {
+    const o = casinoAt(h);
+    const list = [1, 2, 3, 4, 5, 6].map((n) => at(n % 2 ? 'idle' : 'done', { n, ago: n * MIN }));
+    settle(o, list);
+    for (let i = 0; i < 3; i++) for (const p of o.people.values()) if (p.mode === 'wander') { p.until = 0; o.wander(p, Date.now()); }
+    return { o, players: [...o.people.values()].filter((p) => p.poi && p.poi.table === 'holdem' && p.poi.taken === p.key && p.event && /來一局|打一局/.test(p.event.text)) };
+  };
+  const nap = crew(12.75);
+  assert.ok(nap.o.napNow);
+  assert.ok(nap.players.length >= 2 && nap.players.length <= 4, `${nap.players.length} at the table for lunch`);
+  // they stay at the table while the break lasts
+  const p = nap.players[0], seat = p.poi;
+  p.path = []; p.until = 0; nap.o.wander(p, Date.now());
+  assert.equal(p.poi, seat, 'still playing');
+  const night = crew(21);
+  assert.ok(night.o.closedNow);
+  assert.ok(night.players.length >= 2 && night.players.length <= 4, `${night.players.length} stay late for poker`);
+  assert.ok(night.o.people.size <= 4, 'the rest went home');
+  assert.equal(crew(15).players.length, 0, 'nobody is sent to the table in the afternoon');
+  // not in the plain office
+  const plainNight = load(true, clockAt(21));
+  settle(plainNight, [at('idle'), at('done')]);
+  assert.equal(plainNight.people.size, 0, 'after hours they all go home');
+});
+
 test('upstairs in the casino: a blackjack table with three seats and a craps table instead of foosball and the gym', () => {
   const o = loadFloor(2);
   o.layout = 'casino';

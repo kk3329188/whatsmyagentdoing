@@ -13,6 +13,7 @@
   const STOREY = WALL_H + STOREY_GAP;
   const WORKING = new Set(['thinking', 'tool', 'typing', 'waiting', 'error']);
   const MAX_WANDERERS = 7;
+  const POKER_CREW = 4; // at most this many go to the casino's poker table on a break (lunch nap, after hours)
 
   // Where someone is tells you their state at a glance.
   //   desk = working · meeting room = waiting on you / left you a decision
@@ -1322,8 +1323,11 @@
       const off = sessions
         .filter((s) => !atDesk(s) && !pretendKeys.has(s.key))
         .sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-      // After hours only the ones that need you stay about (and the stand-up).
-      const after = (s) => this.closedNow && (zoneOf(s) === 'idle' || zoneOf(s) === 'done');
+      // After hours only the ones that need you stay about (and the stand-up);
+      // in the casino a few of the latest stay on for a game of poker.
+      const offShift = (s) => zoneOf(s) === 'idle' || zoneOf(s) === 'done';
+      const nightCrew = new Set(this.closedNow && this.layout === 'casino' && this.floor === 1 ? off.filter(offShift).slice(0, POKER_CREW).map((s) => s.key) : []);
+      const after = (s) => this.closedNow && offShift(s) && !nightCrew.has(s.key);
       let wanderers;
       if (zoned && this.standup) {
         // Stand-up: everyone here, workers included.
@@ -1594,6 +1598,8 @@
     wander(p, now) {
       if (p.path.length) return;
       if (p.poi && now < p.until) return;
+      // Still the break and a hand to play: stay at the table.
+      if (p.poi && p.poi.table === 'holdem' && p.poi.taken === p.key && this.pokerBreak() && (p.zone === 'idle' || p.zone === 'done')) { p.until = now + 60_000; return; }
       this.release(p);
       const plan = this.plan;
       // At the stand-up: go to your place and stay.
@@ -1624,6 +1630,8 @@
         return;
       }
       if (p.pretend) return this.pretendAt(p);
+      // A break (the lunch nap, after hours) at the casino: off to the poker table.
+      if (this.pokerBreak() && (p.zone === 'idle' || p.zone === 'done') && this.toPoker(p, now)) return;
       // Waited on you for ages: come to the front and knock on the screen.
       if (plan.zones && p.zone === 'wait' && waitedMs(p.s) > KNOCK_MS) return this.knock(p);
       if (plan.zones && p.zone && this.roam !== false) return this.roamTo(p);
@@ -2467,7 +2475,7 @@
       return this.holdemSeats().map((q) => {
         if (q.taken === 'me') return this.me && this.me.atPoker === q && !this.me.moving ? 'me' : null;
         const p = q.taken && this.people.get(q.taken);
-        return p && !p.leaving && p.poi === q && !p.path.length ? p.key : null;
+        return p && !p.leaving && (p.poi === q || (p.run && p.run.poi === q)) && !p.path.length ? p.key : null;
       });
     }
 
@@ -2958,6 +2966,7 @@
       const mate = this.onRelay ? this.mateUnder(p) : null;
       this.dropOn = mate ? mate.key : null;
       this.dropAt = !mate && this.onCommand ? this.targetUnder(p) : null;
+      this.dropPoker = !mate && !this.dropAt && !!this.pokerSeatAt(p.x, p.y);
     }
 
     // A piece of furniture under a held person that does something when dropped on.
@@ -3013,9 +3022,16 @@
       const target = !mate && this.dropAt;
       this.dropOn = null;
       this.dropAt = null;
+      this.dropPoker = false;
       // Put down at the slot machine: they sit and play.
       const q = !mate && !target && this.slotPoi();
       if (q && Math.hypot(p.x - q.x, p.y - q.y) < 1.2 && this.playSlot(p)) {
+        if (this.canvas) this.canvas.style.cursor = 'default';
+        if (e) this.pointer(e);
+        return;
+      }
+      // Put down at the poker table: they take a seat and play.
+      if (!mate && !target && this.playPoker(p, this.pokerSeatAt(p.x, p.y))) {
         if (this.canvas) this.canvas.style.cursor = 'default';
         if (e) this.pointer(e);
         return;
@@ -3662,6 +3678,60 @@
       this.box(x, y + 0.7, 0.8, 0.7, 0.2, 0.08, '#4a3a8a', '#3a2a6a', '#2b1f52');
       const j = this.iso(x + 0.25, y + 0.8, 0.88);
       this.ctx.fillStyle = '#e04a4a'; this.ctx.beginPath(); this.ctx.arc(j.x, j.y - 3, 2.5, 0, Math.PI * 2); this.ctx.fill();
+    }
+
+    // ---- to the poker table ---------------------------------------------------
+
+    // The lunch nap or after hours, in the casino downstairs: a break for poker.
+    pokerBreak() { return this.layout === 'casino' && this.floor === 1 && (this.napNow || this.closedNow); }
+
+    // On a break: take a free seat at the hold'em table (a few at most).
+    toPoker(p, now = Date.now()) {
+      const seats = this.holdemSeats();
+      if (seats.filter((q) => q.taken && q.taken !== 'me').length >= POKER_CREW) return false;
+      const q = seats.find((o) => !o.taken);
+      if (!q) return false;
+      q.taken = p.key;
+      p.poi = q; p.lastPoi = q;
+      p.until = Infinity;
+      p.stay = rand(150, 300) * 1000;
+      p.event = { text: this.napNow ? '午休來一局 🃏' : '下班打一局 🃏', at: now, zone: 'held' };
+      this.goTo(p, q);
+      return true;
+    }
+
+    // The hold'em seat a person was put down at: the nearest one, if the drop
+    // was at the table (free seats first; whoever was in it gets up, but
+    // never your own seat).
+    pokerSeatAt(x, y) {
+      const t = this.plan && this.plan.props.find((o) => o.t === 'pokerTable');
+      if (!t || this.layout !== 'casino') return null;
+      // (held up, their feet hang in front of the pointer: generous at the front)
+      const atTable = x > t.x - 1.0 && x < t.x + t.w + 1.0 && y > t.y - 1.0 && y < t.y + t.d + 1.4;
+      if (!atTable) return null;
+      const seats = this.holdemSeats().filter((q) => q.taken !== 'me').sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+      return seats.find((q) => !q.taken) || seats[0] || null;
+    }
+
+    // Put down at the poker table by hand: they sit and play a few hands
+    // (about three minutes), then back to what they were doing.
+    playPoker(p, q, wall = Date.now()) {
+      if (!q || p.leaving || p.visitor) return false;
+      if (q.taken && q.taken !== p.key) {
+        const o = this.people.get(q.taken);
+        if (o) { if (o.run && o.run.poi === q) this.endRun(o, true); else if (o.poi === q) { this.release(o); o.until = 0; } }
+        q.taken = null;
+      }
+      this.endRun(p, false);
+      this.release(p);
+      p.chores = null;
+      p.x = q.x; p.y = q.y; p.path = []; p.landed = 0;
+      q.taken = p.key;
+      const ms = 180_000;
+      if (p.mode === 'work') p.run = { poi: q, until: wall + ms, trip: true, act: 'poker', ms };
+      else { p.poi = q; p.lastPoi = q; p.until = wall + ms; p.stay = ms; }
+      p.event = { text: '發牌吧 🃏', at: wall, zone: 'held' };
+      return true;
     }
 
     // ---- the slot machine ---------------------------------------------------
@@ -4454,7 +4524,7 @@
       if (p.errand) return { pose: 'stand', face: 'front', act: 'clipboard', sitZ: 0 };
       if (p.mode === 'work' && p.run) {
         const q = p.run.poi;
-        if (p.run.trip) return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: p.run.act, sitZ: q.sit || 0 };
+        if (p.run.trip) return { pose: q.sit ? 'sit' : 'stand', face: q.face === 'side' ? 'front' : q.face, act: q.act === 'poker' ? this.seatAct(p, q) : p.run.act, sitZ: q.sit || 0 };
         const use = p.useOf === q && p.useAt ? usePhase(q.act, Date.now() - p.useAt) : null;
         return { pose: 'stand', face: q.face, act: use ? use.act : q.act === 'water' ? 'water' : 'coffee', sitZ: 0 };
       }
@@ -5152,6 +5222,8 @@
       let top = y;
       if (p.held && this.dropAt) {
         top = pill('放開＝' + this.dropAt.hint, '#fff', '#8b6be6', y - 12);
+      } else if (p.held && this.dropPoker) {
+        top = pill('放開＝坐下來打牌 🃏', '#fff', '#8b6be6', y - 12);
       } else if (p.errand && !p.path.length) {
         top = pill('📋 ' + p.errand.text, '#fff', '#3b8ee0', y - 12);
       } else if (this.dropOn === p.key) {
