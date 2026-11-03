@@ -2047,3 +2047,35 @@ test('public replay: a walker on the viewer keeps pace with your page (no runnin
     assert.ok(worst < 0.35, `the viewer settles onto your pace (off by ${worst.toFixed(2)} m)`);
   } finally { Date.now = real; }
 });
+
+test('people come in many looks (skin, build, height, glasses, beards, skirts, tops…), always the same for the same session, and a public viewer sees the same', () => {
+  const { publicWorld } = require('../src/server');
+  const host = load(), view = load();
+  const people = Array.from({ length: 160 }, (_, i) => host.newPerson({ key: `claude:look${i}`, agent: 'claude' }));
+  const kinds = (f) => new Set(people.map(f));
+  assert.ok(kinds((p) => p.skin).size >= 9, 'skin tones from fair to deep');
+  assert.deepEqual([...kinds((p) => p.build)].sort(), [0, 1, 2]);
+  assert.ok(kinds((p) => p.tall).size >= 4);
+  assert.deepEqual([...kinds((p) => p.specs)].sort(), [0, 1, 2, 3]);
+  assert.deepEqual([...kinds((p) => p.beard)].sort(), [0, 1, 2, 3]);
+  assert.deepEqual([...kinds((p) => p.top)].sort(), [0, 1, 2, 3]);
+  for (const f of ['skirt', 'freckles', 'earrings']) {
+    const n = people.filter((p) => p[f]).length;
+    assert.ok(n > 8 && n < 80, `${f}: some, not most (${n})`);
+  }
+  assert.ok(people.some((p) => ['#e07aa0', '#3fa7a0', '#4f6fd6', '#a98be0'].includes(p.hair)), 'now and then dyed hair');
+  assert.ok(!people.some((p) => p.beard && (p.skirt || p.earrings)));
+  // the same session always looks the same
+  const again = load();
+  const LOOK = ['skin', 'hair', 'build', 'tall', 'specs', 'beard', 'freckles', 'earrings', 'skirt', 'top', 'shoe', 'hairStyle'];
+  for (const p of people) { const q = again.newPerson({ key: p.key, agent: 'claude' }); for (const f of LOOK) assert.deepEqual(q[f], p[f], `${p.key} ${f}`); }
+  // through the public filter (names aliased) the viewer draws the same people
+  settle(host, Array.from({ length: 12 }, (_, i) => at(['thinking', 'tool', 'waiting', 'done'][i % 4], { n: i })));
+  const shown = [...host.people.values()];
+  assert.ok(shown.length >= 10);
+  const pub = publicWorld({ at: 1, floors: { 1: JSON.parse(JSON.stringify(host.worldState())) } }, 'salt', []);
+  view.applyWorld(pub.floors[1], new Map(), { hostNow: Date.now() });
+  const seen = [...view.people.values()];
+  assert.equal(seen.length, shown.length);
+  shown.forEach((p, i) => { for (const f of LOOK) assert.deepEqual(seen[i][f], p[f], `viewer ${i} ${f}`); });
+});

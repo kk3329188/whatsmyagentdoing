@@ -587,7 +587,7 @@ export class Office3D extends window.Office {
     const { W, D } = plan;
     const dark = this.pal.dark;
     DECOR = this.decor;
-    this.casinoWheels = []; this.casinoLamps = []; this.casinoSpin = []; this.casinoDice = []; this.casinoSlots = [];
+    this.casinoWheels = []; this.casinoLamps = []; this.casinoSpin = []; this.casinoDice = []; this.casinoSlots = []; this.casinoPools = [];
 
     // floors
     const floor = (x, y, w, d, color, tex) => {

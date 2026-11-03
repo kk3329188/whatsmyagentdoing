@@ -10,6 +10,7 @@
 // mesh) and no live reflections — the gloss comes from the room light that
 // is already there (scene.environment).
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // ---- textures, drawn once -------------------------------------------------
 
@@ -792,17 +793,23 @@ function casinoCarpet(dark, key, ground) {
     const tiled = (x, y, draw) => { for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) draw(x + dx, y + dy); };
     // scrolls in the ground's own colour, a shade lighter, between the medallions
     c.lineWidth = 7; c.lineCap = 'round';
-    c.strokeStyle = dark ? 'rgba(255,240,220,.035)' : 'rgba(255,240,220,.06)';
+    c.strokeStyle = dark ? 'rgba(255,240,220,.06)' : 'rgba(255,240,220,.1)';
     for (const [x0, y0] of [[h, 0], [0, h]]) tiled(x0, y0, (x, y) => {
       for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(x + Math.cos(k * Q) * 50, y + Math.sin(k * Q) * 50, 44, k * Q + Math.PI * 0.6, k * Q + Math.PI * 1.4); c.stroke(); }
     });
     // the medallions: two thin rings and a four-point star
-    const gold = dark ? 'rgba(201,160,74,.2)' : 'rgba(201,160,74,.3)';
+    const gold = dark ? 'rgba(214,170,80,.36)' : 'rgba(224,180,90,.48)';
     c.strokeStyle = gold; c.fillStyle = gold;
     for (const [x0, y0] of [[0, 0], [h, h]]) tiled(x0, y0, (x, y) => {
       c.lineWidth = 3; c.beginPath(); c.arc(x, y, 60, 0, 6.283); c.stroke();
       c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 50, 0, 6.283); c.stroke();
       c.beginPath(); c.moveTo(x, y - 28); c.lineTo(x + 8, y - 8); c.lineTo(x + 28, y); c.lineTo(x + 8, y + 8); c.lineTo(x, y + 28); c.lineTo(x - 8, y + 8); c.lineTo(x - 28, y); c.lineTo(x - 8, y - 8); c.closePath(); c.fill();
+    });
+    // little florets between them, teal and red, the busy casino floor
+    for (const [x0, y0, col] of [[h, 0, 'rgba(63,190,180,.3)'], [0, h, 'rgba(63,190,180,.3)'], [h / 2, h / 2, 'rgba(220,70,80,.32)'], [h * 1.5, h * 1.5, 'rgba(220,70,80,.32)'], [h * 1.5, h / 2, 'rgba(232,192,96,.3)'], [h / 2, h * 1.5, 'rgba(232,192,96,.3)']]) tiled(x0, y0, (x, y) => {
+      c.fillStyle = col;
+      for (let k = 0; k < 4; k++) { c.beginPath(); c.ellipse(x + Math.cos(k * Q) * 9, y + Math.sin(k * Q) * 9, 8, 4, k * Q, 0, 6.283); c.fill(); }
+      c.beginPath(); c.arc(x, y, 3.5, 0, 6.283); c.fill();
     });
     specks(c, s, 3000, ['rgba(255,255,255,.03)', 'rgba(0,0,0,.12)'], 1.6, 191);
   });
@@ -870,7 +877,113 @@ function neonSign(text, color, w, h) {
   c.shadowBlur = 0; c.globalAlpha = 1; c.fillStyle = '#fff'; c.font = `800 ${Math.round(cv.height * 0.5)}px ui-sans-serif, system-ui, sans-serif`;
   c.fillText(text, cv.width / 2, cv.height / 2);
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, transparent: true, toneMapped: false }));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, transparent: true, toneMapped: false }));
+  // its glow on the wall round it (added light: brighter, never darker)
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.45, h * 2.6), new THREE.MeshBasicMaterial({ map: glowTex(), color, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  glow.position.z = -0.004;
+  sign.add(glow);
+  sign.userData.glow = glow;
+  return sign;
+}
+// A soft round glow, white in the middle (tinted by the material's colour).
+const glowTex = () => canvasTex('glow', 128, (c, s) => {
+  const g = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(0.35, 'rgba(255,255,255,.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(0, 0, s, s);
+}, { repeat: false });
+// A pool of warm light on a table, as if a spot shone on it from above.
+function lightPool(o, w, d, y) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map: glowTex(), color: 0xffd9a0, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 3;
+  o.casinoPools.push(m);
+  return m;
+}
+
+// Static pieces merged by material: a bank of slot machines is a handful of
+// draws, not a hundred (the parts that move or light up are left apart:
+// userData.live). Call it before the group is placed.
+function bake(g) {
+  g.updateMatrixWorld(true);
+  const by = new Map(), drop = [];
+  g.traverse((m) => {
+    if (!m.isMesh || m.isInstancedMesh || m.userData.live || m.children.length) return;
+    let list = by.get(m.material);
+    if (!list) by.set(m.material, (list = []));
+    list.push(m.geometry.clone().applyMatrix4(m.matrixWorld));
+    drop.push(m);
+  });
+  for (const m of drop) m.parent.remove(m);
+  for (const [mat, geos] of by) {
+    const mm = new THREE.Mesh(mergeGeometries(geos), mat);
+    mm.castShadow = mm.receiveShadow = true;
+    g.add(mm);
+  }
+  return g;
+}
+
+// The slot machines' own looks: each has a name on its lit topper and a
+// sunburst on its belly glass, chrome down its sides, lit strips on its
+// front edges (the colours run round, vegasAnimate) and four lit buttons.
+const SLOT_THEMES = [['777', '#b3122a', '#ffd23f'], ['JACKPOT', '#5a1aa8', '#ffd23f'], ['WILD', '#0d6f80', '#fff1a8'], ['DIAMOND', '#1a3aa8', '#bfe9ff'], ['LUCKY 8', '#a8122a', '#ffe08a'], ['BAR', '#1f7a3a', '#ffe08a']];
+const SLOT = {};
+function slotParts() {
+  if (SLOT.chrome) return SLOT;
+  SLOT.chrome = new THREE.MeshStandardMaterial({ color: 0xe3e6ec, metalness: 0.9, roughness: 0.22 });
+  SLOT.led = new THREE.MeshBasicMaterial({ color: 0xff3fa4, toneMapped: false });
+  SLOT.buttons = [0xff3b3b, 0xffd23f, 0x3bdc6a, 0x3fa0ff].map((c) => new THREE.MeshBasicMaterial({ color: c, toneMapped: false }));
+  SLOT.reels = new THREE.MeshBasicMaterial({ map: slotReels(), toneMapped: false });
+  SLOT.top = SLOT_THEMES.map((th, k) => new THREE.MeshBasicMaterial({ map: topperTex(k), toneMapped: false }));
+  SLOT.belly = SLOT_THEMES.map((th, k) => new THREE.MeshBasicMaterial({ map: bellyTex(k), toneMapped: false }));
+  return SLOT;
+}
+// (drawn on a square canvas for a plane 1.9 times as wide: squeezed to suit)
+const topperTex = (k) => canvasTex(`topper${k}`, 256, (c, s) => {
+  const [text, bg, ink] = SLOT_THEMES[k], W = s * 1.9;
+  c.scale(1 / 1.9, 1);
+  const g = c.createLinearGradient(0, 0, 0, s); g.addColorStop(0, '#fff6'); g.addColorStop(0.12, bg); g.addColorStop(1, '#14080c');
+  c.fillStyle = bg; c.fillRect(0, 0, W, s); c.fillStyle = g; c.fillRect(0, 0, W, s);
+  // a row of bulbs round the edge
+  for (let x = 14; x < W; x += 26) for (const y of [12, s - 12]) { c.fillStyle = '#fff3c4'; c.beginPath(); c.arc(x, y, 6, 0, 6.283); c.fill(); }
+  c.font = `900 ${text.length > 4 ? 92 : 128}px ui-sans-serif, system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.lineJoin = 'round'; c.lineWidth = 14; c.strokeStyle = '#2a0a10'; c.strokeText(text, W / 2, s / 2 + 6);
+  c.shadowColor = ink; c.shadowBlur = 18; c.fillStyle = ink; c.fillText(text, W / 2, s / 2 + 6);
+  c.shadowBlur = 0; c.fillStyle = '#fff'; c.globalAlpha = 0.45; c.fillText(text, W / 2, s / 2 + 2);
+}, { repeat: false });
+const bellyTex = (k) => canvasTex(`belly${k}`, 128, (c, s) => {
+  const [, bg, ink] = SLOT_THEMES[k];
+  c.fillStyle = bg; c.fillRect(0, 0, s, s);
+  c.fillStyle = 'rgba(255,240,190,.22)';
+  for (let a = 0; a < 16; a++) { c.beginPath(); c.moveTo(s / 2, s * 0.62); c.arc(s / 2, s * 0.62, s, (a / 16) * 6.283, ((a + 0.5) / 16) * 6.283); c.closePath(); c.fill(); }
+  c.fillStyle = ink; c.font = '900 44px ui-sans-serif, system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.strokeStyle = '#2a0a10'; c.lineWidth = 6; c.strokeText('$', s / 2, s * 0.6); c.fillText('$', s / 2, s * 0.6);
+  c.strokeStyle = ink; c.lineWidth = 4; c.strokeRect(4, 4, s - 8, s - 8);
+}, { repeat: false });
+// The progressive jackpot over a bank of slots: the amount in red LED
+// figures, creeping up (one picture for every bank, redrawn a few times a second).
+let jackpotCanvas = null;
+const JACKPOT_AT = Date.UTC(2026, 0, 1);
+export function jackpotAmount(now = Date.now()) { return 1_234_567.89 + ((now - JACKPOT_AT) / 1000 % 864000) * 1.37; }
+function drawJackpot(c, now) {
+  const w = c.canvas.width, h = c.canvas.height;
+  c.fillStyle = '#0b0608'; c.fillRect(0, 0, w, h);
+  c.strokeStyle = '#d9b25a'; c.lineWidth = 8; c.strokeRect(4, 4, w - 8, h - 8);
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = '#ffd23f'; c.font = '800 30px ui-sans-serif, system-ui, sans-serif'; c.fillText('PROGRESSIVE JACKPOT', w / 2, 34);
+  const amt = '$' + jackpotAmount(now).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  c.font = '800 66px ui-monospace, Menlo, monospace'; c.shadowColor = '#ff2a2a'; c.shadowBlur = 16; c.fillStyle = '#ff4a3a';
+  c.fillText(amt, w / 2, 92); c.shadowBlur = 0;
+}
+function jackpotBoard(o, width) {
+  if (!jackpotCanvas) {
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
+    jackpotCanvas = cv.getContext('2d'); drawJackpot(jackpotCanvas, Date.now());
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    texCache.set('jackpot', t);
+  }
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(width, width / 4), new THREE.MeshBasicMaterial({ map: texCache.get('jackpot'), toneMapped: false }));
+  m.userData.live = true;
+  if (!o.casinoSlots.includes(m.material)) o.casinoSlots.push(m.material); // dimmed after hours like the slots
+  return m;
 }
 
 // The meeting room's table, as a baccarat table: mahogany with a green top
@@ -908,6 +1021,7 @@ function vegasBuild(p, o) {
     rail.rotation.x = Math.PI / 2; rail.scale.set(rx * 0.97, rz * 0.94, 1); g.add(rail);  // padded leather rail
     const felt = oval(0.9, 0.02, new THREE.MeshStandardMaterial({ map: baize('pokerfelt', 1, 1, true), roughness: 1 }), 0.76);
     g.add(felt);
+    g.add(lightPool(o, p.w * 1.1, p.d * 1.3, 0.775));
     // The game being played (office.js stepPoker) shows here: the board,
     // two cards in front of each player (yours face up), the pot, the dealer
     // button. Updated by vegasAnimate when the game changes.
@@ -956,6 +1070,7 @@ function vegasBuild(p, o) {
     g.add(mesh(new THREE.BoxGeometry(p.w, 0.8, p.d), M(C.oak), 0, 0.4, 0));
     const top = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.1, p.d - 0.1), new THREE.MeshStandardMaterial({ map: rouletteFelt(), roughness: 1 }));
     top.rotation.x = -Math.PI / 2; top.position.y = 0.805; g.add(top);
+    g.add(lightPool(o, p.w * 1.2, p.d * 1.6, 0.81));
     // the wheel at the left end: a bowl, the turning numbers, a gold turret
     const wx = -p.w / 2 + 0.36;
     g.add(mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.1, 32), M(C.oak), wx, 0.85, 0));
@@ -996,6 +1111,7 @@ function vegasBuild(p, o) {
     g.add(mesh(new THREE.BoxGeometry(0.5, 0.66, 0.3), M(C.oakDark), 0, 0.33, 0.1));
     g.add(half(r, 0.1, M(C.oak), 0.7));
     g.add(half(r * 0.92, 0.02, new THREE.MeshStandardMaterial({ map: blackjackFelt(), roughness: 1 }), 0.76));
+    { const lp = lightPool(o, p.w * 1.1, p.d * 2, 0.775); lp.position.z = 0.3; g.add(lp); }
     const rail = mesh(new THREE.TorusGeometry(r * 0.97, 0.05, 8, 40, Math.PI), M(C.ink), 0, 0.77, 0);
     rail.rotation.x = Math.PI / 2; rail.rotation.z = Math.PI; rail.scale.set(1, (p.d * 1.6) / p.w, 1); g.add(rail);
     g.add(mesh(new THREE.BoxGeometry(0.4, 0.04, 0.12), M(C.ink), 0, 0.79, 0.04));     // the chip tray
@@ -1012,6 +1128,7 @@ function vegasBuild(p, o) {
     g.add(mesh(new THREE.BoxGeometry(p.w, 0.72, p.d), M(C.oak), 0, 0.36, 0));
     const bed = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.16, p.d - 0.16), new THREE.MeshStandardMaterial({ map: crapsFelt(), roughness: 1 }));
     bed.rotation.x = -Math.PI / 2; bed.position.y = 0.73; g.add(bed);
+    g.add(lightPool(o, p.w * 1.1, p.d * 1.5, 0.735));
     for (const [w, d, x, z] of [[p.w, 0.08, 0, -p.d / 2 + 0.04], [p.w, 0.08, 0, p.d / 2 - 0.04], [0.08, p.d, -p.w / 2 + 0.04, 0], [0.08, p.d, p.w / 2 - 0.04, 0]]) g.add(mesh(new THREE.BoxGeometry(w, 0.2, d), M(C.ink), x, 0.82, z));
     const die = new THREE.MeshStandardMaterial({ color: 0xc0262f, roughness: 0.3 });
     const dice = [0, 1].map((k) => { const d = mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), die, 0.2 + k * 0.08, 0.76, 0); g.add(d); return d; });
@@ -1019,25 +1136,37 @@ function vegasBuild(p, o) {
     o.casinoDice.push({ dice, w: p.w, d: p.d });
     return g;
   }
-  // A slot machine: a black and gold cabinet, reels behind glass, a glowing
-  // topper and a pull handle; facing +z, its middle at the origin.
-  const cabinet = (topColor = 0xff3fa4) => {
-    const g = new THREE.Group();
-    g.add(mesh(new THREE.BoxGeometry(0.66, 1.45, 0.6), M(C.ink), 0, 0.72, 0));
-    g.add(mesh(new THREE.BoxGeometry(0.7, 0.04, 0.64), M(C.char), 0, 1.47, 0));
-    const reels = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.36), new THREE.MeshBasicMaterial({ map: slotReels(), toneMapped: false }));
-    reels.position.set(0, 1.05, 0.301); g.add(reels);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.26, 0.5), new THREE.MeshBasicMaterial({ color: topColor }));
-    top.position.set(0, 1.62, -0.02); g.add(top);
+  // A slot machine (k: which one, SLOT_THEMES): a black cabinet with chrome
+  // sides and lit edges, reels in a gold frame, a lit topper with its name, a
+  // chrome crown, the belly glass, a deck of lit buttons and a pull handle;
+  // facing +z, its middle at the origin. Baked by the caller.
+  const cabinet = (k = 0) => {
+    const S = slotParts(), g = new THREE.Group();
+    k %= SLOT_THEMES.length;
+    const flat = (w, h, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(x, y, z); g.add(m); return m; };
+    g.add(mesh(new THREE.BoxGeometry(0.62, 1.45, 0.6), M(C.ink), 0, 0.72, 0));
+    for (const sd of [-1, 1]) {
+      g.add(mesh(new THREE.BoxGeometry(0.035, 1.52, 0.62), S.chrome, sd * 0.33, 0.76, 0));
+      g.add(mesh(new THREE.BoxGeometry(0.024, 1.36, 0.024), S.led, sd * 0.3, 0.8, 0.305));
+    }
+    g.add(mesh(new THREE.BoxGeometry(0.56, 0.44, 0.02), M(C.char), 0, 1.06, 0.297));
+    flat(0.5, 0.36, S.reels, 0, 1.06, 0.309);
+    flat(0.5, 0.42, S.belly[k], 0, 0.4, 0.302);
+    g.add(mesh(new THREE.BoxGeometry(0.66, 0.36, 0.44), M(C.ink), 0, 1.66, -0.03));
+    flat(0.62, 0.32, S.top[k], 0, 1.66, 0.192);
+    const crown = mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.68, 18), S.chrome, 0, 1.84, -0.03);
+    crown.rotation.z = Math.PI / 2; crown.scale.set(0.5, 1, 1); g.add(crown);
     g.add(mesh(new THREE.BoxGeometry(0.66, 0.06, 0.22), M(C.char), 0, 0.78, 0.38));
-    g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.35, 6), M(C.char), 0.36, 1.05, 0.1));
-    g.add(mesh(new THREE.SphereGeometry(0.04, 10, 8), M(C.terra), 0.36, 1.24, 0.1));
-    o.casinoSlots.push(top);
+    S.buttons.forEach((b, i) => g.add(mesh(new THREE.BoxGeometry(0.075, 0.018, 0.05), b, -0.21 + i * 0.14, 0.818, 0.42)));
+    g.add(mesh(new THREE.BoxGeometry(0.12, 0.05, 0.012), M(C.oakDark), 0.18, 0.6, 0.302)); // the note slot
+    g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.35, 6), S.chrome, 0.37, 1.05, 0.1));
+    g.add(mesh(new THREE.SphereGeometry(0.04, 10, 8), M(C.terra), 0.37, 1.24, 0.1));
+    for (const m of [S.top[k], S.belly[k]]) if (!o.casinoSlots.includes(m)) o.casinoSlots.push(m);
     return g;
   };
   if (p.t === 'arcade') {
     // In the casino the arcade cabinet is a slot machine.
-    const g = cabinet();
+    const g = bake(cabinet(Math.round(p.x + p.y * 3)));
     // 2F's cabinets stand by the right wall, turned to the room (their players stand at -x).
     if (o.plan.floor === 2) g.rotation.y = -Math.PI / 2;
     g.position.set(p.x + 0.35, 0, p.y + 0.35);
@@ -1048,10 +1177,17 @@ function vegasBuild(p, o) {
     // toppers in turn pink, gold, cyan.
     const g = new THREE.Group();
     for (let k = 0; k < p.n; k++) {
-      const c = cabinet([0xff3fa4, 0xffc531, 0x3fe0ff][k % 3]);
+      const c = cabinet(k + Math.round(p.x + p.y));
       c.position.set(p.step * (k + 0.5), 0, 0.31);
       g.add(c);
     }
+    bake(g);
+    // the progressive jackpot over them, on two brass posts at the back
+    const bw = Math.min(1.7, p.step * p.n * 0.8);
+    for (const sd of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.45, 6), M(C.char), p.step * p.n / 2 + sd * bw * 0.4, 2.08, 0.06));
+    const board = jackpotBoard(o, bw);
+    board.position.set(p.step * p.n / 2, 2.2, 0.08);
+    g.add(board);
     g.position.set(p.x, 0, p.y);
     return g;
   }
@@ -1063,6 +1199,7 @@ function vegasBuild(p, o) {
     g.add(mesh(new THREE.BoxGeometry(p.w + 0.08, 0.05, p.d + 0.08), M(C.ink), 0, 0.76, 0));
     const felt = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.12, p.d - 0.12), new THREE.MeshStandardMaterial({ map: sicboFelt(), roughness: 1 }));
     felt.rotation.x = -Math.PI / 2; felt.position.y = 0.787; g.add(felt);
+    g.add(lightPool(o, p.w * 1.2, p.d * 1.6, 0.79));
     g.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.04, 28), M(C.char), 0, 0.8, 0));
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.19, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xdff2ff, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false }));
     dome.position.y = 0.82; g.add(dome);
@@ -1192,6 +1329,7 @@ function vegasExtras(o) {
   } else {
     const add = (text, color, w, h, x, y, z, ry) => { const s = neonSign(text, color, w, h); s.position.set(x, y, z); s.rotation.y = ry; o.room.add(s); signs.push(s); };
     add('VIP LOUNGE', '#3fd0ff', 1.6, 0.34, 0.02, 1.9, Math.max(2, D - 5), Math.PI / 2);
+    add('SLOTS', '#ff3fa4', 1.0, 0.32, 0.02, 1.95, Math.max(2, D - 9), Math.PI / 2);
   }
   return { bulbs, n: spots.length, signs, step: -1, col: new THREE.Color() };
 }
@@ -1210,6 +1348,7 @@ function vegasAnimate(fx, t, closed, o) {
   for (const [k, s] of fx.signs.entries()) {
     const flick = !closed && Math.sin(t * 23 + k * 5) > 0.985 ? 0.4 : 1;
     s.material.opacity = closed ? 0.3 : 0.95 * flick;
+    if (s.userData.glow) s.userData.glow.material.opacity = closed ? 0.06 : 0.5 * flick;
   }
   // the big six wheels turn slowly; their bulbs chase
   for (const w of o.casinoSpin || []) {
@@ -1241,7 +1380,14 @@ function vegasAnimate(fx, t, closed, o) {
     drawReels(reelCanvas, reelCanvas.canvas.width, closed ? 0 : t);
     texCache.get('reels').needsUpdate = true;
   }
-  for (const [k, top] of (o.casinoSlots || []).entries()) top.material.color.setHSL(closed ? 0.9 : (0.9 + Math.sin(t * 2 + k) * 0.05) % 1, closed ? 0.3 : 0.9, closed ? 0.12 : 0.55);
+  for (const [k, m] of (o.casinoSlots || []).entries()) m.color.setScalar(closed ? 0.22 : 0.8 + 0.2 * Math.max(0, Math.sin(t * 2.5 + k * 1.3)));
+  if (SLOT.led) SLOT.led.color.setHSL(closed ? 0.9 : (t * 0.12) % 1, 0.9, closed ? 0.06 : 0.55);
+  for (const m of o.casinoPools || []) m.material.opacity = closed ? 0.05 : 0.32;
+  if (jackpotCanvas && (!fx.jpAt || t - fx.jpAt > 0.25)) {
+    fx.jpAt = t;
+    drawJackpot(jackpotCanvas, Date.now());
+    texCache.get('jackpot').needsUpdate = true;
+  }
   // the hold'em table shows the game (office.js stepPoker): only redrawn when it changes
   const P = o.casinoPoker, game = o.poker;
   if (P) {
