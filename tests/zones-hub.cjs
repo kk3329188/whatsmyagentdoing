@@ -1640,6 +1640,7 @@ test('the casino play corner: the hold\'em table is in front, nothing tall betwe
 test('Chuck the dealer: always at the casino table, not a session (not in people, not clickable); deals when two sit, waits otherwise', () => {
   const o = load(true);
   o.layout = 'casino'; o.floor = 1;
+  o.dealerPick = 'chuck'; // (any day: on his days off Messi deals, tested below)
   o.plan = o.buildPlan(0);
   const d = o.dealerOn();
   assert.equal(d.s.title, '查克');
