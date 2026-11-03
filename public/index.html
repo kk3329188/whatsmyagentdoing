@@ -899,7 +899,8 @@ document.getElementById('qualSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   state.quality = b.dataset.v; store.set('quality', state.quality); hideTip(); syncControls(); makeOffice();
 });
-state.decor = ['default', 'modern', 'tech', 'lux', 'vegas'].includes(store.get('decor', 'default')) ? store.get('decor', 'default') : 'default';
+const DECORS = ['default', 'modern', 'tech', 'lux', 'vegas'];
+state.decor = DECORS.includes(store.get('decor', 'default')) ? store.get('decor', 'default') : 'default';
 const decorSeg = document.getElementById('decorSeg');
 const syncDecor = () => decorSeg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.v === state.decor); b.setAttribute('aria-pressed', b.dataset.v === state.decor); });
 syncDecor();
@@ -1224,7 +1225,10 @@ async function sendWorld() {
   if (now - worldSent < (worldWanted ? 280 : 5000)) return;
   worldSent = now;
   try {
-    const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: office.worldState(), 2: office2 && office2.worldState ? office2.worldState() : null } });
+    // The decor rides along on 1F (a 2D page shows the plain office): a short
+    // word, so the public server's filter lets it through as it is.
+    const decor = state.quality === 'high' ? state.decor : 'default';
+    const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: { ...office.worldState(), decor }, 2: office2 && office2.worldState ? office2.worldState() : null } });
     const r = await fetch('/api/world', { method: 'POST', headers: { 'x-whatsmyagentdoing': 'world', 'content-type': 'application/json' }, body });
     worldWanted = !!(await r.json()).wanted;
   } catch { worldWanted = false; }
@@ -1246,8 +1250,16 @@ let worldTag = null, worldOk = 0;
 let wsLive = false;
 // The host's office into ours. `hostNow`: the host machine's clock when it
 // was sent, so a viewer whose clock is off still times bubbles and steps right.
+let decorSwitch = null;
 function takeWorld(w, hostNow) {
-  if (!office || !state.loaded || !w || !w.floors) return;
+  if (!office || !state.loaded || !w || !w.floors || decorSwitch) return;
+  // The host's decor (not saved: this viewer's own setting stays as it was).
+  const decor = w.floors[1] && w.floors[1].decor;
+  if (Hub.public && DECORS.includes(decor) && decor !== state.decor) {
+    state.decor = decor; syncDecor();
+    decorSwitch = makeOffice().finally(() => { decorSwitch = null; });
+    return;
+  }
   const skew = hostNow ? hostNow - Date.now() : 0;
   const sessions = new Map(state.data.sessions.map((s) => [s.key, s]));
   if (w.floors[1] && office.applyWorld) office.applyWorld(w.floors[1], sessions, { skew, hostNow });

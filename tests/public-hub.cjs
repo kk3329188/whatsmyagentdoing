@@ -319,3 +319,11 @@ test('public world: an older page that does not say whether it is after hours st
   // A page that says so is believed (the boss is in, the stand-up is on).
   assert.equal(publicWorld({ at: 1, floors: { 1: { closedNow: false } } }, 'salt', [], at(21)).floors[1].closedNow, false);
 });
+
+test('public world: the decor your page shows reaches viewers (a known one; junk is dropped)', () => {
+  const w = (decor) => publicWorld({ at: 1, floors: { 1: { closedNow: false, decor } } }, 'salt', ['acme-billing']).floors[1].decor;
+  assert.equal(w('vegas'), 'vegas');
+  assert.equal(w('lux'), 'lux');
+  assert.equal(w('<img src=x>'), undefined);
+  assert.equal(w('acme-billing'), undefined, 'never a private word');
+});
