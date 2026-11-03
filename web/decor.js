@@ -1349,7 +1349,10 @@ function vegasExtras(o) {
   spots.forEach(([x, y, z], i) => { m.makeTranslation(x, y, z); bulbs.setMatrixAt(i, m); bulbs.setColorAt(i, new THREE.Color(0xffd77a)); });
   o.room.add(bulbs);
   const signs = [];
-  if (o.plan.floor !== 2) {
+  if (o.plan.floor === 3) {
+    const add = (text, color, w, h, x, y, z, ry) => { const s = neonSign(text, color, w, h); s.position.set(x, y, z); s.rotation.y = ry; o.room.add(s); signs.push(s); };
+    add('BUFFET', '#ffd23f', 1.4, 0.34, 0.02, 2.1, 3.6, Math.PI / 2);
+  } else if (o.plan.floor !== 2) {
     const add = (text, color, w, h, x, y, z, ry) => { const s = neonSign(text, color, w, h); s.position.set(x, y, z); s.rotation.y = ry; o.room.add(s); signs.push(s); };
     add("TEXAS HOLD'EM", '#ff3fa4', 1.8, 0.36, 3.4, 2.15, 5.05, 0); // on the meeting room's glass, over the table
     add('JACKPOT', '#ffd23f', 1.2, 0.3, 0.02, 2.1, 9.7, Math.PI / 2);

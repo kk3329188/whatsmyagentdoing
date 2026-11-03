@@ -220,9 +220,16 @@
   .poker-hud .big { width: 34px; height: 34px; font-size: 15px; }
   .poker-hud .call { background: #3fb36b; color: #fff; } .poker-hud .raise { background: #ffc845; color: #3a2a00; } .poker-hud .fold { background: #e14c4c; color: #fff; }
   .office.stack .floor-view[data-floor="2"] { z-index: 2; }
-  .office.stack[data-floor="1"] .floor-view[data-floor="2"] { transform: translateY(calc(-100% - 40px)); pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
-  .office.stack[data-floor="2"] .floor-view[data-floor="1"] { pointer-events: none; }
-  .office.stack[data-floor="2"]:not(.moving) .floor-view[data-floor="1"] { visibility: hidden; } /* its last frame, under 2F's picture of it */
+  .office.stack .floor-view[data-floor="3"] { z-index: 3; }
+  .office.stack[data-floor="1"] .floor-view[data-floor="2"],
+  .office.stack[data-floor="1"] .floor-view[data-floor="3"],
+  .office.stack[data-floor="2"] .floor-view[data-floor="3"] { transform: translateY(calc(-100% - 40px)); pointer-events: none; transition-timing-function: cubic-bezier(.55, 0, .3, 1); }
+  .office.stack[data-floor="2"] .floor-view[data-floor="1"],
+  .office.stack[data-floor="3"] .floor-view[data-floor="1"],
+  .office.stack[data-floor="3"] .floor-view[data-floor="2"] { pointer-events: none; }
+  .office.stack[data-floor="2"]:not(.moving) .floor-view[data-floor="1"],
+  .office.stack[data-floor="3"]:not(.moving) .floor-view[data-floor="1"],
+  .office.stack[data-floor="3"]:not(.moving) .floor-view[data-floor="2"] { visibility: hidden; } /* its last frame, under the picture of it from above */
   .office.stack.settle .floor-view { transition: none; }
   @media (prefers-reduced-motion: reduce) { .office.stack .floor-view { transition: none; } }
   .view-pad { position: absolute; right: 10px; bottom: 30px; display: grid; grid-template-columns: repeat(3, 26px); grid-template-rows: repeat(3, 26px); gap: 2px; opacity: .7; transition: opacity .15s; z-index: 2; }
@@ -563,7 +570,7 @@ function applyLang(code) {
   const sel = document.getElementById('langSel');
   if (sel) sel.options[0].textContent = `🌐 ${L.auto}`;
   if (typeof office !== 'undefined' && office) office.offDutyLabel = L.wentHome;
-  if (typeof office2 !== 'undefined' && office2) office2.offDutyLabel = L.wentHome;
+  for (const o of typeof office2 !== 'undefined' ? [office2, office3] : []) if (o) o.offDutyLabel = L.wentHome;
   if (typeof syncControls === 'function') syncControls();
   if (typeof renderSceneSel === 'function') renderSceneSel();
   if (typeof renderVersion === 'function') renderVersion();
@@ -741,22 +748,24 @@ function render() {
     office.pins = PIP ? [] : Hub.pinNames();
     // Someone from outside walks in downstairs (src/visitors.js).
     if (!PIP && !replay && office.visitorsIn) { office.masked = Hub.live; if (office.visitorsIn(state.data.visitors) > 0) Hub.ding('wait'); }
-    for (const o of [office, office2]) if (o && o.setWeather) o.setWeather(state.data.weather);
+    for (const o of floorOffices()) if (o && o.setWeather) o.setWeather(state.data.weather);
     if (!PIP && office.setLeave) office.setLeave(replay ? [] : (state.data.office && state.data.office.onLeave) || []);
-    for (const o of [office, office2]) if (o && o.setCompany) { o.dealerPick = state.dealer; o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
+    for (const o of floorOffices()) if (o && o.setCompany) { o.dealerPick = state.dealer; o.setCompany(co); o.setBoard(Hub.boardCount()); o.follow = !replay && store.get('follow', true) !== false; o.setBoss(!PIP && !replay && Hub.bossIn()); o.bestKey = PIP ? null : Hub.bestKey(); }
     if (office2) {
       // Two floors: who is where, and who just took the lift.
-      const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary, allDown: !!(office && office.standup) });
+      const { floors, moved } = OfficeFloors.split(officeList, floorPrev, { isSecretary: Hub.isSecretary, allDown: !!(office && office.standup), canteen: !!office3 && OfficeFloors.canteenTime() });
       floorPrev = floors;
       const on = (n) => officeList.filter((s) => (floors.get(s.key) || { floor: 1 }).floor === n);
       office2.showAgent = state.showAgent;
+      if (office3) office3.showAgent = state.showAgent;
       stackFloors(officeMode && !poppedOut);
       office.update(on(1), { moved });
       office2.update(on(2), { moved });
+      if (office3) office3.update(on(3), { moved });
       renderFloorTabs(floors, officeList);
     } else {
       floorRoots[0].hidden = false;
-      floorRoots[1].hidden = true;
+      floorRoots[1].hidden = floorRoots[2].hidden = true;
       floorTabs.hidden = true;
       officeEl.classList.remove('stack');
       office.setVisible(officeMode && !poppedOut);
@@ -819,7 +828,7 @@ function onData(data) {
   state.loaded = true;
   applyLang(chooseLang(data.lang));
   const fresh = office && office.setProgress ? office.setProgress(data.office) : [];
-  if (office2) office2.setProgress(data.office);
+  for (const o of [office2, office3]) if (o) o.setProgress(data.office);
   if (!PIP) Hub.progress(data.office, fresh);
   render();
   Hub.setPrivate(data.privacy);
@@ -900,7 +909,7 @@ document.addEventListener('keydown', (e) => {
 settingsMenu.addEventListener('toggle', () => { if (settingsMenu.open) hideTip(); });
 const followCam = document.getElementById('followCam');
 followCam.checked = store.get('follow', true) !== false;
-followCam.addEventListener('change', () => { store.set('follow', followCam.checked); if (!followCam.checked) for (const o of [office, office2]) if (o && o.spotCancel) o.spotCancel(); if (state.data) render(); });
+followCam.addEventListener('change', () => { store.set('follow', followCam.checked); if (!followCam.checked) for (const o of floorOffices()) if (o && o.spotCancel) o.spotCancel(); if (state.data) render(); });
 // The office soundscape: off unless you turn it on; browsers only let sound
 // start after you click or press something, so a saved "on" waits for that.
 const ambient = new OfficeAmbient.Ambient();
@@ -914,7 +923,7 @@ musicOn.addEventListener('change', () => { store.set('music', musicOn.checked); 
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { if (ambientOn.checked && !PIP) ambient.start(); }, { once: true, capture: true });
 setInterval(() => {
   if (!ambient.on) return;
-  const o = state.floor === 2 && office2 ? office2 : office;
+  const o = curOffice();
   ambient.update(document.hidden || state.view !== 'office' ? { typing: 0, coffee: 0, chat: 0, weather: null } : OfficeAmbient.sceneOf(o));
 }, 400);
 const autoStandup = document.getElementById('autoStandup');
@@ -946,7 +955,7 @@ syncDealer();
 dealerSeg.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b || b.dataset.v === state.dealer) return;
   state.dealer = b.dataset.v; store.set('dealer', state.dealer); syncDealer();
-  for (const o of [office, office2]) if (o) o.dealerPick = state.dealer;
+  for (const o of floorOffices()) if (o) o.dealerPick = state.dealer;
 });
 syncDecor();
 decorSeg.addEventListener('click', (e) => {
@@ -1054,6 +1063,9 @@ const officeOpts = {
 };
 let office = null;   // downstairs (or the only floor)
 let office2 = null;  // upstairs, built-in office only
+let office3 = null;  // 3F, the staff canteen (built-in office only)
+const floorOffices = () => [office, office2, office3];
+const curOffice = () => (state.floor === 3 && office3) || (state.floor === 2 && office2) || office;
 let officeKind = null;
 // The 3D office (three.js + models) is only fetched when someone picks it.
 // Until the new office has drawn a settled frame, show a loader instead of a
@@ -1062,12 +1074,12 @@ const officeEl = document.getElementById('office');
 // Two floors in the built-in office: downstairs the work and everything that
 // needs you, upstairs the breaks and work beyond the downstairs desks. Tabs
 // above say who is on each, so the floor you are not looking at is not a blind spot.
-const floorRoots = [1, 2].map((n) => { const d = document.createElement('div'); d.className = 'floor-view'; d.dataset.floor = n; officeEl.appendChild(d); return d; });
+const floorRoots = [1, 2, 3].map((n) => { const d = document.createElement('div'); d.className = 'floor-view'; d.dataset.floor = n; officeEl.appendChild(d); return d; });
 const floorTabs = document.createElement('div');
 floorTabs.className = 'floor-tabs';
 floorTabs.hidden = true;
 officeEl.parentNode.insertBefore(floorTabs, officeEl);
-state.floor = store.get('floor', 1) === 2 ? 2 : 1;
+state.floor = [2, 3].includes(store.get('floor', 1)) ? store.get('floor', 1) : 1;
 let floorPrev = new Map();
 // The floors are stacked like the building (CSS .office.stack): picking 2F
 // brings it down onto 1F, and 2F's picture shows 1F under it from outside,
@@ -1077,7 +1089,7 @@ let floorPrev = new Map();
 // lands over 1F's room; picking 1F sends 2F up and away. Only while a floor
 // moves do both draw; otherwise just the one you see, as before.
 const FLOOR_MOVE_MS = 700;
-let floorMoveUntil = 0, floorMoveTimer = 0;
+let floorMoveUntil = 0, floorMoveTimer = 0, floorFrom = 1;
 function stackFloors(show) {
   // The first time (page load, a new renderer) the floors take their places
   // without moving.
@@ -1087,19 +1099,28 @@ function stackFloors(show) {
     requestAnimationFrame(() => requestAnimationFrame(() => officeEl.classList.remove('settle')));
   }
   if (officeEl.dataset.floor !== String(state.floor)) {
+    floorFrom = Number(officeEl.dataset.floor) || 1;
     officeEl.dataset.floor = state.floor;
     floorMoveUntil = Date.now() + FLOOR_MOVE_MS;
     clearTimeout(floorMoveTimer);
     floorMoveTimer = setTimeout(() => { if (state.data) render(); }, FLOOR_MOVE_MS + 20);
   }
-  const moving = Date.now() < floorMoveUntil, up = state.floor === 2;
+  const moving = Date.now() < floorMoveUntil, f = state.floor;
   officeEl.classList.toggle('moving', moving);
   floorRoots[0].hidden = floorRoots[1].hidden = false;
-  office.setBeneath(up ? office2 : null);
-  if (up) office.follow = false; // the camera is 2F's
-  office.setVisible(show && (!up || moving));
-  office2.setVisible(show && (up || moving));
+  floorRoots[2].hidden = !office3;
+  // Each floor under the one you look at slides under its camera.
+  office.setBeneath(f >= 2 ? office2 : null);
+  if (office3) office2.setBeneath(f === 3 ? office3 : null);
+  if (f >= 2) office.follow = false; // the camera is the floor above's
+  if (f === 3) office2.follow = false;
+  // The floor you look at; while one moves, the one it left and the one under it too.
+  const seen = (n) => show && (n === f || (moving && (n === floorFrom || n === f - 1)));
+  office.setVisible(seen(1));
+  office2.setVisible(seen(2));
+  if (office3) office3.setVisible(seen(3));
 }
+const FLOOR_NAMES = { 1: '1F 辦公室', 2: '2F 休息層', 3: '3F 員工餐廳' };
 function renderFloorTabs(floors, list) {
   const count = (n) => {
     const c = { work: 0, wait: 0, error: 0, done: 0, idle: 0 };
@@ -1108,13 +1129,13 @@ function renderFloorTabs(floors, list) {
   };
   const KINDS = [['wait', '✋', '等你'], ['error', '⚠', '出錯'], ['work', '🖥', '工作中'], ['done', '✓', '剛做完'], ['idle', '🛋', '休息']];
   const chips = (c) => KINDS.filter(([k]) => c[k]).map(([k, i, t]) => `<span class="fchip" data-z="${k}">${i} ${c[k]} ${t}</span>`).join('') || '<span class="fchip">沒人</span>';
-  const html = [1, 2].map((n) => `<button type="button" data-floor="${n}" class="${state.floor === n ? 'on' : ''}"><b>${n === 1 ? '1F 辦公室' : '2F 休息層'}</b>${chips(count(n))}</button>`).join('')
-    + '<span class="hub-muted">按 1／2 換樓層（看 2F 時 2F 疊在 1F 上、看 1F 時 2F 浮上去）・閒置的在 2F，等你和出錯的一定在 1F</span>';
+  const html = (office3 ? [1, 2, 3] : [1, 2]).map((n) => `<button type="button" data-floor="${n}" class="${state.floor === n ? 'on' : ''}"><b>${FLOOR_NAMES[n]}</b>${chips(count(n))}</button>`).join('')
+    + `<span class="hub-muted">按 1／2${office3 ? '／3' : ''} 換樓層（樓上疊在樓下上面）・閒置的在 2F，等你和出錯的一定在 1F${office3 ? '・中午 12:00～12:30 閒置的上 3F 吃飯，吃完午休' : ''}</span>`;
   if (floorTabs.innerHTML !== html) floorTabs.innerHTML = html;
   floorTabs.hidden = false;
 }
 function setFloor(n) {
-  if (!office2 || state.floor === n) return;
+  if (!office2 || state.floor === n || (n === 3 && !office3)) return;
   state.floor = n;
   store.set('floor', n);
   hideTip();
@@ -1123,7 +1144,7 @@ function setFloor(n) {
 floorTabs.addEventListener('click', (e) => { const b = e.target.closest('[data-floor]'); if (b) setFloor(Number(b.dataset.floor)); });
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
-  if (e.key === '1' || e.key === '2') setFloor(Number(e.key));
+  if (e.key === '1' || e.key === '2' || e.key === '3') setFloor(Number(e.key));
   if ((e.key === 'b' || e.key === 'B') && !PIP) Hub.toggleBoss();
   // Walking yourself about downstairs: W A S D, Space to talk, R to sit back down.
   if (!PIP && !Hub.public && office && office.meKey && state.view === 'office' && (!office2 || state.floor === 1) && office.meKey(e.key, true)) e.preventDefault();
@@ -1142,7 +1163,7 @@ function setLive(on) {
   document.body.classList.toggle('live', on);
   Hub.close && Hub.close();
   hideTip();
-  for (const o of [office, office2]) if (o) o.deptLabel = on && !Hub.public ? (name, i) => `部門 ${'ABCDEFGHJK'[i % 10]}` : null;
+  for (const o of floorOffices()) if (o) o.deptLabel = on && !Hub.public ? (name, i) => `部門 ${'ABCDEFGHJK'[i % 10]}` : null;
   clearInterval(liveTimer);
   if (on) {
     const tick = () => {
@@ -1167,7 +1188,7 @@ function setLive(on) {
     liveTimer = setInterval(() => {
       tick();
       if (Date.now() - mineAt < 30_000) return;
-      const o = state.floor === 2 && office2 ? office2 : office;
+      const o = curOffice();
       if (!o || !o.people) return;
       const now = Date.now();
       const found = [];
@@ -1209,7 +1230,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && Hub.live
 // buttons are the only thing a viewer can touch.
 let publicOn = false;
 function enterPublic() {
-  for (const o of [office, office2]) if (o && o.setReadOnly && !o.readOnly) o.setReadOnly(true);
+  for (const o of floorOffices()) if (o && o.setReadOnly && !o.readOnly) o.setReadOnly(true);
   if (publicOn) return;
   publicOn = true;
   // Sound: browsers wait for a click, so it starts off, with a button.
@@ -1254,7 +1275,7 @@ const bgAt = new WeakMap(); // office -> last time it was stepped in the backgro
 // going, and the sending, while someone is watching.
 function bgStep() {
   const now = performance.now();
-  for (const o of [office, office2]) {
+  for (const o of floorOffices()) {
     if (!o || !o.step || o.remote) continue;
     const last = bgAt.get(o) || now;
     bgAt.set(o, now);
@@ -1273,7 +1294,7 @@ async function sendWorld() {
     // The decor rides along on 1F (a 2D page shows the plain office): a short
     // word, so the public server's filter lets it through as it is.
     const decor = state.quality === 'high' ? state.decor : 'default';
-    const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: { ...office.worldState(), decor }, 2: office2 && office2.worldState ? office2.worldState() : null } });
+    const body = JSON.stringify({ host: worldHost, at: now, input: worldInput, floors: { 1: { ...office.worldState(), decor }, 2: office2 && office2.worldState ? office2.worldState() : null, 3: office3 && office3.worldState ? office3.worldState() : null } });
     const r = await fetch('/api/world', { method: 'POST', headers: { 'x-whatsmyagentdoing': 'world', 'content-type': 'application/json' }, body });
     worldWanted = !!(await r.json()).wanted;
   } catch { worldWanted = false; }
@@ -1312,6 +1333,7 @@ function takeWorld(w, hostNow) {
   const sessions = new Map(state.data.sessions.map((s) => [s.key, s]));
   if (w.floors[1] && office.applyWorld) office.applyWorld(w.floors[1], sessions, { skew, hostNow });
   if (w.floors[2] && office2 && office2.applyWorld) office2.applyWorld(w.floors[2], sessions, { skew, hostNow });
+  if (w.floors[3] && office3 && office3.applyWorld) office3.applyWorld(w.floors[3], sessions, { skew, hostNow });
   worldOk = Date.now();
 }
 async function pullWorld() {
@@ -1330,7 +1352,7 @@ async function pullWorld() {
 function pullWorldDone() {
   // The host may only have paused (a sleeping laptop, a reload): hold on a
   // while before running an office of our own, which would not match it.
-  if (Date.now() - worldOk > 60_000) for (const o of [office, office2]) if (o && o.remote) o.leaveWorld();
+  if (Date.now() - worldOk > 60_000) for (const o of floorOffices()) if (o && o.remote) o.leaveWorld();
   // Say so when this is not your office as it is (your page is closed or asleep).
   const away = document.getElementById('hostAway');
   const off = !!office && !office.remote && Date.now() - worldOk > 60_000;
@@ -1356,8 +1378,8 @@ function startReplay() {
   const spans = state.data && state.data.office && state.data.office.today && state.data.office.today.spans;
   const firsts = Object.values(spans || {}).map((r) => r.s[0] && r.s[0][0]).filter(Boolean);
   if (!firsts.length || PIP) { Hub.toast('今天還沒有可以回放的紀錄'); return; }
-  replay = { spans, from: Math.min(...firsts), to: Date.now(), t0: Date.now(), timer: setInterval(render, 250), follow: [office, office2].map((o) => o && o.follow) };
-  for (const o of [office, office2]) if (o) { o.spotCancel && o.spotCancel(); }
+  replay = { spans, from: Math.min(...firsts), to: Date.now(), t0: Date.now(), timer: setInterval(render, 250), follow: floorOffices().map((o) => o && o.follow) };
+  for (const o of floorOffices()) if (o) { o.spotCancel && o.spotCancel(); }
   document.getElementById('replayBar').hidden = false;
   render();
 }
@@ -1377,7 +1399,7 @@ function stopReplay() {
 let recorder = null;
 function recordFrame(o) {
   const r = recorder;
-  if (!r || o !== (state.floor === 2 && office2 ? office2 : office) || !o.canvas.width) return;
+  if (!r || o !== (curOffice()) || !o.canvas.width) return;
   const c = r.ctx, W = r.cv.width, H = r.cv.height;
   c.fillStyle = o.pal.dark ? '#1e1e1c' : '#f6f6f3';
   c.fillRect(0, 0, W, H);
@@ -1595,6 +1617,7 @@ async function makeOffice() {
   }
   if (office) office.destroy();
   if (office2) { office2.destroy(); office2 = null; }
+  if (office3) { office3.destroy(); office3 = null; }
   floorPrev = new Map();
   let mine;
   try {
@@ -1607,14 +1630,15 @@ async function makeOffice() {
   // Upstairs exists in the built-in office only (scene packs have their own map).
   if (!PIP && scene === 'office' && mine instanceof Cls) {
     try { office2 = new Cls(floorRoots[1], { ...opts, floor: 2 }); office2.offDutyLabel = L.wentHome; office2.fitBelow = true; } catch (e) { console.error(e); office2 = null; }
+    if (office2) try { office3 = new Cls(floorRoots[2], { ...opts, floor: 3 }); office3.offDutyLabel = L.wentHome; office3.fitBelow = true; } catch (e) { console.error(e); office3 = null; }
   }
   office = mine;
   office.offDutyLabel = L.wentHome;
   if (!PIP && office.meOn) office.meOn(); // you, at your desk downstairs
-  if (state.data && state.data.office && office.setProgress) { office.setProgress(state.data.office); if (office2) office2.setProgress(state.data.office); }
+  if (state.data && state.data.office && office.setProgress) { office.setProgress(state.data.office); if (office2) office2.setProgress(state.data.office); if (office3) office3.setProgress(state.data.office); }
   render();
   // A hidden floor does not draw, so wait for whichever one is showing.
-  const ok = await (office2 ? Promise.race([mine.ready, office2.ready]) : mine.ready);
+  const ok = await (office2 ? Promise.race([mine.ready, office2.ready, ...(office3 ? [office3.ready] : [])]) : mine.ready);
   if (office !== mine) return;
   if (!ok && high) {
     // 3D failed (no WebGL, missing files…): fall back to the 2D office.
@@ -1739,16 +1763,16 @@ window.addEventListener('storage', (e) => {
 });
 Hub.mount({
   roam: officeOpts.roam,
-  onRoam(v) { store.set('roam', v); officeOpts.roam = v; for (const o of [office, office2]) if (o && o.setRoam) o.setRoam(v); },
+  onRoam(v) { store.set('roam', v); officeOpts.roam = v; for (const o of floorOffices()) if (o && o.setRoam) o.setRoam(v); },
   sound: store.get('sound', true),
   onSound(v) { store.set('sound', v); },
-  onRelayed(from, to, text) { for (const o of [office, office2]) if (o && o.relayed) o.relayed(from, to, text); },
+  onRelayed(from, to, text) { for (const o of floorOffices()) if (o && o.relayed) o.relayed(from, to, text); },
   onAway(text) { return office && office.deliver ? office.deliver(text) : false; },
   onAwayDone() { if (office && office.endErrand) office.endErrand(); },
   onChange() { render(); },
   onStandup() { startStandup(); },
   onReplay() { if (replay) stopReplay(); else startReplay(); },
-  onBadge(key, b) { for (const o of [office, office2]) { const p = o && o.people.get(key); if (p) p.event = { text: `🏅 獲得「${b.name}」`, at: Date.now(), zone: 'level' }; } },
+  onBadge(key, b) { for (const o of floorOffices()) { const p = o && o.people.get(key); if (p) p.event = { text: `🏅 獲得「${b.name}」`, at: Date.now(), zone: 'level' }; } },
   onRecord() { if (recorder) stopReplay(); else startRecording(); },
   onLive(v) { setLive(v); },
 });

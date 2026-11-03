@@ -346,7 +346,7 @@ function publicWorld(world, salt, privateWords = [], now = Date.now()) {
     return out;
   };
   const floors = {};
-  for (const f of ['1', '2']) if (world && world.floors && world.floors[f]) floors[f] = walk(world.floors[f], 0);
+  for (const f of ['1', '2', '3']) if (world && world.floors && world.floors[f]) floors[f] = walk(world.floors[f], 0);
   // After hours by this machine's clock (the same as your page's) when your
   // page did not say (an older page still open): the lights still go down.
   for (const f of Object.values(floors)) if (typeof f.closedNow !== 'boolean') f.closedNow = closedHours(now);

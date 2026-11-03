@@ -528,6 +528,30 @@ export class Office3D extends window.Office {
   }
 
   // The company's name, big on the back wall: gold on a dark panel, glowing.
+  // Today's menu over the buffet (3F): a chalkboard in an oak frame.
+  menuBoard(m) {
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 256;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#a8825a'; c.fillRect(0, 0, 512, 256);
+    c.fillStyle = '#2d3a32'; c.fillRect(14, 14, 484, 228);
+    for (let i = 0; i < 400; i++) { c.fillStyle = `rgba(255,255,255,${0.015 + (i % 5) * 0.006})`; c.fillRect((i * 97) % 484 + 14, (i * 61) % 228 + 14, 3, 2); }
+    const font = (w, n) => `${w} ${n}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif`;
+    c.textAlign = 'center'; c.fillStyle = '#f4efe6'; c.font = font(900, 46);
+    c.fillText('今日菜單', 256, 70);
+    c.strokeStyle = 'rgba(244,239,230,.5)'; c.lineWidth = 2; c.beginPath(); c.moveTo(120, 88); c.lineTo(392, 88); c.stroke();
+    c.font = font(700, 30); c.textAlign = 'left';
+    const items = [['滷肉飯', '#ffd98a'], ['三杯雞', '#ffb38a'], ['炒青菜', '#a8e0a0'], ['味噌湯', '#f4efe6']];
+    items.forEach(([t, col], i) => { c.fillStyle = col; c.fillText('・' + t, i % 2 ? 280 : 70, 140 + Math.floor(i / 2) * 50); });
+    c.fillStyle = 'rgba(244,239,230,.7)'; c.font = font(600, 20); c.textAlign = 'center';
+    c.fillText('12:00 – 12:30', 256, 232);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(m.w, m.w / 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }));
+    board.position.set(m.x + m.w / 2, 2.3, 0.015);
+    this.room.add(board);
+  }
+
   logoSign(L, floor) {
     const cv = document.createElement('canvas');
     cv.width = 1024; cv.height = Math.round(1024 * 1.14 / L.w);
@@ -546,7 +570,7 @@ export class Office3D extends window.Office {
     c.shadowBlur = 0;
     c.font = '700 40px ui-sans-serif, system-ui, sans-serif';
     c.fillStyle = 'rgba(255,217,138,.7)';
-    c.fillText(floor === 2 ? '2F  LOUNGE' : '1F  OFFICE', cv.width / 2, cv.height * 0.44 + size * 0.6 + 22);
+    c.fillText({ 2: '2F  LOUNGE', 3: '3F  CANTEEN' }[floor] || '1F  OFFICE', cv.width / 2, cv.height * 0.44 + size * 0.6 + 22);
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
@@ -703,7 +727,7 @@ export class Office3D extends window.Office {
     this.boxMesh(-T, dy + 0.6, 0, T, D - dy - 0.6, WALL_H, 0, { mat: wallMat });
     this.boxMesh(-T, dy - 0.6, 1.8, T, 1.2, WALL_H - 1.8, 0, { mat: wallMat });
     // Downstairs this opening is the front door; upstairs the lift fills it.
-    if (plan.floor !== 2) {
+    if (!(plan.floor >= 2)) {
       this.boxMesh(-T + 0.02, dy - 0.55, 0, 0.06, 1.1, 1.78, dark ? 0x5c4431 : 0xa8825a);
       this.boxMesh(0, dy - 0.6, 0, 0.9, 1.2, 0.01, dark ? 0x5a3b2e : 0xb9654a, { shadow: false });
     }
@@ -734,6 +758,7 @@ export class Office3D extends window.Office {
       this.whiteboardScribbles(plan.whiteboard.x + 1.3);
     }
     if (plan.logo && this.company) this.room.add(this.logoSign(plan.logo, plan.floor));
+    if (plan.menu) this.menuBoard(plan.menu);
     if (plan.wallSign) {
       const sign = this.textPlane(plan.wallSign.text, dark ? '#3a4a5a' : '#8ea3b8', 1.3, 0.3);
       sign.position.set(plan.wallSign.x + 0.65, 2.15, 0.005);
@@ -1095,6 +1120,90 @@ export class Office3D extends window.Office {
       }
       case 'sink':
         break; // part of the counter
+      // ---- the staff canteen (3F)
+      case 'buffet': {
+        // Steel counter, hot pans of food under a glass guard and heat lamps.
+        const { x, y, w } = p, steel = { metal: 0.55, rough: 0.35 };
+        this.boxMesh(x, y, 0, w, 0.8, 0.86, 0xc7cdd3, steel);
+        this.boxMesh(x - 0.02, y - 0.02, 0.86, w + 0.04, 0.84, 0.035, 0xdfe3e7, steel);
+        this.boxMesh(x + 0.02, y + 0.8, 0.12, w - 0.04, 0.02, 0.05, 0x8e969e, steel);
+        this.boxMesh(x, y + 0.8, 0, w, 0.02, 0.1, dark ? 0x2b2d31 : 0x5a6068);
+        const FOOD = [0xd98b3a, 0x5f9a4c, 0xe8d9a8, 0xb8432f, 0xf2c94c, 0x7a4a2a, 0xe7b07a];
+        const n = Math.max(3, Math.round(w / 0.75)), pw = (w - 0.16) / n;
+        for (let k = 0; k < n; k++) {
+          const px = x + 0.08 + k * pw;
+          this.boxMesh(px + 0.02, y + 0.14, 0.86, pw - 0.04, 0.5, 0.05, 0x9aa3ad, steel);
+          this.boxMesh(px + 0.05, y + 0.17, 0.885, pw - 0.1, 0.44, 0.03, FOOD[k % FOOD.length], { rough: 0.6 });
+          // a ladle in every other pan
+          if (k % 2 === 0) this.boxMesh(px + pw * 0.6, y + 0.3, 0.92, 0.03, 0.3, 0.02, 0xb9c0c7, steel);
+        }
+        // the sneeze guard on posts, the heat lamp bar glowing over the food
+        const glass = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.42), this.glassMat());
+        glass.rotation.x = -0.55; glass.position.set(x + w / 2, 1.16, y + 0.58);
+        this.room.add(glass);
+        for (const px of [x + 0.03, x + w - 0.07]) this.boxMesh(px, y + 0.25, 0.86, 0.04, 0.04, 0.5, 0x9aa3ad, steel);
+        this.boxMesh(x, y + 0.2, 1.36, w, 0.14, 0.06, 0x3a3f45, { metal: 0.4, rough: 0.5 });
+        for (let k = 0; k < n; k++) this.boxMesh(x + 0.08 + (k + 0.25) * pw, y + 0.24, 1.335, pw * 0.5, 0.06, 0.02, 0, { emissive: 0xff9a3c, ei: 1.4, shadow: false });
+        const heat = new THREE.PointLight(0xffa04a, 0.5, 2.6, 2);
+        heat.position.set(x + w / 2, 1.2, y + 0.45);
+        this.room.add(heat);
+        // a stack of plates at the start of the line
+        for (let i = 0; i < 5; i++) {
+          const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.012, 20), soft(0xfaf8f2));
+          plate.position.set(x + 0.22, 0.9 + i * 0.014, y + 0.62);
+          this.room.add(plate);
+        }
+        break;
+      }
+      case 'diningTable': {
+        const { x, y } = p;
+        // its own oak top (a decor's 'table' may be a card table)
+        this.boxMesh(x, y, 0.71, 2.6, 0.8, 0.045, dark ? 0x8a6a4c : 0xc9a47e);
+        for (const lx of [x + 0.12, x + 2.4]) {
+          this.boxMesh(lx, y + 0.32, 0, 0.08, 0.16, 0.71, 0x3a3e45);
+          this.boxMesh(lx - 0.02, y + 0.08, 0, 0.12, 0.64, 0.04, 0x3a3e45);
+        }
+        // a bench along each side
+        for (const by of [y - 0.58, y + 1.06]) {
+          this.boxMesh(x + 0.05, by, 0.4, 2.5, 0.32, 0.05, dark ? 0x7a5c44 : 0xc9a47e);
+          for (const lx of [x + 0.15, x + 2.33]) this.boxMesh(lx, by + 0.06, 0, 0.06, 0.2, 0.4, 0x3a3e45);
+        }
+        // trays set out, a plate, a bowl and chopsticks on each
+        for (let k = 0; k < 3; k++) for (const [ty, col] of [[y + 0.05, 0xc96442], [y + 0.47, 0x3f7fbf]]) {
+          const tx = x + 0.27 + k * 0.85;
+          this.boxMesh(tx, ty, 0.75, 0.36, 0.28, 0.015, col, { shadow: false });
+          const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 0.05, 14), soft(0xfaf8f2));
+          bowl.position.set(tx + 0.1, 0.79, ty + 0.14);
+          const rice = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft(0xffffff));
+          rice.position.set(tx + 0.1, 0.81, ty + 0.14);
+          const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.012, 16), soft(0xfaf8f2));
+          plate.position.set(tx + 0.25, 0.77, ty + 0.14);
+          const dish = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft([0xd98b3a, 0x5f9a4c, 0xb8432f][(k + (ty > y + 0.2 ? 1 : 0)) % 3]));
+          dish.position.set(tx + 0.25, 0.776, ty + 0.14);
+          this.room.add(bowl, rice, plate, dish);
+          this.boxMesh(tx + 0.31, ty + 0.03, 0.77, 0.012, 0.22, 0.008, 0x8d6a4c, { shadow: false });
+        }
+        // napkins and a soy sauce bottle in the middle
+        const soy = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.12, 12), soft(0x3a2418));
+        soy.position.set(x + 1.3, 0.81, y + 0.4);
+        this.room.add(soy);
+        this.boxMesh(x + 1.18, y + 0.36, 0.75, 0.08, 0.08, 0.06, 0xf3ecdf);
+        break;
+      }
+      case 'trayRack': {
+        const { x, y } = p, steel = { metal: 0.55, rough: 0.35 };
+        for (const [ax, ay] of [[x, y], [x + 0.86, y], [x, y + 0.46], [x + 0.86, y + 0.46]]) this.boxMesh(ax, ay, 0, 0.04, 0.04, 1.3, 0xa9b0b8, steel);
+        for (let k = 0; k < 5; k++) {
+          const z = 0.15 + k * 0.27;
+          this.boxMesh(x, y, z, 0.9, 0.5, 0.02, 0xc7cdd3, steel);
+          if (k < 4) for (let i = 0; i < 3 - (k % 2); i++) this.boxMesh(x + 0.08, y + 0.06, z + 0.025 + i * 0.022, 0.74, 0.38, 0.016, [0xc96442, 0x3f7fbf][(k + i) % 2]);
+        }
+        // the bin for leftovers beside it
+        const bin = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 0.6, 18), soft(0x5f9a4c));
+        bin.position.set(x + 1.2, 0.3, y + 0.25);
+        this.room.add(bin);
+        break;
+      }
       case 'roundTable': {
         this.place('tableRound', p.x - 0.45, p.y - 0.45, 0.9, 0.9, { h: 0.75 });
         // Lunch from the delivery, and the afternoon cake.
@@ -1186,7 +1295,7 @@ export class Office3D extends window.Office {
         const steel = new THREE.MeshStandardMaterial({ color: 0xc3c8ce, metalness: 0.7, roughness: 0.3 });
         this.boxMesh(0, p.y - 0.63, 0, 0.04, 1.26, 1.95, 0x8d939a, { metal: 0.6, rough: 0.4 });
         this.liftDoors = [-1, 1].map((k) => this.boxMesh(0.04, p.y + (k < 0 ? -0.55 : 0), 0, 0.03, 0.55, 1.85, 0, { mat: steel }));
-        const ind = this.textPlane(this.plan.floor === 2 ? '▼ 2F' : '▲ 1F', '#1c1c1e', 0.45, 0.18);
+        const ind = this.textPlane(this.plan.floor >= 2 ? `▼ ${this.plan.floor}F` : '▲ 1F', '#1c1c1e', 0.45, 0.18);
         ind.material.emissive = new THREE.Color(0xffb347); ind.material.emissiveMap = ind.material.map; ind.material.emissiveIntensity = 0.6;
         ind.rotation.y = Math.PI / 2; ind.position.set(0.02, 2.12, p.y);
         this.room.add(ind);

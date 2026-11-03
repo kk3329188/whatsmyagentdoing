@@ -13,6 +13,7 @@
   const STOREY = WALL_H + STOREY_GAP;
   const WORKING = new Set(['thinking', 'tool', 'typing', 'waiting', 'error']);
   const MAX_WANDERERS = 7;
+  const FLOOR_NAME = { 1: '1F  OFFICE', 2: '2F  LOUNGE', 3: '3F  CANTEEN' };
   const POKER_CREW = 4; // at most this many go to the casino's poker table on a break (lunch nap, after hours)
 
   // Where someone is tells you their state at a glance.
@@ -75,6 +76,8 @@
   const waitedMs = (s) => Date.now() - (s.lastEventAt || Date.now());
   const hour = () => new Date().getHours() + new Date().getMinutes() / 60;
   const lunch = () => { const h = hour(); return h >= 12 && h < 13.5; };
+  // Lunch in the staff canteen upstairs (3F), before the nap: 12:00-12:30.
+  const canteenTime = () => { const h = hour(); return h >= 12 && h < 12.5; };
   // Closing time: whoever is just resting goes home, the lights go down.
   const closing = () => { const h = hour(); return h >= 19 || h < 7; };
   // The casino's after-hours game runs till nine; then the players and the dealer go home.
@@ -85,6 +88,7 @@
   // each kind of seat, a new thing every 7–10 seconds.
   const SEAT_ACTS = {
     stool: ['eat', 'sip', 'scroll', 'chat', 'laugh', 'scroll'],
+    dine: ['eat', 'eat', 'chat', 'eat', 'sip', 'laugh'],
     couch: ['scroll', 'read', 'laptop', 'laugh', 'watch', 'sip', 'game'],
     beanbag: ['scroll', 'game', 'read', 'watch', 'laugh'],
     read: ['read', 'laptop', 'write', 'think', 'read'],
@@ -737,6 +741,7 @@
       // The lift on the left wall, the same spot on both floors.
       const lift = { x: 0.55, y: D - 3.0 };
       prop('lift', { y: lift.y });
+      if (this.floor === 3) return { ...this.canteen({ W, D, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }), podSpots: [], aisles: [] };
       if (this.floor === 2) {
         // Upstairs: a few hot desks for overflow work, the rest is for breaks.
         // Always a spare desk or two, as downstairs (else every update would
@@ -1103,6 +1108,88 @@
 
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
     // Same footprint as downstairs; you come and go by the lift.
+    // 3F, the staff canteen: a buffet along the back wall under the menu, long
+    // tables with benches, a tray return, a drinks fridge. Empty but for
+    // lunch (12:00-12:30, canteenTime): the idle ones come up by the lift,
+    // queue at the buffet for a plate, then sit and eat (canteenWander), and
+    // go back down for the nap.
+    canteen({ W, D, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
+      const pal = this.pal;
+      // the buffet: hot food behind the glass, a queue in front
+      const bx = 2.0, bw = Math.min(7.0, W - 9.0), by = 0.3;
+      add(bx + bw / 2 + by + 0.4, () => this.buffet(bx, by, bw));
+      prop('buffet', { x: bx, y: by, w: bw, d: 0.8 });
+      solid(bx, by, bw, 0.8, 0.05);
+      const n = Math.max(3, Math.floor(bw / 1.4));
+      for (let k = 0; k < n; k++) poi(bx + (k + 0.5) * bw / n, by + 1.45, 'buffet', 'back', { zone: 'idle', yaw: Math.PI });
+      const menu = { x: bx + bw / 2 - 1.1, w: 2.2 };
+      // the tray return, in the corner by the buffet
+      add(0.4 + 0.3 + 0.6, () => this.trayRack(0.3, 0.35));
+      prop('trayRack', { x: 0.3, y: 0.35 });
+      solid(0.3, 0.35, 0.9, 0.5, 0.05);
+      // drinks in the back corner
+      const fx = W - 1.15;
+      add(fx + 0.4 + 0.3 + 0.4, () => this.fridge(fx, 0.3));
+      prop('fridge', { x: fx, y: 0.3 });
+      solid(fx, 0.3, 0.85, 0.75);
+      // long tables with a bench either side, three to a side
+      const tables = [];
+      for (let ty = 3.4; ty + 0.8 < D - 1.6; ty += 3.0) {
+        for (let tx = 2.6; tx + 2.6 < W - 0.8; tx += 4.0) {
+          tables.push({ x: tx, y: ty });
+          add(tx + 1.3 + ty + 0.4, () => this.diningTable(tx, ty));
+          prop('diningTable', { x: tx, y: ty, w: 2.6, d: 0.8 });
+          prop('pendant', { x: tx + 1.3, y: ty + 0.4, span: 0 });
+          solid(tx, ty, 2.6, 0.8, 0.05);
+          for (let k = 0; k < 3; k++) {
+            const sx = tx + 0.45 + k * 0.85;
+            poi(sx, ty - 0.42, 'dine', 'front', { sit: 0.45, zone: 'idle', yaw: 0 });
+            poi(sx, ty + 1.22, 'dine', 'back', { sit: 0.45, zone: 'idle', yaw: Math.PI });
+          }
+        }
+      }
+      for (const [x, y] of [[0.45, D - 0.6], [W - 0.45, D - 0.6], [W - 0.45, 2.0]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
+      const logo = this.company ? { x: Math.max(bx + bw + 0.6, W - 6.2), w: 3.2 } : null;
+      const windows = [];
+      for (let x = bx + bw + 0.6; x < W - 2.6; x += 2.4) { if (logo && !(x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1)) continue; windows.push(x); }
+      const posters = [{ y: 2.4, color: '#e0913a', text: 'LUNCH' }, { y: 4.8, color: '#5f9a4c', text: 'EAT WELL' }];
+      const zones = {};
+      for (const z of ZONE_ORDER) zones[z] = pois.filter((q) => q.zone === z);
+      const zoneAt = { work: { x: W / 2, y: D / 2 }, idle: { x: W / 2, y: D / 2 } };
+      const targets = [{ id: 'door', x: lift.x + 0.35, y: lift.y, hint: '先不顯示，有事再出現' }];
+      this.decorate({ W, D, OW: W, PY: D - 2, grid, pois, prop, solid, add, entry: lift, lift, seats: pois.filter((q) => q.act === 'dine'),
+        spots: [[1.3, D - 2.3], [1.2, D - 0.6], [W - 1.6, D - 0.6], [W / 2, D - 0.6], [1.2, 2.2], [W - 0.9, 3.2]] });
+      orientSeats(pois, props);
+      const floors = [
+        { kind: 'wood', x: 0, y: 0, w: W, d: D },
+        { kind: 'tiles', x: 0, y: 0, w: W, d: 2.4 },
+      ];
+      const art = [];
+      { let from = bx + bw + 0.3; for (const wx of [...windows, W - 0.3]) { if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) }); from = wx + 1.5; } }
+      return { W, D, OW: W, OD: 2.4, MR: 0, PY: D, RW: 0, grid, items, props, pois, desks, floors, art, whiteboard: null, wallSign: null, menu, logo, windows, posters, pp: null, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 3, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true, canteen: true, tables };
+    }
+
+    // In the canteen: first the buffet for a plate, then a seat to eat it.
+    canteenWander(p, now) {
+      const free = (act) => this.plan.pois.filter((q) => q.act === act && !q.taken);
+      const pick = (list) => list.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[Math.floor(Math.random() * Math.min(2, list.length))];
+      let q = null;
+      if (!p.fed) {
+        q = pick(free('buffet'));
+        if (q) { p.fed = true; p.stay = rand(5, 9) * 1000; p.event = { text: '拿餐囉 🍱', at: now, zone: 'held' }; }
+      }
+      if (!q) {
+        q = pick(free('dine'));
+        if (q) p.stay = rand(600, 900) * 1000;
+      }
+      if (!q) return false;
+      q.taken = p.key;
+      p.poi = q; p.lastPoi = q;
+      p.until = Infinity;
+      this.goTo(p, q);
+      return true;
+    }
+
     upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
       const pal = this.pal;
       const mx = OW;
@@ -1398,6 +1485,10 @@
       if (this.remote) return;
       const zoned = !!this.plan.zones;
       const viaLift = (k) => !!(moved && moved.has(k) && this.plan.lift);
+      // Which way they went (moved is a Map of { from, to } from splitFloors).
+      const trip = (k) => (moved && moved.get && moved.get(k)) || {};
+      const cameUp = (k) => { const t = trip(k); return this.floor === 3 ? '開飯囉！🍱' : t.from === 3 ? '吃飽了 😋' : (t.from ? t.from < this.floor : this.floor >= 2) ? '上樓了' : '下樓了'; };
+      const goingTo = (k) => { const t = trip(k); return t.to === 3 ? '吃飯去 🍱' : (t.to ? t.to > this.floor : this.floor === 1) ? '上樓去' : '下樓去'; };
       // The secretary keeps their own desk beside yours, whatever they are doing.
       const sec = this.plan.sec && this.isSecretary
         ? sessions.filter((s) => !s.subagent && this.isSecretary(s)).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0))[0]
@@ -1529,7 +1620,7 @@
           p = this.newPerson(s, viaLift(s.key) ? this.plan.lift : null);
           this.people.set(s.key, p);
           arrived = !this.first;
-          if (viaLift(s.key) && !this.first) { this.liftOpen = Date.now(); p.event = { text: this.floor === 2 ? '上樓了' : '下樓了', at: Date.now(), zone: 'held' }; }
+          if (viaLift(s.key) && !this.first) { this.liftOpen = Date.now(); p.event = { text: cameUp(s.key), at: Date.now(), zone: 'held' }; }
           else if (arrived && morning()) p.event = { text: '早安！☀️', at: Date.now(), zone: 'work' };
         }
         p.s = s;
@@ -1620,7 +1711,7 @@
           this.endVisit(p, false);
           p.desk = null;
           p.viaLift = viaLift(k);
-          if (p.viaLift) p.event = { text: this.floor === 2 ? '下樓去' : '上樓去', at: Date.now(), zone: 'held' };
+          if (p.viaLift) p.event = { text: goingTo(k), at: Date.now(), zone: 'held' };
           else if (cards) p.event = { text: '打完牌，回家囉 👋', at: Date.now(), zone: 'held' };
           this.goTo(p, p.viaLift ? this.plan.lift : this.plan.door);
         }
@@ -1711,6 +1802,7 @@
       if (p.poi && p.poi.table === 'holdem' && p.poi.taken === p.key && this.pokerBreak() && (p.zone === 'idle' || p.zone === 'done')) { p.until = now + 60_000; return; }
       this.release(p);
       const plan = this.plan;
+      if (plan.canteen && this.canteenWander(p, now)) return;
       // At the stand-up: go to your place and stay.
       if (p.standupSpot) {
         p.poi = { ...p.standupSpot };
@@ -3136,7 +3228,7 @@
     // desk downstairs with a sign on it; when one of them is
     // back, they say so.
     setLeave(list) {
-      list = this.plan.zones && this.plan.floor !== 2 && !this.compact ? list || [] : [];
+      list = this.plan.zones && !(this.plan.floor >= 2) && !this.compact ? list || [] : [];
       this.leaveKeys = this.leaveKeys || new Set();
       for (const k of this.leaveKeys) {
         const p = this.people.get(k);
@@ -3768,7 +3860,8 @@
       this.drawLift();
       this.drawLogo();
       this.drawBoard();
-      if (this.plan.floor === 2) return;
+      if (this.plan.menu) this.drawMenu();
+      if (this.plan.floor >= 2) return;
       const dy = this.plan.door.y;
       this.poly([P(0, dy - 0.6, 0), P(0, dy + 0.6, 0), P(0, dy + 0.6, 1.8), P(0, dy - 0.6, 1.8)], pal.trim);
       this.poly([P(0, dy - 0.52, 0), P(0, dy + 0.52, 0), P(0, dy + 0.52, 1.72), P(0, dy - 0.52, 1.72)], this.shade(pal.deskL, -10));
@@ -3893,6 +3986,70 @@
       this.box(x, y + 0.05, 0.9, 0.55, 0.4, 0.02, '#9aa3ad', '#7d858e', '#6c737b');
       this.box(x + 0.22, y + 0.02, 0.92, 0.06, 0.06, 0.3, this.pal.metal, this.pal.metal, '#888');
       this.box(x + 0.22, y + 0.02, 1.2, 0.06, 0.2, 0.04, this.pal.metal, this.pal.metal, '#888');
+    }
+
+    // ---- the staff canteen (3F)
+
+    // A buffet counter: steel front, hot pans of food under a glass guard.
+    buffet(x, y, w) {
+      const P = (a, b, c) => this.iso(a, b, c), c = this.ctx;
+      this.box(x, y, 0, w, 0.8, 0.88, '#d9dde1', '#b9c0c7', '#a3abb3');
+      this.poly([P(x, y + 0.8, 0.12), P(x + w, y + 0.8, 0.12), P(x + w, y + 0.8, 0.16), P(x, y + 0.8, 0.16)], '#8e969e');
+      const FOOD = ['#d98b3a', '#5f9a4c', '#e8d9a8', '#b8432f', '#f2c94c', '#7a4a2a'];
+      const n = Math.max(3, Math.round(w / 0.75));
+      for (let k = 0; k < n; k++) {
+        const px = x + 0.08 + k * (w - 0.16) / n, pw = (w - 0.16) / n - 0.08;
+        this.poly([P(px, y + 0.15, 0.89), P(px + pw, y + 0.15, 0.89), P(px + pw, y + 0.62, 0.89), P(px, y + 0.62, 0.89)], '#6f777f');
+        this.poly([P(px + 0.03, y + 0.18, 0.9), P(px + pw - 0.03, y + 0.18, 0.9), P(px + pw - 0.03, y + 0.59, 0.9), P(px + 0.03, y + 0.59, 0.9)], FOOD[k % FOOD.length]);
+      }
+      // the sneeze guard, and the heat lamps glowing over the food
+      c.save(); c.globalAlpha = 0.35;
+      this.poly([P(x, y + 0.7, 1.05), P(x + w, y + 0.7, 1.05), P(x + w, y + 0.25, 1.32), P(x, y + 0.25, 1.32)], '#cfe6f2');
+      c.restore();
+      for (const xx of [x + 0.04, x + w - 0.08]) this.box(xx, y + 0.22, 0.88, 0.04, 0.04, 0.5, '#9aa3ad', '#8a939d', '#7a838d');
+      this.box(x, y + 0.2, 1.36, w, 0.12, 0.05, '#4a4f55', '#3a3f45', '#30353b');
+      c.save(); c.globalAlpha = 0.18; c.fillStyle = '#ffb347';
+      for (let k = 0; k < n; k++) { const q = P(x + (k + 0.5) * w / n, y + 0.4, 0.92); c.beginPath(); c.ellipse(q.x, q.y, 9, 4, 0, 0, Math.PI * 2); c.fill(); }
+      c.restore();
+    }
+
+    // A long canteen table, a bench along each side.
+    diningTable(x, y) {
+      const pal = this.pal;
+      for (const by of [y - 0.58, y + 1.06]) {
+        for (const lx of [x + 0.15, x + 2.35]) this.box(lx, by + 0.06, 0, 0.08, 0.2, 0.42, '#555', '#444', '#333');
+        this.box(x + 0.05, by, 0.42, 2.5, 0.32, 0.05, this.shade(pal.deskTop, 8), pal.deskL, pal.deskR);
+      }
+      for (const lx of [x + 0.1, x + 2.42]) this.box(lx, y + 0.3, 0, 0.08, 0.2, 0.72, '#555', '#444', '#333');
+      this.box(x, y, 0.72, 2.6, 0.8, 0.05, this.shade(pal.deskTop, 12), pal.deskL, pal.deskR);
+      // trays laid out, one in front of each place
+      const P = (a, b, c) => this.iso(a, b, c);
+      for (let k = 0; k < 3; k++) for (const [ty, col] of [[y + 0.06, '#c96442'], [y + 0.46, '#3f7fbf']]) {
+        const tx = x + 0.27 + k * 0.85;
+        this.poly([P(tx, ty, 0.775), P(tx + 0.36, ty, 0.775), P(tx + 0.36, ty + 0.28, 0.775), P(tx, ty + 0.28, 0.775)], col);
+        const b = P(tx + 0.18, ty + 0.14, 0.78);
+        this.ctx.fillStyle = '#fafafa'; this.ctx.beginPath(); this.ctx.ellipse(b.x, b.y, 4, 2, 0, 0, Math.PI * 2); this.ctx.fill();
+      }
+    }
+
+    // Where the trays go back: a steel trolley, trays stacked on its shelves.
+    trayRack(x, y) {
+      this.box(x, y, 0, 0.9, 0.5, 1.3, '#c7cdd3', '#a9b0b8', '#959da5');
+      for (let k = 0; k < 4; k++) this.box(x + 0.05, y + 0.52, 0.18 + k * 0.28, 0.8, 0.02, 0.06, '#c96442', '#b0563a', '#9a4a32');
+    }
+
+    // Today's menu over the buffet (3F).
+    drawMenu() {
+      const m = this.plan.menu;
+      this.onWall('y0', m.x, 2.25, (c) => {
+        const w = m.w * 22;
+        c.fillStyle = '#2d3a32'; c.fillRect(0, 0, w, 26);
+        c.strokeStyle = '#a8825a'; c.lineWidth = 2; c.strokeRect(0, 0, w, 26);
+        c.fillStyle = '#f4efe6'; c.font = '800 7px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif'; c.textAlign = 'center';
+        c.fillText('今日菜單', w / 2, 9);
+        c.font = '600 5px ui-sans-serif, system-ui, -apple-system, "PingFang TC", sans-serif'; c.fillStyle = '#ffd98a';
+        c.fillText('滷肉飯・三杯雞・炒青菜・味噌湯', w / 2, 19);
+      });
     }
 
     fridge(x, y) {
@@ -4369,7 +4526,7 @@
         c.shadowBlur = 0;
         c.font = '700 8px ui-sans-serif, system-ui, sans-serif';
         c.fillStyle = 'rgba(255,217,138,.7)';
-        c.fillText(this.plan.floor === 2 ? '2F  LOUNGE' : '1F  OFFICE', 0, size * 0.62 + 3);
+        c.fillText(FLOOR_NAME[this.plan.floor] || FLOOR_NAME[1], 0, size * 0.62 + 3);
       });
     }
 
@@ -4505,7 +4662,7 @@
       this.onWall('x0', L.y, 2.15, (c) => {
         c.fillStyle = '#1c1c1e'; c.fillRect(-14, -7, 28, 12);
         c.fillStyle = '#ffb347'; c.font = '800 8px ui-sans-serif, system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.fillText(this.floor === 2 ? '▼ 2F' : '▲ 1F', 0, -1);
+        c.fillText(this.floor === 1 ? '▲ 1F' : `▼ ${this.floor}F`, 0, -1);
       });
     }
 
@@ -4870,6 +5027,7 @@
         if (q.sit && SEAT_ACTS[q.act]) act = this.seatAct(p, q);
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
+        if (q.act === 'buffet') act = 'fridge';
         if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slotWinning()) act = 'cheer';
         // At the roulette wheel: watch it go round, cheer now and then.
         if (q.act === 'roulette') {
@@ -6269,7 +6427,8 @@
   // Upstairs: the idle ones, and work beyond the downstairs desks. Someone
   // already working upstairs stays there until they stop, so nobody bounces
   // between floors. `prev`: key -> { floor, zone } from the last call.
-  // Returns { floors: Map key -> { floor, zone }, moved: Set of keys that changed floor }.
+  // Returns { floors: Map key -> { floor, zone }, moved: Map key -> { from, to } of those that changed floor }.
+  // `canteen` (12:00-12:30, canteenTime): every idle one goes up to lunch on 3F.
   // Holidays the office dresses up for, by date: Halloween (late October),
   // Christmas (December), Lunar New Year (from ten days before to fifteen
   // after; the date moves, so a short table).
@@ -6307,7 +6466,7 @@
   // A few idle ones stay downstairs and find something to do there (so the
   // office never feels empty); the rest go up to the lounge.
   const IDLE_DOWNSTAIRS = 4;
-  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false, idleDown = IDLE_DOWNSTAIRS } = {}) {
+  function splitFloors(sessions, prev = new Map(), { cap = 12, isSecretary = null, allDown = false, idleDown = IDLE_DOWNSTAIRS, canteen = false } = {}) {
     const floors = new Map();
     const workers = [];
     // Only the newest matching session is the secretary (as in update()).
@@ -6338,17 +6497,26 @@
       const parent = byId.get(s.parentId);
       floors.set(s.key, { floor: (parent && floors.get(parent.key) || { floor: 1 }).floor, zone: zoneOf(s) });
     }
+    // Lunch: the idle ones (and their helpers) eat in the canteen.
+    if (canteen) {
+      for (const s of sessions) if (!s.subagent && s !== sec && zoneOf(s) === 'idle') floors.set(s.key, { floor: 3, zone: 'idle' });
+      for (const s of sessions) {
+        if (!s.subagent) continue;
+        const parent = byId.get(s.parentId), f = parent && floors.get(parent.key);
+        if (f && f.floor === 3) floors.set(s.key, { floor: 3, zone: zoneOf(s) });
+      }
+    }
     // Stand-up: everyone comes down to the meeting room.
     if (allDown) for (const v of floors.values()) v.floor = 1;
-    const moved = new Set();
-    for (const [k, v] of floors) if (prev.has(k) && prev.get(k).floor !== v.floor) moved.add(k);
+    const moved = new Map();
+    for (const [k, v] of floors) if (prev.has(k) && prev.get(k).floor !== v.floor) moved.set(k, { from: prev.get(k).floor, to: v.floor });
     return { floors, moved };
   }
 
   Office.usePhase = usePhase;
   Office.seth = { spin: sethSpin, timeline: sethTimeline, total: sethTotal, BET: SETH_BET, COLS: SETH_COLS, ROWS: SETH_ROWS, FREE: SETH_FREE, FREE_MORE: SETH_FREE_MORE };
   window.Office = Office;
-  window.OfficeFloors = { split: splitFloors, zoneOf };
+  window.OfficeFloors = { split: splitFloors, zoneOf, canteenTime };
   window.OfficeSeason = seasonOf;
   window.OfficeTraits = (key) => traitsOf(key).map((tr) => ({ id: tr.id, name: tr.name, emoji: tr.emoji }));
 

@@ -468,6 +468,80 @@ test('two floors: work and anything that needs you downstairs, idle ones upstair
   assert.ok(third.moved.has('claude:idle'));
 });
 
+test('3F, the staff canteen: a buffet with a queue, long tables to eat at, the lift; no desks; everything reachable', () => {
+  const o = loadFloor(3);
+  const p = o.plan;
+  assert.equal(p.floor, 3);
+  assert.ok(p.canteen);
+  assert.equal(p.desks.length, 0, 'nobody works up here');
+  assert.equal(p.boss, null);
+  assert.ok(p.props.some((q) => q.t === 'buffet') && p.props.some((q) => q.t === 'trayRack'));
+  const buffet = p.pois.filter((q) => q.act === 'buffet'), seats = p.pois.filter((q) => q.act === 'dine');
+  assert.ok(buffet.length >= 3, `${buffet.length} places at the buffet`);
+  assert.ok(seats.length >= 12, `${seats.length} seats at the tables`);
+  for (const q of [...buffet, ...seats]) {
+    assert.ok(!p.grid.blocked(q.x, q.y), `${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} is free`);
+    assert.ok(p.grid.path(p.lift.x + 0.4, p.lift.y, q.x, q.y).length, `${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} can be reached from the lift`);
+  }
+  assert.equal(p.door.y, p.lift.y, 'the way in is the lift');
+});
+
+test('lunch, 12:00 to 12:30: the idle ones go up to the canteen, queue at the buffet, then sit and eat; afterwards back down for the nap', () => {
+  const ss = [at('idle', { n: 1, ago: 60 * MIN }), at('idle', { n: 2, ago: 90 * MIN }), at('tool', { n: 3 }), at('waiting', { n: 4 }), { key: 'claude:kid', id: 'kid', subagent: true, parentId: 'p1', status: 'tool' }];
+  ss[0].id = 'p1';
+  const before = Floors.split(ss, new Map());
+  assert.notEqual(before.floors.get('claude:idle1').floor, 3);
+  const lunch = Floors.split(ss, before.floors, { canteen: true });
+  const f = (k) => lunch.floors.get(k).floor;
+  assert.equal(f('claude:idle1'), 3, 'idle: up to lunch');
+  assert.equal(f('claude:idle2'), 3);
+  assert.equal(f('claude:kid'), 3, 'a helper goes where its session is');
+  assert.equal(f('claude:tool3'), 1, 'working: stays at the desk');
+  assert.equal(f('claude:waiting4'), 1, 'waiting on you: stays downstairs');
+  assert.deepEqual({ ...lunch.moved.get('claude:idle1') }, { from: before.floors.get('claude:idle1').floor, to: 3 });
+  const after = Floors.split(ss, lunch.floors);
+  assert.notEqual(after.floors.get('claude:idle1').floor, 3, 'after lunch: back down');
+  assert.equal(after.moved.get('claude:idle1').from, 3);
+  // the clock: lunch upstairs till half past twelve, then the nap
+  const at12 = load(true, clockAt(12.1)), at1230 = load(true, clockAt(12.5));
+  const fl = (o) => { const w = {}; vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), { window: w, Math, Date: o, Map, Set, Object, Array, Number, String, JSON, Infinity, setTimeout, Image: class {} }); return w.OfficeFloors; };
+  assert.equal(fl(clockAt(12.1)).canteenTime(), true);
+  assert.equal(fl(clockAt(12.5)).canteenTime(), false);
+  assert.equal(fl(clockAt(11.9)).canteenTime(), false);
+  void at12;
+  settle(at1230, [at('tool', { ago: MIN })]);
+  assert.equal(at1230.napNow, true, 'half past twelve: the nap starts');
+  // up in the canteen: first the buffet, then a seat
+  const o = load(true, clockAt(12.1)); o.floor = 3; o.plan = o.buildPlan(0);
+  const idle = [at('idle', { n: 1, ago: 60 * MIN }), at('idle', { n: 2, ago: 70 * MIN })];
+  o.first = false;
+  o.update(idle, { moved: new Map(idle.map((s) => [s.key, { from: 2, to: 3 }])) });
+  const a = o.people.get('claude:idle1');
+  assert.equal(a.event && a.event.text, '開飯囉！🍱', 'out of the lift');
+  a.path = []; a.until = 0; o.wander(a, Date.now());
+  assert.equal(a.poi && a.poi.act, 'buffet', 'to the buffet first');
+  assert.equal(a.event.text, '拿餐囉 🍱');
+  a.x = a.poi.x; a.y = a.poi.y; a.path = [];
+  assert.equal(o.stateOf(a).act, 'fridge', 'helping themselves');
+  a.until = 0; o.wander(a, Date.now());
+  assert.equal(a.poi && a.poi.act, 'dine', 'then a seat at a table');
+  a.x = a.poi.x; a.y = a.poi.y; a.path = []; a.until = Date.now() + 60_000;
+  const st = o.stateOf(a);
+  assert.equal(st.pose, 'sit');
+  assert.ok(['eat', 'chat', 'sip', 'laugh', 'scroll'].includes(st.act), st.act);
+  // lunch is over: they take the lift down, full
+  o.update([], { moved: new Map(idle.map((s) => [s.key, { from: 3, to: 2 }])) });
+  assert.ok(a.leaving && a.viaLift);
+  // and downstairs the lift says where they went / came from
+  const down = load(true, clockAt(12.1)); down.floor = 1; down.plan = down.buildPlan(0); down.first = false;
+  down.update([idle[0]]);
+  down.update([], { moved: new Map([[idle[0].key, { from: 1, to: 3 }]]) });
+  assert.equal(down.people.get(idle[0].key).event.text, '吃飯去 🍱');
+  const back = load(true, clockAt(12.5)); back.floor = 2; back.plan = back.buildPlan(0); back.first = false;
+  back.update([idle[0]], { moved: new Map([[idle[0].key, { from: 3, to: 2 }]]) });
+  assert.equal(back.people.get(idle[0].key).event.text, '吃飽了 😋');
+});
+
 test('upstairs: no desk of yours or queue, a gym, a library, a lift instead of the street door; everything reachable', () => {
   const o = loadFloor(2);
   const p = o.plan;

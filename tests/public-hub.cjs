@@ -316,6 +316,15 @@ test('public view: a click shows what your page shows over their head, made safe
   assert.equal(safeText('fix the thing '.repeat(10)).length, 60, 'short');
 });
 
+test('public world: the canteen (3F) goes out too, filtered like the other floors', () => {
+  const w = publicWorld({ at: 1, floors: { 1: { people: [] }, 3: { people: [{ key: 'claude:x', x: 3, y: 4, event: { text: '拿餐囉 🍱', at: 1 } }], dealerHome: true } } }, 'salt', []);
+  assert.ok(w.floors[3], '3F is sent');
+  assert.equal(w.floors[3].people.length, 1);
+  assert.equal(w.floors[3].people[0].event.text, '拿餐囉 🍱', 'an office line, shown as it is');
+  assert.equal(w.floors[3].dealerHome, true);
+  assert.equal(w.floors[4], undefined, 'no floor that does not exist');
+});
+
 test('public world: an older page that does not say whether it is after hours still gets the lights by this clock', () => {
   const at = (h) => { const d = new Date(); d.setHours(h, 0, 0, 0); return d.getTime(); };
   const old = { at: 1, floors: { 1: { people: [] } } };
