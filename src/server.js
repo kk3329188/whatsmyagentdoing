@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const { guessFromPrompts } = require('./lang');
+const { publicSay } = require('./public-say');
 const path = require('path');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -332,8 +333,11 @@ function publicWorld(world, salt, privateWords = [], now = Date.now()) {
     for (const [k, x] of Object.entries(v)) {
       if (WORLD_DROP.has(k) || !/^[A-Za-z0-9_$]{1,32}$/.test(k)) continue;
       if (k === 'event' && x && typeof x === 'object') {
+        // The office's own lines as they are (src/public-say.js); one that may
+        // carry a name or a message shows its stand-in, else a stock line.
         const zone = typeof x.zone === 'string' && WORLD_SAY[x.zone] ? x.zone : 'held';
-        out.event = { at: Number.isFinite(x.at) ? x.at : 0, zone, text: WORLD_SAY[zone], ...(Number.isFinite(x.ttl) ? { ttl: x.ttl } : {}) };
+        const text = publicSay(x.text) ? x.text : publicSay(x.pub) ? x.pub : WORLD_SAY[zone];
+        out.event = { at: Number.isFinite(x.at) ? x.at : 0, zone, text, ...(Number.isFinite(x.ttl) ? { ttl: x.ttl } : {}) };
         continue;
       }
       const e = walk(x, d + 1);

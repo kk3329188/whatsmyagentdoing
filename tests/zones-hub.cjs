@@ -1891,3 +1891,82 @@ test('the lunchtime nap, 12:30 to 13:30: the main lights go off (people stay, un
     if (nap) assert.ok(o.people.get('claude:idle'), 'nobody is sent home for the nap');
   }
 });
+
+test('public replay: a meeting talks the same on the viewer (the office\'s lines, not a stock "開工！"), the topic stays hidden', () => {
+  const { publicWorld } = require('../src/server');
+  const host = load(true), view = load(true);
+  host.label = (s) => s.title || s.key;
+  const who = settle(host, [at('done', { n: 1, title: 'acme-billing fix' }), at('done', { n: 2 })]);
+  const a = who('claude:done1'), b = who('claude:done2');
+  assert.ok(host.meet(a, b, 'refund rounding'));
+  for (const p of [a, b]) { p.x = p.meeting.seat.x; p.y = p.meeting.seat.y; p.path = []; }
+  const ship = () => {
+    const w = publicWorld(JSON.parse(JSON.stringify({ at: Date.now(), floors: { 1: { ...host.worldState(), wall: Date.now() } } })), 'salt', ['acme-billing']).floors[1];
+    view.applyWorld(w, new Map(), { hostNow: Date.now() });
+    return [...view.people.values()].map((p) => p.event && p.event.text).filter(Boolean);
+  };
+  const real = Date.now;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    host.stepMeeting(a, clock);              // the first turn: the topic
+    let said = ship();
+    assert.ok(said.includes('來討論一下'), `the topic's stand-in: ${said}`);
+    assert.ok(!JSON.stringify(said).includes('refund'), 'the topic never leaves');
+    clock += 3700; host.stepMeeting(a, clock); // the next turn: one of the office's lines
+    said = ship();
+    const line = host.people.get(a.meeting.speaker).event.text;
+    assert.ok(said.includes(line), `"${line}" reaches the viewer as it is: ${said}`);
+    assert.ok(!said.includes('開工！'));
+  } finally { Date.now = real; }
+});
+
+test('public replay at the casino: the roulette wheel turns on the viewer too, and the winner cheers there', () => {
+  const host = casinoAt(15), view = casinoAt(15);
+  settle(host, [at('done', { n: 1 })]);
+  const p = host.people.get('claude:done1'), q = host.rouletteSpots()[0];
+  if (p.poi && p.poi.taken === p.key) p.poi.taken = null;
+  p.mode = 'wander'; p.poi = q; p.x = q.x; p.y = q.y; p.path = []; p.until = Infinity; q.taken = p.key;
+  const real = Date.now, rnd = Math.random;
+  let clock = real();
+  Date.now = () => clock;
+  try {
+    host.stepRoulette();
+    host.rouletteBet(p.key, 'red', 20);
+    for (let i = 0; i < 600 && host.roulette.stage !== 'spin'; i++) { clock += 100; host.stepRoulette(); }
+    assert.equal(host.roulette.stage, 'spin');
+    view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: clock })), new Map(), { hostNow: clock });
+    assert.equal(view.roulette.stage, 'spin', 'the viewer\'s wheel spins');
+    assert.equal(view.roulette.number, host.roulette.number, 'to the same number');
+    assert.equal(JSON.stringify(view.roulette.bets), JSON.stringify(host.roulette.bets), 'the same chips on the felt');
+    // the ball drops: a win on red (made one) cheers on both
+    host.roulette.number = 1; // 1 is red
+    for (let i = 0; i < 200 && host.roulette.stage !== 'show'; i++) { clock += 100; host.stepRoulette(); }
+    assert.equal(host.roulette.stage, 'show');
+    view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: clock })), new Map(), { hostNow: clock });
+    view.stepRemote(0.016);
+    const vp = view.people.get(p.key);
+    assert.equal(host.stateOf(p).act, 'cheer');
+    assert.equal(view.stateOf(vp).act, 'cheer', 'the winner cheers on the viewer too');
+  } finally { Date.now = real; Math.random = rnd; }
+});
+
+test('public replay: the desk sign count, the "+N gone home" corner and the little moves at a desk match your page', () => {
+  const host = load(true), view = load(true);
+  settle(host, [at('waiting', { n: 1 }), at('waiting', { n: 2 }), at('tool', { n: 3 })]);
+  assert.equal(host.queueCount, 2);
+  host.offDuty = 3;
+  view.t = 1000; // the viewer's page has been open for a second; yours for a while
+  const acts = [];
+  for (const t of [40_000, 47_000, 55_000, 63_000, 71_000]) {
+    host.t = t;
+    view.applyWorld(JSON.parse(JSON.stringify({ ...host.worldState(), wall: Date.now() })), new Map(), { hostNow: Date.now() });
+    const hp = host.people.get('claude:tool3'), vp = view.people.get('claude:tool3');
+    vp.s = { ...hp.s };
+    acts.push([host.stateOf(hp).act, view.stateOf(vp).act]);
+    view.t += 8000;
+  }
+  assert.equal(view.queueCount, 2);
+  assert.equal(view.offDuty, 3);
+  for (const [h, v] of acts) assert.equal(v, h, `the same move at the desk: ${JSON.stringify(acts)}`);
+});

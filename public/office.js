@@ -1769,7 +1769,7 @@
       p.visit = { mate: mate.key, x: spot.x, y: spot.y, text, until: Infinity };
       mate.chatWith = p.key;
       if (mate.mode === 'wander' && mate.until !== Infinity) mate.until = Math.max(mate.until, Date.now() + 14_000);
-      p.event = { text: `去找 ${this.label(mate.s)}`.slice(0, 24), at: Date.now(), zone: 'held' };
+      p.event = { text: `去找 ${this.label(mate.s)}`.slice(0, 24), pub: '去找同事', at: Date.now(), zone: 'held' };
       this.goTo(p, spot);
     }
 
@@ -1793,7 +1793,7 @@
         who.meeting = { seat, with: other.key, host: who === p, text: String(text || '').replace(/\s+/g, ' ').slice(0, 40), start: 0, until: Infinity, speaker: null, turn: 0 };
         this.goTo(who, seat);
       });
-      p.event = { text: `找 ${this.label(mate.s)} 開會`.slice(0, 24), at: Date.now(), zone: 'held' };
+      p.event = { text: `找 ${this.label(mate.s)} 開會`.slice(0, 24), pub: '找同事開會', at: Date.now(), zone: 'held' };
       mate.event = { text: '好，會議室見', at: Date.now(), zone: 'held' };
       return true;
     }
@@ -1818,7 +1818,7 @@
         const lines = ['我覺得可以', '那這樣改呢？', '好，就這麼辦', '我這邊來處理', '有道理', '細節我再補給你'];
         const speaker = m.turn % 2 === 0 ? p : other;
         const say = m.turn === 0 ? (m.text ? `「${m.text.length > 20 ? m.text.slice(0, 19) + '…' : m.text}」` : '來討論一下') : lines[(m.turn + p.h) % lines.length];
-        speaker.event = { text: say, at: wall, zone: 'work', ttl: 3.4 };
+        speaker.event = { text: say, pub: '來討論一下', at: wall, zone: 'work', ttl: 3.4 };
         m.speaker = other.meeting.speaker = speaker.key;
         m.turn++;
         m.next = wall + 3600;
@@ -2029,12 +2029,16 @@
 
     traits(p) { return p.traits || (p.traits = traitsOf(p.key)); }
 
+    // The clock the little moves (a stretch, a sip, a chat on the sofa) follow:
+    // a replaying page goes by the host's, so both show the same one.
+    poseT() { return (this.t || 0) + (this.remote ? this.tOff || 0 : 0); }
+
     // What someone sitting off duty is doing right now. Someone else sitting
     // close by makes a chat (or a laugh) likelier; a long-idle one dozes off
     // on the sofa now and then.
     seatAct(p, q) {
       const list = SEAT_ACTS[q.act];
-      const t = (this.t || 0) / 1000 + p.phase * 13;
+      const t = this.poseT() / 1000 + p.phase * 13;
       const span = 7 + (p.h % 4);
       let act = list[Math.floor(t / span + p.h) % list.length];
       // Every other turn, something they like doing.
@@ -2092,7 +2096,7 @@
       const lines = ['嚇我一跳！', '嗨～', doing ? `在${doing}啦` : '在休息啦', '幹嘛～', '別戳了啦'];
       const text = n >= 4 ? '別再戳了 😤' : lines[(p.h + n) % lines.length];
       p.poke = { act: n >= 4 ? 'facepalm' : ['dazed', 'wave', 'cheer'][(p.h + n) % 3], until: now + 2200 };
-      p.event = { text, at: now, zone: 'held' };
+      p.event = { text, pub: '在忙啦', at: now, zone: 'held' };
     }
 
     // A merged PR: confetti bursting over them, in screen pixels at (cx, cy).
@@ -2169,7 +2173,7 @@
         const line = String((su.lineOf ? su.lineOf(p.s) : null) || p.s.status || '');
         su.lines.push({ key: p.key, line });
         su.speaker = p.key;
-        p.event = { text: line.length > 30 ? line.slice(0, 29) + '…' : line, at: wall, zone: 'work', ttl: STANDUP_TURN_MS / 1000 };
+        p.event = { text: line.length > 30 ? line.slice(0, 29) + '…' : line, pub: '報告進度', at: wall, zone: 'work', ttl: STANDUP_TURN_MS / 1000 };
         su.next = wall + STANDUP_TURN_MS;
         return;
       }
@@ -2282,7 +2286,7 @@
         stage: 'in', until: 0, spot: at, desk, text: masked ? '有事來找' : v.text || '有事來找',
         s: { key, agent: 'claude', status: 'idle', title: masked ? '訪客' : `訪客・${v.from}`, level: 2, visitor: true },
       };
-      body.event = { text: masked ? '你好～' : `你好，我是${v.from}`.slice(0, 18), at: Date.now(), zone: 'held' };
+      body.event = { text: masked ? '你好～' : `你好，我是${v.from}`.slice(0, 18), pub: '你好～', at: Date.now(), zone: 'held' };
       this.visitors.set(key, body);
     }
 
@@ -2309,7 +2313,7 @@
       if (s.stage === 'go') {
         s.stage = 'bye';
         s.until = wall + 3500;
-        p.event = { text: `慢走～已回覆${s.to ? ` ${s.to}` : ''}`.slice(0, 24), at: wall, zone: 'done' };
+        p.event = { text: `慢走～已回覆${s.to ? ` ${s.to}` : ''}`.slice(0, 24), pub: '慢走～', at: wall, zone: 'done' };
       } else if (s.stage === 'bye' && wall > s.until) {
         p.seeOff = null;
         if (p.desk) this.goTo(p, p.desk.seat);
@@ -2330,7 +2334,7 @@
         if (p.stage === 'in') {
           p.stage = 'talk';
           p.until = now + 9000;
-          p.event = { text: `「${p.text.length > 22 ? p.text.slice(0, 21) + '…' : p.text}」`, at: now, zone: 'work', ttl: 6 };
+          p.event = { text: `「${p.text.length > 22 ? p.text.slice(0, 21) + '…' : p.text}」`, pub: '我有個問題 🙋', at: now, zone: 'work', ttl: 6 };
           p.replyAt = now + 2500;
         } else if (p.stage === 'talk') {
           if (p.replyAt && now > p.replyAt) {
@@ -2676,6 +2680,28 @@
         if (w.folded && w.folded[i]) folded.add(k);
       });
       return { stage: w.stage, at: (w.at || 0) - skew, pot: w.pot || 0, board: Array.isArray(w.board) ? w.board : [], seats: w.seats, hands, folded, order: Object.keys(hands) };
+    }
+
+    // The roulette round for a replaying page: no chips or wallets, just what
+    // shows (the wheel, the ball, the bets on the felt, who cheers).
+    rouletteWire() {
+      const r = this.roulette;
+      if (!r) return null;
+      return {
+        stage: r.stage, at: r.at, number: r.number, history: [...(r.history || [])],
+        bets: (r.bets || []).map((x) => ({ key: x.key, on: x.on, amount: x.amount })),
+        won: Object.keys(r.pay || {}).filter((k) => r.pay[k] > 0),
+      };
+    }
+
+    rouletteUnwire(w, skew = 0) {
+      if (!w || typeof w.stage !== 'string') return null;
+      const bets = (Array.isArray(w.bets) ? w.bets : []).filter((x) => x && x.key);
+      return {
+        stage: w.stage, at: (w.at || 0) - skew, number: Number.isInteger(w.number) ? w.number : null,
+        history: Array.isArray(w.history) ? w.history : [], bets, players: [],
+        pay: Object.fromEntries((Array.isArray(w.won) ? w.won : []).filter(Boolean).map((k) => [k, 1])),
+      };
     }
 
     // Everyone's pretend chips at the casino (poker and roulette share them):
@@ -3065,7 +3091,7 @@
       p.x = spot.x; p.y = spot.y;
       p.path = [];
       p.landed = Date.now();
-      p.event = { text: mate ? `有話跟 ${this.label(mate.s)} 說`.slice(0, 24) : p.mode === 'work' ? '回座位…' : '呼～', at: Date.now(), zone: 'held' };
+      p.event = { text: mate ? `有話跟 ${this.label(mate.s)} 說`.slice(0, 24) : p.mode === 'work' ? '回座位…' : '呼～', pub: '有話跟同事說', at: Date.now(), zone: 'held' };
       if (mate) this.onRelay(p.s, mate.s);
       if (target) { p.event = { text: target.hint, at: Date.now(), zone: 'held' }; this.onCommand(target.id, p.s); }
       this.canvas.style.cursor = 'default';
@@ -4557,7 +4583,7 @@
         const face = p.desk.side === 'n' ? 'front' : 'back';
         // Not really working, but the boss is in: look busy.
         if (this.bossIn && this.plan.zones && zoneOf(s) !== 'work') {
-          const t = (this.t || 0) / 1000;
+          const t = this.poseT() / 1000;
           return { pose: 'sit', face, act: ['typefast', 'deskread', 'typefast', 'write', 'type'][Math.floor((t + p.phase * 3) / 3) % 5], sitZ: 0.34 };
         }
         if (s.status === 'waiting' || s.status === 'error') return { pose: 'stand', face, act: 'wave', sitZ: 0 };
@@ -4566,7 +4592,7 @@
         if (p.react && Date.now() < p.react.until) return { pose: 'stand', face, act: p.react.act, sitZ: 0 };
         if (!this.plan.zones) return { pose: 'sit', face, act: s.status === 'tool' || s.status === 'typing' ? 'type' : 'think', sitZ: 0.34 };
         const kind = workKind(s);
-        const t = this.t / 1000;
+        const t = this.poseT() / 1000;
         let act;
         if (kind === 'think') act = ['think', 'chin', 'scratch', 'lookup'][Math.floor((t + p.phase * 3) / 4) % 4];
         else if ((kind === 'shell' || kind === 'agent') && longRun(s)) act = 'leanback';
@@ -5576,12 +5602,14 @@
         t: this.t, wall: Date.now(), n: this.builtFor == null ? this.nWorking || 0 : this.builtFor, secKey: this.secKey || null,
         people: [...this.people.values()].map(person), me: this.me ? person(this.me) : null,
         visitors: [...(this.visitors || new Map()).values()].map(person),
-        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1), poker: this.pokerWire(),
+        cat: enc(this.cat, 1), cat2: enc(this.cat2, 1), slot: enc(this.slot, 1), standup: enc(this.standup, 1), poker: this.pokerWire(), roulette: this.rouletteWire(),
         liftOpen: this.liftOpen || 0, confetti: enc(this.confetti, 1), alarmUntil: this.alarmUntil || 0, bossIn: !!this.bossIn,
         lunchUntil: this.lunchUntil || 0, cakeUntil: this.cakeUntil || 0, jamUntil: this.jamUntil || 0,
         // after hours by the host's clock (a viewer may be somewhere else)
         closedNow: !!this.closedNow,
         napNow: !!this.napNow,
+        // your desk sign (how many wait on you) and the "+N gone home" corner
+        queueCount: this.queueCount || 0, offDuty: this.offDuty || 0,
       };
     }
 
@@ -5698,6 +5726,16 @@
       this.slotSpinHost = w.slot ? w.slot.spinAt : null;
       this.slot = slot;
       this.poker = this.pokerUnwire(w.poker, skew);
+      this.roulette = this.rouletteUnwire(w.roulette, skew);
+      this.queueCount = w.queueCount || 0;
+      this.offDuty = w.offDuty || 0;
+      // The host's page clock against ours: the same stretch, the same fidget
+      // (stateOf picks them by it). Moved only when it drifts, so a late
+      // update does not flick someone from one move to the next and back.
+      if (Number.isFinite(w.t) && w.t > 0) {
+        const off = w.t + age * 1000 - this.t;
+        if (this.tOff == null || Math.abs(off - this.tOff) > 400) this.tOff = off;
+      }
       for (const k of ['cat', 'cat2', 'standup', 'confetti']) this[k] = fix(dec(w[k]));
       for (const k of ['liftOpen', 'alarmUntil', 'lunchUntil', 'cakeUntil', 'jamUntil']) this[k] = w[k] ? w[k] - skew : 0;
       this.bossIn = !!w.bossIn;

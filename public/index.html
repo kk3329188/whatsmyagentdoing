@@ -1387,7 +1387,7 @@ function cardHtml(c) {
 }
 setInterval(() => {
   const me = office && office.me, g = office && office.poker;
-  const on = !!(me && me.atPoker);
+  const on = !!(me && me.atPoker && !office.remote); // your controls: not on a replay
   if (pokerHud.hidden !== !on) pokerHud.hidden = !on;
   if (!on) { pokerHtml = ''; return; }
   const mine = g && g.hands && g.hands.me, board = (g && g.board) || [];
@@ -1420,7 +1420,7 @@ const rouletteHud = document.getElementById('rouletteHud');
 let rouletteHtml = '', rouletteChip = 20;
 setInterval(() => {
   const me = office && office.me, r = office && office.roulette;
-  const on = !!(me && me.atRoulette && r);
+  const on = !!(me && me.atRoulette && r && !office.remote);
   if (rouletteHud.hidden !== !on) rouletteHud.hidden = !on;
   if (!on) { rouletteHtml = ''; return; }
   const R = OfficeRoulette, ball = (n, big) => `<span class="ball ${R.colourOf(n)}${big ? ' big' : ''}">${n}</span>`;

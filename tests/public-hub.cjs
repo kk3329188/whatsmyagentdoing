@@ -327,3 +327,42 @@ test('public world: the decor your page shows reaches viewers (a known one; junk
   assert.equal(w('<img src=x>'), undefined);
   assert.equal(w('acme-billing'), undefined, 'never a private word');
 });
+
+test('public world: the office\'s own lines show as they are (a meeting, the casino); a name or a message never does', () => {
+  const say = (event) => publicWorld({ at: 1, floors: { 1: { closedNow: false, people: [{ key: 'claude:aaaa', event: { at: 5, zone: 'work', ...event } }] } } }, 'salt', ['acme-billing'])
+    .floors[1].people[0].event.text;
+  assert.equal(say({ text: '那這樣改呢？', pub: '來討論一下' }), '那這樣改呢？', 'a meeting line');
+  assert.equal(say({ text: '好，會議室見' }), '好，會議室見');
+  assert.equal(say({ text: '「Fix refund rounding」', pub: '來討論一下' }), '來討論一下', 'the topic of the message: its stand-in');
+  assert.equal(say({ text: '找 acme-billing 開會', pub: '找同事開會' }), '找同事開會', 'a name: its stand-in');
+  assert.equal(say({ text: 'secret prompt' }), '開工！', 'no stand-in: the stock line for the zone');
+  assert.equal(say({ text: 'secret prompt', pub: 'secret prompt' }), '開工！', 'a stand-in that is not one of the office\'s lines is not shown either');
+  assert.equal(say({ text: '中了！17 紅 +20 🎉' }), '中了！17 紅 +20 🎉');
+  assert.equal(say({ text: '🏆 同花 +120' }), '🏆 同花 +120');
+  assert.equal(say({ text: '押紅 20' }), '押紅 20');
+  assert.equal(say({ text: '🏆 acme-billing +120' }), '開工！');
+  assert.equal(say({ text: '升等！Lv3 資深' }), '升等！Lv3 資深');
+});
+
+test('public world: every line office.js puts in a bubble is one the public filter knows', () => {
+  const { publicSay } = require('../src/public-say');
+  const src = fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8');
+  const lit = (s) => [...s.matchAll(/'([^'\\]*)'/g)].map((m) => m[1]).filter((x) => /[^\x00-\x7f]/.test(x));
+  const lines = new Set();
+  // the tables of lines, and every literal in a statement that makes a bubble
+  for (const name of ['EVENT_TEXT', 'REACT', 'HELD_TEXT', 'BOSS_IN', 'BOSS_OUT']) {
+    const at = src.indexOf(`const ${name} = `);
+    const end = src.indexOf(name === 'EVENT_TEXT' || name === 'REACT' ? '\n  };' : ';', at);
+    for (const x of lit(src.slice(at, end))) lines.add(x);
+  }
+  for (const row of src.split('\n')) {
+    if (/\b(event = \{|\.say\(|say\(|const lines = \[|go = \{|hint: |steps = \[|\{ x: q\.x|act: 'waterplant'|act: 'unpack'|act: 'peek'|act: 'fridge')/.test(row)) {
+      for (const x of lit(row)) lines.add(x);
+    }
+  }
+  // the pieces of a line built round a name or a number are not lines
+  const parts = new Set(['…', '紅', '黑', '單', '雙', '小 1-18', '大 19-36', '大家都棄牌了', '休息啦', ' 紅', ' 黑']);
+  const missing = [...lines].filter((x) => !parts.has(x) && !publicSay(x));
+  assert.deepEqual(missing, [], 'add these to src/public-say.js (or give the bubble a pub stand-in)');
+  assert.ok(lines.size > 60, `found ${lines.size} lines`);
+});

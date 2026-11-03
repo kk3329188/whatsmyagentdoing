@@ -132,5 +132,8 @@ v0.17（office-v2）：1F 重新規劃——左後玻璃會議室（`MW×MD` 6×
 上桌打牌（casino，1F）：把人拖到撲克桌（`pokerSeatAt()`：桌子四周 1 m、前方放寬到 1.4 m，因為拎著時腳在游標前方；拖到上方時頭上出「放開＝坐下來打牌」，`dropPoker`）放開＝`playPoker()` 坐最近的空位（都滿就請最近那位起來，你的位子不動），玩約 3 分鐘：工作中的人走 `p.run`（trip、`act: 'poker'`，坐姿動作照 `seatAct`，3D 面向用 `run.poi.yaw`），玩完回座；`pokerSitters()` 也算 `p.run.poi`。午休與下班（`pokerBreak()`＝casino 1F 且 `napNow || closedNow`）：閒置／剛做完的人在 `wander()` 先 `toPoker()` 去空位（最多 `POKER_CREW` = 4 人，頭上「午休來一局／下班打一局」），休息時間內一直坐著（每 60 秒續）；下班時 `update()` 讓最新的 4 個閒置／剛做完留下打牌（`nightCrew`），其他人照舊回家。
 外網跟主機同一個裝潢：主機頁 `sendWorld()` 把 `decor`（2D 頁送 default）放在 floor 1 的 world 裡（短英數字串，公開 server 的過濾照原樣放行，不必重啟公開 server）；觀眾頁 `takeWorld()` 讀到跟自己不同就換裝潢重建（`decorSwitch` 期間不套 world，不存進觀眾的 localStorage）。裝潢不同時平面圖也不同（casino 的遊戲區），所以必須一致才對得上 world 裡的座位。主機頁要重新整理才會開始送。
 外網看到同一手牌：`worldState()` 帶 `poker: pokerWire()`（依座位排的陣列：seats／hands／folded／board／stage／pot／at，因為 world 不能有 Set、key 不能含冒號），觀眾 `applyWorld()` 用 `pokerUnwire()` 還原成 `this.poker`；`stepRemote()` 也跑 `stepDealer()`，所以外網的查克照樣發牌喊街，不會在午休因為「沒牌局」而趴著睡。
+
+外網的泡泡：過濾器（`src/server.js` publicWorld）讓辦公室自己寫的台詞照原樣通過（白名單在 `src/public-say.js`：固定句＋牌局／輪盤／升等的數字樣板），開會、閒聊、貼佈告欄、牌局喊話都和你的頁面一樣；會帶到名字或訊息的泡泡（「找 X 開會」、開會主題、訪客的話、站會內容、戳人時說在做什麼）由 office.js 附一句 `pub` 中性替代（「找同事開會」「來討論一下」…），其他不認得的一律換成按 zone 的固定句。`tests/public-hub.cjs` 會掃 office.js 所有泡泡台詞，新增台詞沒進白名單就紅。
+外網同步的還有：輪盤（`rouletteWire()`／`rouletteUnwire()`：stage／at／number／history／桌上籌碼、`won` 誰中了）、你桌上「N 個在等你」（queueCount）、「+N 下班」（offDuty）；坐著的小動作（伸懶腰、喝水、想事情）照主頁的頁面時鐘選（`poseT()`，觀眾端用 `w.t` 算出的 `tOff`，偏差超過 400ms 才調整，免得來回跳）。你自己的撲克／輪盤操作面板在外網重播時不顯示。
 watcher：被判出 24 小時範圍而丟掉的 log 記在 `stale`（檔案當時的寫入時間），沒再寫入前不重開。原本「檔案近期被動過、但最後事件早於範圍」的 log 每秒都被整份重讀再丟掉（實測 199 個、每輪 1.3 秒，事件迴圈滿載，頁面要 30 秒以上才載完），修後每輪約 20 ms。
 
