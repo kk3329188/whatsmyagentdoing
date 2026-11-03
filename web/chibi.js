@@ -8,6 +8,7 @@
 // The figure stands with its feet at the origin facing +z; sitting puts the
 // seat of the trousers at the origin (the caller lifts it onto the chair).
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // Big head (half their height), a short chunky body, short thick limbs.
 const H = { hip: 0.165, thigh: 0.085, shin: 0.08, torso: 0.2, head: 0.25, upper: 0.095, fore: 0.085 };
@@ -91,6 +92,27 @@ function drawFace(c, expr, blink, mouth, look, freckles) {
 }
 
 // ---- building one ----------------------------------------------------------
+
+// Hair is many small pieces (and an outline for each): merged by material
+// into a few meshes, so a head of hair costs two or three draws.
+function bakeHair(g) {
+  g.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const by = new Map(), drop = [];
+  g.traverse((m) => {
+    if (!m.isMesh) return;
+    let list = by.get(m.material);
+    if (!list) by.set(m.material, (list = []));
+    list.push(m.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld)));
+    drop.push(m);
+  });
+  g.clear();
+  for (const [mat, geos] of by) {
+    const m = new THREE.Mesh(mergeGeometries(geos), mat);
+    m.castShadow = mat !== OUTLINE;
+    g.add(m);
+  }
+}
 
 const hexOf = (c) => (typeof c === 'string' ? new THREE.Color(c) : new THREE.Color(c || 0x888888));
 
@@ -255,81 +277,131 @@ export function makeChibi(look = {}) {
   face.position.copy(skull.position);
   face.renderOrder = 2;
   head.add(face);
-  // hair: thirteen styles
+  // hair: thirteen styles, with volume — a crown that stands off the skull,
+  // locks along the hairline, hair over the temples and down the back, a
+  // shine on top — all merged into a few meshes at the end (bakeHair).
   const style = (look.hairStyle ?? 0) % HAIR_STYLES;
   const C = H.head * 0.95; // skull centre above the neck
+  const hairG = new THREE.Group();
+  head.add(hairG);
+  const shine = toon(hexOf(look.hair || '#3a2a20').lerp(new THREE.Color(0xffffff), 0.4));
   const add = (geo, x, y, z, { m = hair, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0, ol = 1.04 } = {}) => {
     const p = part(geo, m, ol);
     p.position.set(x, y, z); p.scale.set(sx, sy, sz); p.rotation.set(rx, ry, rz);
-    head.add(p);
+    hairG.add(p);
     return p;
   };
   const sphere = (r, w = 14, h = 10) => new THREE.SphereGeometry(r, w, h);
-  // the usual top: a cap swept up off the forehead, and a fringe
-  const cap = (size = 1.06, depth = 0.5, tilt = -0.55) => add(new THREE.SphereGeometry(H.head * size, 22, 14, 0, Math.PI * 2, 0, Math.PI * depth), 0, H.head * 0.98, 0, { rx: tilt, ol: 1.03 });
-  const bangs = () => add(new THREE.SphereGeometry(H.head * 1.02, 16, 8, Math.PI * 0.2, Math.PI * 0.6, Math.PI * 0.22, Math.PI * 0.14), 0, H.head * 0.98, 0, { ol: 0 });
-  const backHair = (len) => add(new THREE.SphereGeometry(H.head * 1.08, 18, 12, Math.PI * 0.9, Math.PI * 1.2, Math.PI * 0.35, Math.PI * len), 0, C, 0, { sz: 0.95, ol: 1.03 });
+  // A point on the skull: e up from its middle, a round from the front (+x to
+  // the left of the face), r times its radius.
+  const R = H.head, mid = new THREE.Vector3(0, C, 0);
+  const at = (e, a, r = 1.04) => new THREE.Vector3(Math.sin(a) * Math.cos(e) * R * 1.04 * r, C + Math.sin(e) * R * 0.95 * r, Math.cos(a) * Math.cos(e) * R * 0.96 * r);
+  // A lock of hair from one point to another: a long rounded blob lying on
+  // the head (flat side against it), w wide and d thick.
+  const unit = sphere(0.5, 10, 8), basis = new THREE.Matrix4();
+  const lock = (from, to, w = 0.06, d = 0.04, { m = hair, ol = 1.06, lift = 0.008 } = {}) => {
+    const axis = to.clone().sub(from), len = axis.length();
+    axis.normalize();
+    const c = from.clone().add(to).multiplyScalar(0.5);
+    const out = c.clone().sub(mid).normalize();
+    const x = new THREE.Vector3().crossVectors(axis, out).normalize();
+    const z = new THREE.Vector3().crossVectors(x, axis).normalize();
+    const p = part(unit, m, ol);
+    p.quaternion.setFromRotationMatrix(basis.makeBasis(x, axis, z));
+    p.position.copy(c.addScaledVector(out, lift));
+    p.scale.set(w, len + w * 0.3, d);
+    hairG.add(p);
+    return p;
+  };
+  // the crown: a cap standing off the skull, swept up off the forehead
+  const hairCrown = (size = 1.1, depth = 0.52, tilt = -0.45) => add(new THREE.SphereGeometry(R * size, 22, 14, 0, Math.PI * 2, 0, Math.PI * depth), 0, C, 0, { sx: 1.04, sy: 0.95, sz: 0.96, rx: tilt, ol: 1.03 });
+  // locks along the hairline, hanging toward the brows (never over the eyes)
+  const fringe = (n = 5, spread = 0.75, low = 0.52, w = 0.075, tilt = 0) => {
+    for (let i = 0; i < n; i++) {
+      const a = n === 1 ? 0 : -spread + (2 * spread * i) / (n - 1);
+      const j = Math.sin(i * 12.9898 + style) * 0.04;
+      lock(at(0.92, a * 0.8 + tilt * 0.3, 1.06), at(low + j, a + tilt, 1.07), w, 0.05);
+    }
+  };
+  // over the temples, down to the top of the ears (or lower)
+  const sides = (low = 0.1, w = 0.11) => { for (const sd of [-1, 1]) lock(at(0.7, sd * 1.25, 1.06), at(low, sd * 1.42, 1.08), w, 0.06); };
+  // down the back of the head to the nape (or further, r out from the neck)
+  const back = (n = 5, low = -0.15, r = 1.07, w = 0.13) => {
+    for (let i = 0; i < n; i++) { const a = Math.PI - 0.95 + (1.9 * i) / (n - 1); lock(at(0.62, a, 1.05), at(low, a, r), w, 0.07); }
+  };
+  const gleam = () => lock(at(1.08, -0.8, 1.1), at(0.82, -0.12, 1.11), 0.055, 0.012, { m: shine, ol: 0, lift: 0.014 });
+  const hairTie = (x, y, z) => add(sphere(0.03 * K), x, y, z, { m: toon(0xe0525a) });
+  const short = () => { hairCrown(); fringe(); sides(); back(); gleam(); };
   switch (style) {
-    case 0: cap(); bangs(); break; // short
-    case 1: cap(1.06, 0.62); bangs(); backHair(0.35); break; // bob
-    case 2: cap(); bangs(); add(sphere(0.075 * K), 0, H.head * 2.02, -0.04 * K); break; // bun on top
+    case 0: short(); break;
+    case 1: // bob: a blunt fringe, hair down to the jaw all round
+      hairCrown(1.12, 0.55); fringe(7, 0.85, 0.48, 0.07); sides(-0.55, 0.13); back(6, -0.6, 1.12, 0.14); gleam();
+      break;
+    case 2: short(); add(sphere(0.085 * K), 0, H.head * 2.0, -0.07 * K); hairTie(0, H.head * 1.88, -0.05 * K); break; // bun on top
     case 3: // spikes
-      cap(); bangs();
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        add(new THREE.ConeGeometry(0.05 * K, 0.11 * K, 6), Math.cos(a) * 0.11 * K, H.head * 1.78, (Math.sin(a) * 0.11 - 0.02) * K, { rx: Math.sin(a) * 0.6, rz: -Math.cos(a) * 0.6, ol: 0 });
+      hairCrown(1.06); back(); sides();
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2, r = i % 2 ? 0.09 : 0.13;
+        add(new THREE.ConeGeometry(0.055 * K, 0.13 * K, 6), Math.cos(a) * r * K, H.head * 1.8, (Math.sin(a) * r - 0.02) * K, { rx: Math.sin(a) * 0.7, rz: -Math.cos(a) * 0.7, ol: 1.05 });
       }
+      for (const a of [-0.5, -0.15, 0.2, 0.5]) lock(at(0.9, a * 0.7, 1.06), at(0.6, a, 1.08), 0.06, 0.045);
       break;
-    case 4: cap(); bangs(); add(capsule(0.05 * K, 0.14 * K), 0, H.head * 1.2, -H.head * 1.0, { rx: 0.5 }); break; // ponytail
+    case 4: // ponytail, a side-swept fringe
+      hairCrown(); fringe(4, 0.6, 0.55, 0.08, 0.35); sides(); back(5, -0.1); gleam();
+      lock(at(0.55, Math.PI, 1.08), new THREE.Vector3(0, C - 0.2, -R * 1.45), 0.12, 0.1);
+      hairTie(0, C + 0.12, -R * 1.05);
+      break;
     case 5: // twin tails
-      cap(1.06, 0.55); bangs();
-      for (const s of [-1, 1]) {
-        add(sphere(0.035 * K), s * H.head * 1.0, H.head * 1.38, -H.head * 0.3, { m: toon(0xe0525a) }); // hair ties
-        add(capsule(0.055 * K, 0.2 * K), s * H.head * 1.18, H.head * 0.95, -H.head * 0.3, { rz: s * 0.4, rx: 0.15 });
+      hairCrown(1.1, 0.55); fringe(6, 0.8, 0.5); sides(); back(5, -0.1); gleam();
+      for (const sd of [-1, 1]) {
+        lock(at(0.45, sd * 2.0, 1.08), new THREE.Vector3(sd * R * 1.35, C - 0.26, -R * 0.35), 0.12, 0.1);
+        hairTie(sd * R * 1.02, C + 0.07, -R * 0.42);
       }
       break;
-    case 6: // long and straight, down the back
-      cap(1.06, 0.6); bangs(); backHair(0.45);
-      add(capsule(0.1, 0.13), 0, H.head * 0.45, -H.head * 0.78, { sx: 1.75, sz: 0.42 });
+    case 6: // long and straight, down the back and over the shoulders
+      hairCrown(1.12, 0.55); fringe(6, 0.8, 0.5); sides(-0.9, 0.13); back(7, -1.15, 1.2, 0.15); gleam();
       break;
     case 7: // curly: a cloud of curls
-      cap(1.04, 0.5, -0.4);
-      for (let i = 0; i < 16; i++) {
-        const y = 1 - (i / 15) * 0.95, r = Math.sqrt(1 - y * y), a = i * 2.39996;
+      hairCrown(1.04, 0.5, -0.4);
+      for (let i = 0; i < 22; i++) {
+        const y = 1 - (i / 21) * 1.0, r = Math.sqrt(1 - y * y), a = i * 2.39996;
         const z = Math.sin(a) * r;
-        if (z > 0.55 && y < 0.55) continue; // keep the face clear
-        add(sphere(0.07 * K, 10, 8), Math.cos(a) * r * H.head * 1.02, C + y * H.head * 1.0, z * H.head * 1.0, { ol: 1.05 });
+        if (z > 0.5 && y < 0.5) continue; // keep the face clear
+        add(sphere(0.085 * K, 10, 8), Math.cos(a) * r * H.head * 1.06, C + y * H.head * 1.0, z * H.head * 1.02, { ol: 1.05 });
       }
       break;
-    case 8: // side part, a swoop over one eye
-      cap(); bangs();
-      add(sphere(0.1 * K), H.head * 0.3, H.head * 1.72, H.head * 0.42, { sx: 1.7, sy: 0.6, sz: 1.1, rz: -0.35, rx: -0.3 });
+    case 8: // side part: a big swoop over to one side
+      hairCrown(); sides(); back(); gleam();
+      lock(at(0.98, 0.45, 1.07), at(0.55, -0.75, 1.1), 0.16, 0.07);
+      lock(at(0.9, 0.7, 1.06), at(0.6, 0.95, 1.08), 0.08, 0.05);
       break;
     case 9: // space buns
-      cap(); bangs();
-      for (const s of [-1, 1]) add(sphere(0.07 * K), s * H.head * 0.62, H.head * 1.8, -0.02, {});
+      short();
+      for (const sd of [-1, 1]) { add(sphere(0.08 * K), sd * H.head * 0.66, H.head * 1.82, -0.02, {}); hairTie(sd * H.head * 0.56, H.head * 1.7, -0.01); }
       break;
-    case 10: // mohawk
-      cap(1.025, 0.5, -0.3);
-      for (let i = 0; i < 5; i++) {
-        const a = -0.85 + i * 0.42;
-        add(new THREE.ConeGeometry(0.07 * K, 0.2 * K, 5), 0, C + Math.cos(a) * H.head * 1.1, -Math.sin(a) * H.head * 1.1, { rx: -a, sz: 0.45, ol: 0 });
+    case 10: // mohawk: the sides shaved close
+      hairCrown(1.03, 0.5, -0.3);
+      for (let i = 0; i < 6; i++) {
+        const a = -0.9 + i * 0.36;
+        add(new THREE.ConeGeometry(0.075 * K, 0.22 * K, 5), 0, C + Math.cos(a) * H.head * 1.1, -Math.sin(a) * H.head * 1.1, { rx: -a, sz: 0.45, ol: 1.05 });
       }
       break;
-    case 11: { // knitted beanie with a bobble
+    case 11: { // knitted beanie with a bobble, hair showing under it
       const knit = toon(hexOf(look.shirt || '#c96442').offsetHSL(0.45, -0.1, 0.05));
-      bangs();
-      add(new THREE.SphereGeometry(H.head * 1.09, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), 0, H.head * 1.02, 0, { m: knit, rx: -0.3, ol: 1.03 });
-      add(new THREE.TorusGeometry(H.head * 1.06, 0.03 * K, 8, 28), 0, H.head * 1.02, 0, { m: knit, rx: Math.PI / 2 - 0.3, ol: 1.04 });
-      add(sphere(0.055 * K), 0, H.head * 2.08, -H.head * 0.3, { m: toon(0xf2ead8) });
+      fringe(5, 0.7, 0.55); sides(0.05); back(5, -0.1);
+      add(new THREE.SphereGeometry(H.head * 1.13, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), 0, H.head * 1.0, 0, { m: knit, rx: -0.3, ol: 1.03 });
+      add(new THREE.TorusGeometry(H.head * 1.1, 0.032 * K, 8, 28), 0, H.head * 1.0, 0, { m: knit, rx: Math.PI / 2 - 0.3, ol: 1.04 });
+      add(sphere(0.06 * K), 0, H.head * 2.12, -H.head * 0.3, { m: toon(0xf2ead8) });
       break;
     }
-    default: // 12: messy tufts
-      cap(); bangs();
+    default: // 12: messy: locks every which way, tufts on top
+      hairCrown(); sides(); back(); gleam();
+      for (const [a, low] of [[-0.7, 0.62], [-0.3, 0.45], [0.05, 0.58], [0.35, 0.42], [0.7, 0.6]]) lock(at(0.92, a * 0.6, 1.06), at(low, a * 1.1, 1.09), 0.07, 0.05);
       for (const [x, z, rx, rz] of [[-0.3, 0.1, 0.5, 0.7], [0.25, 0.3, 0.7, -0.6], [0.05, -0.35, -0.6, 0.2], [-0.15, 0.45, 0.9, 0.3], [0.4, -0.15, -0.3, -0.8]]) {
-        add(new THREE.ConeGeometry(0.06 * K, 0.15 * K, 5), x * H.head, H.head * 1.95 - Math.abs(x) * 0.3 * H.head, z * H.head, { rx, rz, ol: 0 });
+        add(new THREE.ConeGeometry(0.06 * K, 0.15 * K, 5), x * H.head, H.head * 2.0 - Math.abs(x) * 0.3 * H.head, z * H.head, { rx, rz, ol: 1.05 });
       }
   }
+  bakeHair(hairG);
 
   if (look.specs) head.add(specsMesh(look.specs));
   if (look.beard) head.add(beardMesh(look.beard, look.hair || '#3a2a20'));
