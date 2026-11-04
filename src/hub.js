@@ -68,6 +68,12 @@ class DesktopMeta {
           try {
             const m = JSON.parse(fs.readFileSync(file, 'utf8'));
             const summary = m.postTurnSummary && m.postTurnSummaryFor === m.lastAssistantUuid ? m.postTurnSummary : null;
+            // The app's summary guesses at "needs action" (often someone
+            // else's reply, or a choice made in another session): it puts
+            // them in the waiting zone only until you open that session after
+            // the turn. A real question (AskUserQuestion, a wrap-up ask) is
+            // read from the log and stays until answered.
+            const seen = m.lastFocusedAt && m.lastTurnEdgeAt && m.lastFocusedAt > m.lastTurnEdgeAt;
             this.files.set(file, {
               mtime: st.mtimeMs,
               row: {
@@ -79,7 +85,7 @@ class DesktopMeta {
                 branch: m.branch || null,
                 permissionMode: m.permissionMode || null,
                 effort: m.effort || null,
-                needs: summary && summary.needs_action ? String(summary.needs_action).slice(0, 300) : null,
+                needs: summary && summary.needs_action && !seen ? String(summary.needs_action).slice(0, 300) : null,
                 summary: summary && summary.status_detail ? String(summary.status_detail).slice(0, 200) : null,
               },
             });

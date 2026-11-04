@@ -145,3 +145,22 @@ test('weather: codes become what the windows show; fetched in the background, at
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(calls, 2);
 });
+
+test('the app\'s "needs action" guess waits on you only until you open the session after that turn', () => {
+  const { DesktopMeta } = require('../src/hub');
+  const dir = path.join(process.env.WMAD_DESKTOP_META_DIR, 'acct', 'org');
+  fs.mkdirSync(dir, { recursive: true });
+  const write = (id, extra) => fs.writeFileSync(path.join(dir, `local_${id}.json`), JSON.stringify({
+    sessionId: `local_${id}`, cliSessionId: `cli-${id.slice(0, 8)}`, lastAssistantUuid: 'u1', postTurnSummaryFor: 'u1',
+    postTurnSummary: { status_category: 'blocked', needs_action: '決定要用哪個修法' }, lastTurnEdgeAt: 1000, ...extra,
+  }));
+  const ids = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003'];
+  write(ids[0], { lastFocusedAt: 500 }); // looked at before the turn ended: not seen yet
+  write(ids[1], { lastFocusedAt: 2000 }); // opened after it ended
+  write(ids[2], {}); // never opened
+  const meta = new DesktopMeta();
+  meta.refresh(1e13);
+  assert.equal(meta.byLocal(`local_${ids[0]}`).needs, '決定要用哪個修法');
+  assert.equal(meta.byLocal(`local_${ids[1]}`).needs, null, 'opened since: no longer waiting on you');
+  assert.equal(meta.byLocal(`local_${ids[2]}`).needs, '決定要用哪個修法');
+});
