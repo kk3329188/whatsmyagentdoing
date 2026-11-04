@@ -542,6 +542,69 @@ test('lunch, 12:00 to 12:30: the idle ones go up to the canteen, queue at the bu
   assert.equal(back.people.get(idle[0].key).event.text, '吃飽了 😋');
 });
 
+test('lunch in the canteen, step by step: bare tables; a tray from the buffet, carried to a seat and eaten there; to the sink to rinse, into the dishwasher; then a chat', () => {
+  const o = load(true, clockAt(12.1)); o.floor = 3; o.plan = o.buildPlan(0); o.first = false;
+  const p = o.plan;
+  const sink = p.pois.filter((q) => q.act === 'rinse'), washer = p.pois.filter((q) => q.act === 'dishwash');
+  assert.ok(p.props.some((q) => q.t === 'rinseSink') && p.props.some((q) => q.t === 'dishwasher'), 'a sink and a dishwasher');
+  assert.ok(sink.length >= 1 && washer.length >= 1);
+  for (const q of [...sink, ...washer, ...p.pois.filter((x) => x.act === 'bqueue')]) {
+    assert.ok(!p.grid.blocked(q.x, q.y), `${q.act} at ${q.x.toFixed(1)},${q.y.toFixed(1)} is free`);
+    assert.ok(p.grid.path(p.lift.x + 0.4, p.lift.y, q.x, q.y).length, `${q.act} can be reached from the lift`);
+  }
+  assert.ok(p.pois.filter((q) => q.act === 'dine').every((q) => q.tray), 'every seat has a place for a tray');
+  const idle = [at('idle', { n: 1, ago: 60 * MIN })];
+  o.update(idle, { moved: new Map(idle.map((s) => [s.key, { from: 2, to: 3 }])) });
+  assert.equal(o.traysOut().size, 0, 'nothing on the tables before anyone eats');
+  const a = o.people.get('claude:idle1');
+  const next = () => { a.path = []; a.until = 0; o.t += 1; o.wander(a, Date.now()); };
+  const arrive = () => { a.x = a.poi.x; a.y = a.poi.y; a.path = []; a.until = Date.now() + 60_000; o.t += 1; };
+  const walking = () => { a.path = [{ x: a.poi.x, y: a.poi.y }]; o.t += 1; return o.stateOf(a); };
+  next();
+  assert.equal(a.poi.act, 'buffet', 'the buffet first');
+  assert.notEqual(walking().act, 'tray', 'empty-handed to the buffet');
+  arrive();
+  assert.equal(o.stateOf(a).act, 'fridge', 'filling a tray');
+  next();
+  assert.equal(a.poi.act, 'dine', 'then a seat');
+  assert.equal(walking().act, 'tray', 'carrying the tray to it');
+  assert.equal(o.traysOut().size, 0, 'not on the table while still carrying it');
+  arrive();
+  assert.ok(o.traysOut().has(a.poi), 'the tray on the table in front of them');
+  assert.equal(o.stateOf(a).pose, 'sit');
+  for (let i = 0; i < 20; i++) assert.ok(['eat', 'chat', 'sip', 'scroll'].includes(o.stateOf(a).act), `eating, not ${o.stateOf(a).act}`), o.t += 7000;
+  const seat = a.poi;
+  next();
+  assert.equal(a.poi.act, 'rinse', 'eaten: to the sink');
+  assert.equal(a.event.text, '吃飽了，沖一下碗盤 🚿');
+  assert.equal(walking().act, 'tray', 'taking the tray with them');
+  assert.ok(!o.traysOut().has(seat), 'the table is clear again');
+  arrive();
+  assert.equal(o.stateOf(a).act, 'rinse');
+  next();
+  assert.equal(a.poi.act, 'dishwash', 'rinsed: into the dishwasher');
+  assert.equal(a.event.text, '放進洗碗機 🍽️');
+  assert.equal(walking().act, 'tray');
+  arrive();
+  assert.equal(o.stateOf(a).act, 'load');
+  next();
+  assert.equal(a.poi.act, 'dine', 'then back to a table');
+  assert.notEqual(walking().act, 'tray', 'empty-handed now');
+  arrive();
+  assert.equal(o.traysOut().size, 0, 'and no tray in front of them');
+  for (let i = 0; i < 20; i++) assert.notEqual(o.stateOf(a).act, 'eat', 'chatting, not eating'), o.t += 7000;
+  // busy: the sink taken, they stay at their seat and keep eating
+  const b = load(true, clockAt(12.1)); b.floor = 3; b.plan = b.buildPlan(0); b.first = false;
+  b.update(idle, { moved: new Map(idle.map((s) => [s.key, { from: 2, to: 3 }])) });
+  const c = b.people.get('claude:idle1');
+  c.meal = 'eat';
+  const at0 = b.plan.pois.find((q) => q.act === 'dine'); c.poi = c.lastPoi = at0; at0.taken = c.key; c.x = at0.x; c.y = at0.y;
+  for (const q of b.plan.pois) if (q.act === 'rinse') q.taken = 'someone';
+  c.path = []; c.until = 0; b.wander(c, Date.now());
+  assert.equal(c.poi, at0, 'the sink busy: still at the table');
+  assert.equal(c.meal, 'eat');
+});
+
 test('upstairs: no desk of yours or queue, a gym, a library, a lift instead of the street door; everything reachable', () => {
   const o = loadFloor(2);
   const p = o.plan;

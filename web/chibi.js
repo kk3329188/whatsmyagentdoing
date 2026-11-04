@@ -533,6 +533,9 @@ function act(name, t) {
     case 'nap': return { head: [0.62, 0, 0.12], lean: 0.22, R: [-0.35, 0.25, -0.7], L: [-0.35, 0.25, -0.7], face: 'sleep' };
     case 'knock': return { R: [-1.45, 0.1, -0.8 + 0.45 * up(t * 9)], face: 'worried' };
     case 'sign': return { R: [-2.7, -0.55, -0.35], L: [-2.7, -0.55, -0.35], bounce: 0.02 * Math.abs(S(t * 3)), face: 'worried', sign: true };
+    case 'tray': return { R: [-0.95, 0.38, -0.95], L: [-0.95, 0.38, -0.95], face: 'smile', tray: true };
+    case 'rinse': return { R: [-0.75, 0.3, -0.55 + 0.25 * S(t * 9)], L: [-0.75, 0.3, -0.55 + 0.25 * S(t * 9 + 2)], lean: 0.18, head: [0.3, 0, 0], face: 'focus' };
+    case 'load': return { R: [-0.9 + 0.25 * S(t * 2), 0.3, -0.5], L: [-0.9 + 0.25 * S(t * 2), 0.3, -0.5], lean: 0.24, head: [0.25, 0, 0], face: 'neutral' };
     case 'carry': case 'deliver': return { R: [-0.95, 0.38, -0.95], L: [-0.95, 0.38, -0.95], face: 'focus', box: true };
     case 'unpack': return { R: [-0.95, 0.38, -0.95 + 0.15 * S(t * 5)], L: [-0.95, 0.38, -0.95 + 0.15 * S(t * 5 + 1)], face: 'smile', box: true };
     case 'fix': return { R: [-1.15 + 0.18 * S(t * 16), 0.25, -0.6], L: [-1.15 + 0.18 * S(t * 16 + 2), 0.25, -0.6], lean: 0.28, face: 'focus' };
@@ -579,6 +582,7 @@ function target(st, t, speed) {
     p.twist = 0.08 * s;
     p.face = run ? 'focus' : 'neutral';
     if (st.act === 'carry') Object.assign(p, { R: [-0.95, 0.38, -0.95], L: [-0.95, 0.38, -0.95], box: true });
+    if (st.act === 'tray') Object.assign(p, { R: [-0.95, 0.38, -0.95], L: [-0.95, 0.38, -0.95], tray: true });
     if (st.act === 'run' && st.pose !== 'walk') p.face = 'focus';
     return p;
   }
@@ -604,6 +608,7 @@ function target(st, t, speed) {
   if (a.look != null) p.look = a.look;
   p.hold = a.hold || null;
   p.box = !!a.box;
+  p.tray = !!a.tray;
   p.sign = !!a.sign;
   if (a.kick) { p.legR = [-0.4 + 0.6 * S(t * 11), 0.6]; p.legL = [-0.4 - 0.6 * S(t * 11), 0.6]; }
   p.head = [p.head[0] + breathe, p.head[1], p.head[2]];
@@ -638,6 +643,7 @@ export function animateChibi(rig, st, t, dt, speed = 0) {
   // what they hold
   for (const [name, m] of Object.entries(rig.held)) m.visible = p.hold === name;
   rig.box.visible = !!p.box;
+  if (rig.tray) rig.tray.visible = !!p.tray;
   rig.sign.visible = !!p.sign;
   // the face: a blink every few seconds; a moving mouth while talking or eating
   const now = t;

@@ -88,7 +88,9 @@
   // each kind of seat, a new thing every 7–10 seconds.
   const SEAT_ACTS = {
     stool: ['eat', 'sip', 'scroll', 'chat', 'laugh', 'scroll'],
-    dine: ['eat', 'eat', 'chat', 'eat', 'sip', 'laugh'],
+    dine: ['eat', 'eat', 'chat', 'eat', 'sip', 'eat'],
+    // still at the table after the tray has gone back
+    dined: ['chat', 'sip', 'laugh', 'scroll', 'chat'],
     couch: ['scroll', 'read', 'laptop', 'laugh', 'watch', 'sip', 'game'],
     beanbag: ['scroll', 'game', 'read', 'watch', 'laugh'],
     read: ['read', 'laptop', 'write', 'think', 'read'],
@@ -1109,10 +1111,12 @@
     // ---- the second floor: hot desks, a gym, a library, a cafe and a lounge.
     // Same footprint as downstairs; you come and go by the lift.
     // 3F, the staff canteen: a buffet along the back wall under the menu, long
-    // tables with benches, a tray return, a drinks fridge. Empty but for
+    // tables with benches (bare until someone sits down with a tray), a rinse
+    // sink and a dishwasher, clean trays, a drinks fridge. Empty but for
     // lunch (12:00-12:30, canteenTime): the idle ones come up by the lift,
-    // queue at the buffet for a plate, then sit and eat (canteenWander), and
-    // go back down for the nap.
+    // fill a tray at the buffet, carry it to a seat and eat, take it to the
+    // sink to rinse, into the dishwasher (canteenWander), and go back down
+    // for the nap.
     canteen({ W, D, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
       const pal = this.pal;
       // the buffet: hot food behind the glass, a queue in front
@@ -1123,7 +1127,19 @@
       const n = Math.max(3, Math.floor(bw / 1.4));
       for (let k = 0; k < n; k++) poi(bx + (k + 0.5) * bw / n, by + 1.45, 'buffet', 'back', { zone: 'idle', yaw: Math.PI });
       const menu = { x: bx + bw / 2 - 1.1, w: 2.2 };
-      // the tray return, in the corner by the buffet
+      // waiting your turn for the buffet, a step further back
+      for (let k = 0; k < n; k++) poi(bx + (k + 0.5) * bw / n, by + 2.15, 'bqueue', 'back', { zone: 'idle', yaw: Math.PI });
+      // after eating: rinse the plates at the sink, into the dishwasher
+      const dx = bx + bw + 0.4;
+      add(dx + 0.75 + by + 0.35, () => this.rinseSink(dx, by, 1.5));
+      prop('rinseSink', { x: dx, y: by, w: 1.5, d: 0.7 });
+      solid(dx, by, 1.5, 0.7, 0.05);
+      for (const k of [0, 1]) poi(dx + 0.4 + k * 0.7, by + 1.2, 'rinse', 'back', { zone: 'idle', yaw: Math.PI });
+      add(dx + 1.6 + 0.5 + by + 0.38, () => this.dishwasher(dx + 1.6, by));
+      prop('dishwasher', { x: dx + 1.6, y: by, w: 1.0, d: 0.75 });
+      solid(dx + 1.6, by, 1.0, 0.75, 0.05);
+      poi(dx + 2.1, by + 1.25, 'dishwash', 'back', { zone: 'idle', yaw: Math.PI });
+      // clean trays, in the corner by the buffet
       add(0.4 + 0.3 + 0.6, () => this.trayRack(0.3, 0.35));
       prop('trayRack', { x: 0.3, y: 0.35 });
       solid(0.3, 0.35, 0.9, 0.5, 0.05);
@@ -1143,15 +1159,16 @@
           solid(tx, ty, 2.6, 0.8, 0.05);
           for (let k = 0; k < 3; k++) {
             const sx = tx + 0.45 + k * 0.85;
-            poi(sx, ty - 0.42, 'dine', 'front', { sit: 0.45, zone: 'idle', yaw: 0 });
-            poi(sx, ty + 1.22, 'dine', 'back', { sit: 0.45, zone: 'idle', yaw: Math.PI });
+            // `tray`: where their tray goes on the table
+            poi(sx, ty - 0.42, 'dine', 'front', { sit: 0.45, zone: 'idle', yaw: 0, tray: { x: sx - 0.18, y: ty + 0.06 } });
+            poi(sx, ty + 1.22, 'dine', 'back', { sit: 0.45, zone: 'idle', yaw: Math.PI, tray: { x: sx - 0.18, y: ty + 0.46 } });
           }
         }
       }
       for (const [x, y] of [[0.45, D - 0.6], [W - 0.45, D - 0.6], [W - 0.45, 2.0]]) { add(x + y, () => this.plant(x, y)); prop('plant', { x, y }); solid(x - 0.2, y - 0.2, 0.4, 0.4); }
       const logo = this.company ? { x: Math.max(bx + bw + 0.6, W - 6.2), w: 3.2 } : null;
       const windows = [];
-      for (let x = bx + bw + 0.6; x < W - 2.6; x += 2.4) { if (logo && !(x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1)) continue; windows.push(x); }
+      for (let x = dx + 3.0; x < W - 2.6; x += 2.4) { if (logo && !(x + 1.5 < logo.x - 0.1 || x > logo.x + logo.w + 0.1)) continue; windows.push(x); }
       const posters = [{ y: 2.4, color: '#e0913a', text: 'LUNCH' }, { y: 4.8, color: '#5f9a4c', text: 'EAT WELL' }];
       const zones = {};
       for (const z of ZONE_ORDER) zones[z] = pois.filter((q) => q.zone === z);
@@ -1165,29 +1182,54 @@
         { kind: 'tiles', x: 0, y: 0, w: W, d: 2.4 },
       ];
       const art = [];
-      { let from = bx + bw + 0.3; for (const wx of [...windows, W - 0.3]) { if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) }); from = wx + 1.5; } }
+      { let from = dx + 2.9; for (const wx of [...windows, W - 0.3]) { if (wx - from >= 1.0 && !(logo && from < logo.x + logo.w && wx > logo.x)) art.push({ x: (from + wx) / 2, w: Math.min(0.8, wx - from - 0.3) }); from = wx + 1.5; } }
       return { W, D, OW: W, OD: 2.4, MR: 0, PY: D, RW: 0, grid, items, props, pois, desks, floors, art, whiteboard: null, wallSign: null, menu, logo, windows, posters, pp: null, neon: null, boss: null, sec: null, queue: [], targets, lift, floor: 3, door: { x: lift.x, y: lift.y }, zones, zoneAt, noNap: true, canteen: true, tables };
     }
 
-    // In the canteen: first the buffet for a plate, then a seat to eat it.
+    // In the canteen, one step at a time (p.meal): fill a tray at the buffet
+    // ('fetch'), carry it to a seat and eat ('eat'), take it to the sink and
+    // rinse ('rinse'), into the dishwasher ('wash'), then sit and chat
+    // ('done'). The next place busy: wait a moment where they are.
     canteenWander(p, now) {
       const free = (act) => this.plan.pois.filter((q) => q.act === act && !q.taken);
       const pick = (list) => list.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[Math.floor(Math.random() * Math.min(2, list.length))];
-      let q = null;
-      if (!p.fed) {
-        q = pick(free('buffet'));
-        if (q) { p.fed = true; p.stay = rand(5, 9) * 1000; p.event = { text: '拿餐囉 🍱', at: now, zone: 'held' }; }
-      }
-      if (!q) {
-        q = pick(free('dine'));
-        if (q) p.stay = rand(600, 900) * 1000;
+      const again = () => (p.lastPoi && !p.lastPoi.taken && this.plan.pois.includes(p.lastPoi) ? p.lastPoi : null);
+      const NEXT = { undefined: ['fetch', 'buffet'], fetch: ['eat', 'dine'], eat: ['rinse', 'rinse'], rinse: ['wash', 'dishwash'], wash: ['done', 'dine'], done: ['done', 'dine'] };
+      const [meal, act] = NEXT[p.meal] || NEXT.done;
+      let q = pick(free(act)), stay;
+      if (q) {
+        p.meal = meal;
+        stay = { fetch: rand(5, 9), eat: rand(600, 900), rinse: rand(6, 9), wash: rand(3, 5), done: rand(600, 900) }[meal] * 1000;
+        const say = { fetch: '拿餐囉 🍱', rinse: '吃飽了，沖一下碗盤 🚿', wash: '放進洗碗機 🍽️' }[meal];
+        if (say && meal !== p.said) { p.said = meal; p.event = { text: say, at: now, zone: 'held' }; }
+      } else {
+        // busy: the buffet queue, or stay put (still eating, still rinsing)
+        q = !p.meal ? pick(free('bqueue')) : again();
+        stay = rand(3, 5) * 1000;
       }
       if (!q) return false;
       q.taken = p.key;
       p.poi = q; p.lastPoi = q;
+      p.stay = stay;
       p.until = Infinity;
       this.goTo(p, q);
       return true;
+    }
+
+    // Who has a tray on the table this frame: the seats of those eating.
+    traysOut() {
+      if (this.trays && this.traysAt === this.t) return this.trays;
+      this.traysAt = this.t;
+      this.trays = new Set();
+      for (const p of this.people.values()) if (p.meal === 'eat' && p.mode === 'wander' && p.poi && p.poi.tray && !p.path.length) this.trays.add(p.poi);
+      return this.trays;
+    }
+
+    // Carrying their tray: on the way to a seat with it, or to the sink and
+    // the dishwasher after.
+    withTray(p) {
+      const q = p.poi;
+      return !!q && p.mode === 'wander' && ((p.meal === 'eat' && q.act === 'dine') || (p.meal === 'rinse' && q.act === 'rinse') || (p.meal === 'wash' && q.act === 'dishwash'));
     }
 
     upstairs({ W, D, OW, OD, MR, PY, RW, pods, podCols, PODX, grid, items, props, pois, desks, add, prop, solid, poi, longBox, lift }) {
@@ -2237,14 +2279,15 @@
     // What someone sitting off duty is doing right now. Someone else sitting
     // close by makes a chat (or a laugh) likelier; a long-idle one dozes off
     // on the sofa now and then.
-    seatAct(p, q) {
+    // `own`: every other turn something they like doing (not over lunch on a tray).
+    seatAct(p, q, own = true) {
       const list = SEAT_ACTS[q.act];
       const t = this.poseT() / 1000 + p.phase * 13;
       const span = 7 + (p.h % 4);
       let act = list[Math.floor(t / span + p.h) % list.length];
       // Every other turn, something they like doing.
-      const own = this.traits(p).flatMap((tr) => tr.seat);
-      if (own.length && Math.floor(t / span) % 2 === 1) act = own[Math.floor(t / span / 2) % own.length];
+      const likes = own ? this.traits(p).flatMap((tr) => tr.seat) : [];
+      if (likes.length && Math.floor(t / span) % 2 === 1) act = likes[Math.floor(t / span / 2) % likes.length];
       const company = [...this.people.values()].some((o) => o !== p && o.poi && o.poi.sit && !o.path.length && Math.hypot(o.x - p.x, o.y - p.y) < 2.2);
       if (act === 'chat' && !company) act = 'scroll';
       if (company && act === 'scroll' && (Math.floor(t / span) % 3) === 0) act = 'chat';
@@ -4022,17 +4065,44 @@
       }
       for (const lx of [x + 0.1, x + 2.42]) this.box(lx, y + 0.3, 0, 0.08, 0.2, 0.72, '#555', '#444', '#333');
       this.box(x, y, 0.72, 2.6, 0.8, 0.05, this.shade(pal.deskTop, 12), pal.deskL, pal.deskR);
-      // trays laid out, one in front of each place
+      // a tray in front of each one eating here (traysOut)
       const P = (a, b, c) => this.iso(a, b, c);
-      for (let k = 0; k < 3; k++) for (const [ty, col] of [[y + 0.06, '#c96442'], [y + 0.46, '#3f7fbf']]) {
-        const tx = x + 0.27 + k * 0.85;
+      for (const q of this.traysOut()) {
+        const { x: tx, y: ty } = q.tray;
+        if (tx < x || tx > x + 2.6 || ty < y || ty > y + 0.8) continue;
+        const col = ty < y + 0.3 ? '#c96442' : '#3f7fbf';
         this.poly([P(tx, ty, 0.775), P(tx + 0.36, ty, 0.775), P(tx + 0.36, ty + 0.28, 0.775), P(tx, ty + 0.28, 0.775)], col);
         const b = P(tx + 0.18, ty + 0.14, 0.78);
         this.ctx.fillStyle = '#fafafa'; this.ctx.beginPath(); this.ctx.ellipse(b.x, b.y, 4, 2, 0, 0, Math.PI * 2); this.ctx.fill();
       }
     }
 
-    // Where the trays go back: a steel trolley, trays stacked on its shelves.
+    // A steel counter with two deep sinks and a spray tap over each.
+    rinseSink(x, y, w) {
+      const P = (a, b, c) => this.iso(a, b, c);
+      this.box(x, y, 0, w, 0.7, 0.88, '#d9dde1', '#b9c0c7', '#a3abb3');
+      for (const k of [0, 1]) {
+        const sx = x + 0.12 + k * 0.7;
+        this.poly([P(sx, y + 0.15, 0.885), P(sx + 0.55, y + 0.15, 0.885), P(sx + 0.55, y + 0.6, 0.885), P(sx, y + 0.6, 0.885)], '#8e969e');
+        this.poly([P(sx + 0.04, y + 0.19, 0.886), P(sx + 0.51, y + 0.19, 0.886), P(sx + 0.51, y + 0.56, 0.886), P(sx + 0.04, y + 0.56, 0.886)], '#b9d4e2');
+        this.box(sx + 0.25, y + 0.04, 0.88, 0.05, 0.05, 0.55, '#9aa3ad', '#8a939d', '#7a838d');
+        this.box(sx + 0.25, y + 0.04, 1.38, 0.05, 0.22, 0.04, '#9aa3ad', '#8a939d', '#7a838d');
+      }
+    }
+
+    // A dishwasher: a steel cabinet, a hood on top, a green light while it runs.
+    dishwasher(x, y) {
+      const P = (a, b, c) => this.iso(a, b, c), c = this.ctx;
+      this.box(x, y, 0, 1.0, 0.75, 0.9, '#d9dde1', '#b9c0c7', '#a3abb3');
+      this.box(x + 0.05, y + 0.05, 0.9, 0.9, 0.65, 0.55, '#c7cdd3', '#a9b0b8', '#959da5');
+      this.poly([P(x + 0.15, y + 0.75, 0.2), P(x + 0.85, y + 0.75, 0.2), P(x + 0.85, y + 0.75, 0.75), P(x + 0.15, y + 0.75, 0.75)], '#b0b8c0');
+      this.poly([P(x + 0.2, y + 0.75, 0.8), P(x + 0.8, y + 0.75, 0.8), P(x + 0.8, y + 0.75, 0.84), P(x + 0.2, y + 0.75, 0.84)], '#6c737b');
+      const on = Math.sin(this.t / 400) > -0.6;
+      const l = P(x + 0.9, y + 0.75, 1.3);
+      c.fillStyle = on ? '#3fd06a' : '#2a6a3a'; c.beginPath(); c.arc(l.x, l.y, 1.6, 0, Math.PI * 2); c.fill();
+    }
+
+    // Clean trays: a steel trolley, trays stacked on its shelves.
     trayRack(x, y) {
       this.box(x, y, 0, 0.9, 0.5, 1.3, '#c7cdd3', '#a9b0b8', '#959da5');
       for (let k = 0; k < 4; k++) this.box(x + 0.05, y + 0.52, 0.18 + k * 0.28, 0.8, 0.02, 0.06, '#c96442', '#b0563a', '#9a4a32');
@@ -4965,7 +5035,7 @@
       }
       if (p.held) return { pose: 'held', face: 'front', act: 'held', sitZ: HOLD_Z };
       if (p.landed) return { pose: 'stand', face: 'front', act: 'dazed', sitZ: 0 };
-      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
+      if (p.path.length) return { pose: 'walk', face: p.walkFace, act: this.withTray(p) ? 'tray' : (p.run && p.run.carry) || (p.poi && p.poi.carry) ? 'carry' : p.rush > Date.now() ? 'run' : null, sitZ: 0 };
       if (p.seeOff && !p.path.length) return { pose: 'stand', face: 'front', act: p.seeOff.stage === 'bye' ? 'wave' : 'lookaround', sitZ: 0 };
       // On the way to a meeting but stopped somewhere: standing, not sitting at a desk.
       if (p.meeting && !this.atSeat(p) && !p.path.length) return { pose: 'stand', face: 'front', act: 'lookaround', sitZ: 0 };
@@ -5028,6 +5098,10 @@
         if (p.zone === 'wait' && q.act === 'meeting') act = 'tap';
         if (q.act === 'stool' && (lunch() || this.cakeUntil > Date.now())) act = 'eat';
         if (q.act === 'buffet') act = 'fridge';
+        if (q.act === 'dine') act = p.meal === 'eat' ? this.seatAct(p, q, false) : this.seatAct(p, { act: 'dined' });
+        if (q.act === 'rinse') act = 'rinse';
+        if (q.act === 'dishwash') act = 'load';
+        if (q.act === 'bqueue') act = 'lookaround';
         if (q.act === 'slot' && this.slot && this.slot.player === p.key && this.slotWinning()) act = 'cheer';
         // At the roulette wheel: watch it go round, cheer now and then.
         if (q.act === 'roulette') {
@@ -5304,6 +5378,25 @@
           c.fillRect(-9, hip - 11, 3, 10);
           c.fillRect(5, hip - 22, 3, 11);
           hand(5, hip - 22);
+          break;
+        }
+        case 'tray': {
+          // Carrying a tray: a plate, a bowl of rice.
+          c.fillRect(-8, hip - 12, 3, 7);
+          c.fillRect(5, hip - 12, 3, 7);
+          if (front) {
+            this.roundRect(-9, hip - 14, 18, 5, 1, '#c96442', '#9a4a32');
+            c.fillStyle = '#fafafa'; c.fillRect(-6, hip - 17, 5, 3); c.fillRect(1, hip - 15.5, 6, 1.5);
+            c.fillStyle = '#d98b3a'; c.fillRect(2, hip - 16.5, 4, 1);
+          }
+          break;
+        }
+        case 'rinse':
+        case 'load': {
+          // Hands down in the sink, or sliding a rack in.
+          const k = st.act === 'rinse' ? Math.sin(t * 9 + p.phase) * 1.5 : Math.sin(t * 2 + p.phase) * 2;
+          c.fillRect(-8 + k, hip - 10, 3, 8);
+          c.fillRect(5 + k, hip - 10, 3, 8);
           break;
         }
         case 'eat': {

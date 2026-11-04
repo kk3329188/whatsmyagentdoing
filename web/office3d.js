@@ -608,7 +608,7 @@ export class Office3D extends window.Office {
     this.appliances = [];
     this.pendantLamps = [];
     this.boardAt = this.jamLight = null;
-    this.boardShown = -1; this.tables = [];
+    this.boardShown = -1; this.tables = []; this.seatTrays = [];
     this.skylineMat = null; this.sheenMat = null; this.canteenMats = null;
     const { W, D } = plan;
     const dark = this.pal.dark;
@@ -885,6 +885,27 @@ export class Office3D extends window.Office {
   // The canteen's materials: the decor's own (decor.canteen names a palette
   // role for each part: walnut and marble, mahogany and velvet…), or the
   // plain office's steel and oak.
+  // A tray of lunch (a bowl of rice, a dish, chopsticks), its near corner at
+  // the origin; on a table (seatTrays) or in someone's hands (chibi). `k`
+  // picks the dish.
+  trayMeal(trayMat, k = 0) {
+    const g = new THREE.Group();
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.015, 0.28), trayMat);
+    tray.position.set(0.18, 0.0075, 0.14);
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 0.05, 14), soft(0xfaf8f2));
+    bowl.position.set(0.1, 0.04, 0.14);
+    const rice = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft(0xffffff));
+    rice.position.set(0.1, 0.06, 0.14);
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.012, 16), soft(0xfaf8f2));
+    plate.position.set(0.25, 0.021, 0.14);
+    const dish = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft([0xd98b3a, 0x5f9a4c, 0xb8432f][Math.abs(k) % 3]));
+    dish.position.set(0.25, 0.027, 0.14);
+    const sticks = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.008, 0.22), soft(0x8d6a4c));
+    sticks.position.set(0.316, 0.02, 0.14);
+    g.add(tray, bowl, rice, plate, dish, sticks);
+    return g;
+  }
+
   canteenLook() {
     if (this.canteenMats) return this.canteenMats;
     const d = this.decor, P = d && d.furniture && d.furniture.palette, roles = d && d.canteen;
@@ -1406,26 +1427,56 @@ export class Office3D extends window.Office {
           this.boxMesh(x + 0.05, by, 0.4, 2.5, 0.32, 0.05, 0, { mat: M.bench });
           for (const lx of [x + 0.15, x + 2.33]) this.boxMesh(lx, by + 0.06, 0, 0.06, 0.2, 0.4, 0, { mat: M.legs });
         }
-        // trays set out, a plate, a bowl and chopsticks on each
-        for (let k = 0; k < 3; k++) for (const [ty, tray] of [[y + 0.05, M.trayA], [y + 0.47, M.trayB]]) {
-          const tx = x + 0.27 + k * 0.85;
-          this.boxMesh(tx, ty, 0.75, 0.36, 0.28, 0.015, 0, { mat: tray, shadow: false });
-          const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 0.05, 14), soft(0xfaf8f2));
-          bowl.position.set(tx + 0.1, 0.79, ty + 0.14);
-          const rice = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft(0xffffff));
-          rice.position.set(tx + 0.1, 0.81, ty + 0.14);
-          const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.07, 0.012, 16), soft(0xfaf8f2));
-          plate.position.set(tx + 0.25, 0.77, ty + 0.14);
-          const dish = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), soft([0xd98b3a, 0x5f9a4c, 0xb8432f][(k + (ty > y + 0.2 ? 1 : 0)) % 3]));
-          dish.position.set(tx + 0.25, 0.776, ty + 0.14);
-          this.room.add(bowl, rice, plate, dish);
-          this.boxMesh(tx + 0.31, ty + 0.03, 0.77, 0.012, 0.22, 0.008, 0x8d6a4c, { shadow: false });
+        // a tray at each place, out only while someone eats there (officeLife)
+        for (const q of this.plan.pois) {
+          if (q.act !== 'dine' || !q.tray || q.tray.x < x || q.tray.x > x + 2.6 || q.tray.y < y || q.tray.y > y + 0.8) continue;
+          const g = this.trayMeal(q.tray.y < y + 0.3 ? M.trayA : M.trayB, Math.round(q.tray.x * 7 + q.tray.y * 3));
+          g.position.set(q.tray.x, 0.75, q.tray.y);
+          g.visible = false;
+          this.room.add(g);
+          this.seatTrays.push({ q, g });
         }
         // napkins and a soy sauce bottle in the middle
         const soy = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.12, 12), soft(0x3a2418));
         soy.position.set(x + 1.3, 0.81, y + 0.4);
         this.room.add(soy);
         this.boxMesh(x + 1.18, y + 0.36, 0.75, 0.08, 0.08, 0.06, 0xf3ecdf);
+        break;
+      }
+      case 'rinseSink': {
+        // A steel counter, two deep sinks, a pre-rinse spray on a spring over each.
+        const { x, y, w } = p, steel = { metal: 0.55, rough: 0.35 }, M = this.canteenLook();
+        this.boxMesh(x, y, 0, w, 0.7, 0.86, 0, { mat: M.body });
+        for (const k of [0, 1]) {
+          const sx = x + 0.12 + k * 0.7;
+          this.boxMesh(sx - 0.02, y + 0.12, 0.86, 0.6, 0.5, 0.03, 0xc7cdd3, steel);
+          this.boxMesh(sx + 0.03, y + 0.17, 0.7, 0.5, 0.4, 0.17, 0x8e969e, steel);
+          this.boxMesh(sx + 0.05, y + 0.19, 0.72, 0.46, 0.36, 0.14, 0xb9d4e2, { shadow: false });
+          this.boxMesh(sx + 0.25, y + 0.04, 0.88, 0.05, 0.05, 0.62, 0xa9b0b8, steel);
+          this.boxMesh(sx + 0.25, y + 0.04, 1.47, 0.05, 0.26, 0.04, 0xa9b0b8, steel);
+          const spring = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.22, 10), soft(0x6c737b));
+          spring.position.set(sx + 0.275, 1.36, y + 0.28);
+          this.room.add(spring);
+        }
+        this.boxMesh(x - 0.02, y + 0.66, 0.86, w + 0.04, 0.06, 0.035, 0, { mat: M.top });
+        break;
+      }
+      case 'dishwasher': {
+        // A hood dishwasher: a steel cabinet, the hood over it, a green light while it runs.
+        const { x, y } = p, steel = { metal: 0.55, rough: 0.35 }, M = this.canteenLook();
+        this.boxMesh(x, y, 0, 1.0, 0.75, 0.86, 0, { mat: M.body });
+        this.boxMesh(x + 0.05, y + 0.05, 0.86, 0.9, 0.65, 0.6, 0xc7cdd3, steel);
+        this.boxMesh(x + 0.12, y + 0.7, 0.92, 0.76, 0.02, 0.48, 0xb0b8c0, steel);
+        this.boxMesh(x + 0.25, y + 0.72, 1.32, 0.5, 0.04, 0.03, 0x6c737b, steel);
+        this.boxMesh(x + 0.05, y + 0.05, 1.46, 0.9, 0.65, 0.04, 0xdfe3e7, steel);
+        this.boxMesh(x + 0.84, y + 0.71, 1.42, 0.04, 0.02, 0.025, 0, { mat: new THREE.MeshStandardMaterial({ color: 0x3fd06a, emissive: 0x3fd06a, emissiveIntensity: 1.2 }), shadow: false });
+        // racks of clean plates on the counter beside it
+        for (let i = 0; i < 4; i++) {
+          const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.012, 14), soft(0xfaf8f2));
+          plate.rotation.x = Math.PI / 2;
+          plate.position.set(x + 0.2 + i * 0.04, 0.95, y + 0.3);
+          this.room.add(plate);
+        }
         break;
       }
       case 'trayRack': {
@@ -2452,6 +2503,13 @@ export class Office3D extends window.Office {
     obj.scale.setScalar((p.s && p.s.subagent ? 0.8 : 1) * (p.tall || 1));
     if (p.dealer) rig.front.add(dealerBow());
     rig.sign.add(this.signBoard());
+    // in the canteen, a tray of lunch to carry (the 'tray' act)
+    if (this.plan.canteen) {
+      rig.tray = this.trayMeal(this.canteenLook().trayA, p.h || 0);
+      rig.tray.position.set(-0.18, -0.02, 0.06);
+      rig.tray.visible = false;
+      rig.front.add(rig.tray);
+    }
     const laptop = new THREE.Group();
     const lapBase = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.015, 0.2), new THREE.MeshStandardMaterial({ color: 0x9aa0a8 }));
     const lapLid = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.012), new THREE.MeshStandardMaterial({ color: 0x3c4048, emissive: 0x4a90d0, emissiveIntensity: 0.35 }));
@@ -2818,6 +2876,7 @@ export class Office3D extends window.Office {
     }
     if (this.jamLight) this.jamLight.visible = this.jamUntil > now && Math.sin(this.t / 150) > 0;
     for (const tb of this.tables) { tb.lunch.visible = this.lunchUntil > now; tb.cake.visible = this.cakeUntil > now; }
+    if (this.seatTrays.length) { const out = this.traysOut(); for (const st of this.seatTrays) st.g.visible = out.has(st.q); }
   }
 
   updateBall() {
